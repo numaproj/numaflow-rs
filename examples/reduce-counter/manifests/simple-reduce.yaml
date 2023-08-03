@@ -1,0 +1,42 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: simple-reduce
+spec:
+  vertices:
+    - name: in
+      source:
+        # A self data generating source
+        generator:
+          rpu: 100
+          duration: 1s
+          keyCount: 5
+          value: 5
+    - name: counter
+      containerTemplate:
+        env:
+          - name: NUMAFLOW_DEBUG
+            value: "true"
+      udf:
+        container:
+          # count element
+          image: quay.io/numaio/numaflow-rs/reduce-counter:v1
+        groupBy:
+          window:
+            fixed:
+              length: 10s
+          keyed: true
+          storage:
+            persistentVolumeClaim:
+              volumeSize: 10Gi
+              accessMode: ReadWriteOnce
+    - name: out
+      sink:
+        # A simple log printing sink
+        log: { }
+  edges:
+    - from: in
+      to: counter
+    - from: counter
+      to: out
+
