@@ -5,15 +5,7 @@ use std::env;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let map_handler = cat::Cat::new();
 
-    match env::var_os("NUMAFLOW_POD") {
-        Some(_) => {
-            start_uds_server(map_handler).await?;
-        }
-        // not inside Numaflow POD
-        None => {
-            start_server(map_handler).await?;
-        }
-    };
+    start_uds_server(map_handler).await?;
 
     Ok(())
 }
@@ -34,8 +26,8 @@ pub(crate) mod cat {
     #[tonic::async_trait]
     impl function::FnHandler for Cat {
         async fn map_handle<T>(&self, input: T) -> Vec<function::Message>
-            where
-                T: function::Datum + Send + Sync + 'static,
+        where
+            T: function::Datum + Send + Sync + 'static,
         {
             vec![function::Message {
                 keys: input.keys().clone(),
