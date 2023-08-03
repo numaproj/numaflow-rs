@@ -9,7 +9,7 @@ use tonic::transport::Server;
 use tonic::{Request, Status, Streaming};
 use user_defined_sink::user_defined_sink_server::UserDefinedSink;
 
-pub mod user_defined_sink {
+mod user_defined_sink {
     tonic::include_proto!("sink.v1");
 }
 

@@ -1,5 +1,4 @@
-// TODO: this is public because of client.rs, remove it.
-pub mod user_defined_function {
+mod user_defined_function {
     tonic::include_proto!("function.v1");
 }
 
