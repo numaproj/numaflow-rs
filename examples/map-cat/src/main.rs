@@ -1,5 +1,4 @@
-use numaflow::function::{start_server, start_uds_server};
-use std::env;
+use numaflow::function::start_uds_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
