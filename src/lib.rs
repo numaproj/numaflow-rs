@@ -10,8 +10,10 @@
 //! [Reduce]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
 
-// start up code
+/// start up code
 mod startup;
+
+pub mod map;
 
 /// map and reduce for writing [map and reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/user-defined-functions/) handlers.
 pub mod function;
