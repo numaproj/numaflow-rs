@@ -239,7 +239,7 @@ where
 {
     startup::write_info_file();
 
-    let path = "/var/run/numaflow/udsink.sock";
+    let path = "/var/run/numaflow/sink.sock";
     fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
     use std::fs;
     use tokio::net::UnixListener;
