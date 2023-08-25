@@ -1,27 +1,28 @@
-use crate::sink::user_defined_sink::{
-    user_defined_sink_server, DatumRequest, ReadyResponse, Response as SinkResponse, ResponseList,
-};
-use crate::startup;
 use chrono::{DateTime, TimeZone, Utc};
-use std::net::SocketAddr;
+use prost_types::Timestamp;
 use tokio::sync::mpsc;
 use tonic::transport::Server;
 use tonic::{Request, Status, Streaming};
-use user_defined_sink::user_defined_sink_server::UserDefinedSink;
 
-mod user_defined_sink {
+use sinker_grpc::sink_server::SinkServer;
+use sinker_grpc::{ReadyResponse, SinkRequest, SinkResponse};
+
+use crate::sink::sinker_grpc::sink_server::Sink;
+use crate::startup;
+
+mod sinker_grpc {
     tonic::include_proto!("sink.v1");
 }
 
-struct UserDefinedSinkService<T: FnHandler> {
+struct SinkService<T: Sinker> {
     pub handler: T,
 }
 
-/// FnHandler trait implements the user defined sink handle.
+/// SinkerFoo trait implements the user defined sink handle.
 ///
 /// Types implementing this trait can be passed as user-defined sink handle.
 #[tonic::async_trait]
-pub trait FnHandler {
+pub trait Sinker {
     /// The sink handle is given a stream of [`Datum`]. The result is [`Response`].
     ///
     /// # Example
@@ -42,7 +43,7 @@ pub trait FnHandler {
     /// }
     ///
     /// #[async_trait]
-    /// impl sink::FnHandler for Logger {
+    /// impl sink::Sinker for Logger {
     ///     async fn handle<T: Datum + Send + Sync + 'static>(
     ///         &self,
     ///         mut input: tokio::sync::mpsc::Receiver<T>,
@@ -78,13 +79,13 @@ pub trait FnHandler {
     ///     }
     /// }
     /// ```
-    async fn handle<T: Datum + Send + Sync + 'static>(
+    async fn sink<T: Datum + Send + Sync + 'static>(
         &self,
         input: mpsc::Receiver<T>,
     ) -> Vec<Response>;
 }
 
-/// Response is the result returned from the [`FnHandler::handle`].
+/// Response is the result returned from the [`Sinker::handle`].
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,
@@ -95,69 +96,87 @@ pub struct Response {
     pub err: String,
 }
 
-/// Datum trait represents an incoming element into the [`FnHandler::handle`].
+/// Datum trait represents an incoming element into the [`Sinker::handle`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
-    fn keys(&self) -> &Vec<String>;
+    fn keys(&mut self) -> &Vec<String>;
     /// value is the value in (key, value) terminology of map/reduce paradigm.
-    fn value(&self) -> &Vec<u8>;
+    fn value(&mut self) -> &Vec<u8>;
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
     fn watermark(&self) -> DateTime<Utc>;
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
     fn event_time(&self) -> DateTime<Utc>;
     /// ID corresponds the unique ID in the message.
-    fn id(&self) -> &str;
+    fn id(&mut self) -> &str;
 }
 
-impl Datum for DatumRequest {
-    fn keys(&self) -> &Vec<String> {
+struct OwnedSinkRequest {
+    keys: Vec<String>,
+    value: Vec<u8>,
+    watermark: DateTime<Utc>,
+    eventtime: DateTime<Utc>,
+    id: String,
+}
+
+fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+    if let Some(ref t) = t {
+        Utc.timestamp_nanos(t.seconds * (t.nanos as i64))
+    } else {
+        Utc.timestamp_nanos(-1)
+    }
+}
+
+impl OwnedSinkRequest {
+    fn new(sr: SinkRequest) -> Self {
+        Self {
+            keys: sr.keys,
+            value: sr.value,
+            watermark: utc_from_timestamp(sr.watermark),
+            eventtime: utc_from_timestamp(sr.event_time),
+            id: sr.id,
+        }
+    }
+}
+
+impl Datum for OwnedSinkRequest {
+    fn keys(&mut self) -> &Vec<String> {
         &self.keys
     }
 
-    fn value(&self) -> &Vec<u8> {
+    fn value(&mut self) -> &Vec<u8> {
         &self.value
     }
 
     fn watermark(&self) -> DateTime<Utc> {
-        if let Some(ref timestamp) = self.watermark {
-            let t = timestamp.watermark.as_ref().unwrap();
-            return Utc.timestamp_nanos(t.seconds * (t.nanos as i64));
-        }
-
-        Utc.timestamp_nanos(-1)
+        self.watermark
     }
 
     fn event_time(&self) -> DateTime<Utc> {
-        if let Some(ref timestamp) = self.event_time {
-            let t = timestamp.event_time.as_ref().unwrap();
-            return Utc.timestamp_nanos(t.seconds * (t.nanos as i64));
-        }
-
-        Utc.timestamp_nanos(-1)
+        self.eventtime
     }
 
-    fn id(&self) -> &str {
+    fn id(&mut self) -> &str {
         &self.id
     }
 }
 
 #[tonic::async_trait]
-impl<T> UserDefinedSink for UserDefinedSinkService<T>
+impl<T> Sink for SinkService<T>
 where
-    T: FnHandler + Send + Sync + 'static,
+    T: Sinker + Send + Sync + 'static,
 {
     async fn sink_fn(
         &self,
-        request: Request<Streaming<DatumRequest>>,
-    ) -> Result<tonic::Response<ResponseList>, Status> {
+        request: Request<Streaming<SinkRequest>>,
+    ) -> Result<tonic::Response<SinkResponse>, Status> {
         let mut stream = request.into_inner();
 
         // TODO: what should be the idle buffer size?
-        let (tx, rx) = mpsc::channel::<DatumRequest>(1);
+        let (tx, rx) = mpsc::channel::<OwnedSinkRequest>(1);
 
         // call the user's sink handle
-        let sink_handle = self.handler.handle(rx);
+        let sink_handle = self.handler.sink(rx);
 
         // write to the user-defined channel
         tokio::spawn(async move {
@@ -166,8 +185,9 @@ where
                 .await
                 .expect("expected next message from stream")
             {
+                let owned_next_message = OwnedSinkRequest::new(next_message);
                 // panic is good i think!
-                tx.send(next_message)
+                tx.send(owned_next_message)
                     .await
                     .expect("send be successfully received!");
             }
@@ -177,48 +197,23 @@ where
         let responses = sink_handle.await;
 
         // build the result
-        let mut sink_responses: Vec<SinkResponse> = Vec::new();
+        let mut sink_responses: Vec<sinker_grpc::sink_response::Result> = Vec::new();
         for response in responses {
-            sink_responses.push(SinkResponse {
+            sink_responses.push(sinker_grpc::sink_response::Result {
                 id: response.id,
                 success: response.success,
                 err_msg: response.err.to_string(),
             })
         }
 
-        Ok(tonic::Response::new(ResponseList {
-            responses: sink_responses,
+        Ok(tonic::Response::new(SinkResponse {
+            results: sink_responses,
         }))
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<tonic::Response<ReadyResponse>, Status> {
         Ok(tonic::Response::new(ReadyResponse { ready: true }))
     }
-}
-
-/// start_server starts the gRPC server at port 55551.
-/// This is used mostly for local testing, hence the hard-coding of path, and port.
-/// start_server method should **not** be used in production.
-pub async fn start_server<T>(s: T) -> Result<(), Box<dyn std::error::Error>>
-where
-    T: FnHandler + Send + Sync + 'static,
-{
-    // TODO: make port configurable and pass it to info_file
-    let addr = "0.0.0.0:55551";
-    startup::write_info_file();
-
-    let addr: SocketAddr = addr.parse().unwrap();
-
-    let sink_service = UserDefinedSinkService { handler: s };
-
-    Server::builder()
-        .add_service(user_defined_sink_server::UserDefinedSinkServer::new(
-            sink_service,
-        ))
-        .serve(addr)
-        .await?;
-
-    Ok(())
 }
 
 /// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
@@ -240,7 +235,7 @@ where
 /// ```
 pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
-    T: FnHandler + Send + Sync + 'static,
+    T: Sinker + Send + Sync + 'static,
 {
     startup::write_info_file();
 
@@ -253,12 +248,10 @@ where
     let uds = UnixListener::bind(path)?;
     let _uds_stream = UnixListenerStream::new(uds);
 
-    let sink_service = UserDefinedSinkService { handler: m };
+    let sink_service = SinkService { handler: m };
 
     Server::builder()
-        .add_service(user_defined_sink_server::UserDefinedSinkServer::new(
-            sink_service,
-        ))
+        .add_service(SinkServer::new(sink_service))
         .serve_with_incoming(_uds_stream)
         .await?;
 
