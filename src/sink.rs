@@ -18,7 +18,7 @@ struct SinkService<T: Sinker> {
     pub handler: T,
 }
 
-/// SinkerFoo trait implements the user defined sink handle.
+/// Sinker trait implements the user defined sink handle.
 ///
 /// Types implementing this trait can be passed as user-defined sink handle.
 #[tonic::async_trait]
@@ -36,6 +36,7 @@ pub trait Sinker {
     ///
     /// pub(crate) struct Logger {}
     ///
+    ///
     /// impl Logger {
     ///     pub(crate) fn new() -> Self {
     ///         Self {}
@@ -44,7 +45,7 @@ pub trait Sinker {
     ///
     /// #[async_trait]
     /// impl sink::Sinker for Logger {
-    ///     async fn handle<T: Datum + Send + Sync + 'static>(
+    ///     async fn sink<T: Datum + Send + Sync + 'static>(
     ///         &self,
     ///         mut input: tokio::sync::mpsc::Receiver<T>,
     ///     ) -> Vec<Response> {
@@ -78,6 +79,17 @@ pub trait Sinker {
     ///         responses
     ///     }
     /// }
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     use numaflow::sink::start_uds_server;
+    ///
+    ///     // sink handler
+    ///     let sink_handler = Logger::new();
+    ///
+    ///     start_uds_server(sink_handler).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     async fn sink<T: Datum + Send + Sync + 'static>(
         &self,
@@ -99,16 +111,16 @@ pub struct Response {
 /// Datum trait represents an incoming element into the [`Sinker::handle`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
-    fn keys(&mut self) -> &Vec<String>;
+    fn keys(&self) -> &Vec<String>;
     /// value is the value in (key, value) terminology of map/reduce paradigm.
-    fn value(&mut self) -> &Vec<u8>;
+    fn value(&self) -> &Vec<u8>;
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
     fn watermark(&self) -> DateTime<Utc>;
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
     fn event_time(&self) -> DateTime<Utc>;
     /// ID corresponds the unique ID in the message.
-    fn id(&mut self) -> &str;
+    fn id(&self) -> &str;
 }
 
 struct OwnedSinkRequest {
@@ -140,11 +152,11 @@ impl OwnedSinkRequest {
 }
 
 impl Datum for OwnedSinkRequest {
-    fn keys(&mut self) -> &Vec<String> {
+    fn keys(&self) -> &Vec<String> {
         &self.keys
     }
 
-    fn value(&mut self) -> &Vec<u8> {
+    fn value(&self) -> &Vec<u8> {
         &self.value
     }
 
@@ -156,7 +168,7 @@ impl Datum for OwnedSinkRequest {
         self.eventtime
     }
 
-    fn id(&mut self) -> &str {
+    fn id(&self) -> &str {
         &self.id
     }
 }
@@ -217,22 +229,6 @@ where
 }
 
 /// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
-///
-/// # Example
-///
-///```rust
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     use numaflow::sink::start_uds_server;
-///
-///     // sink handler
-///     let sink_handler = todo!();
-///
-///     start_uds_server(sink_handler).await?;
-///
-///     Ok(())
-/// }
-/// ```
 pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sinker + Send + Sync + 'static,
