@@ -1,11 +1,8 @@
-mod user_defined_function {
-    tonic::include_proto!("function.v1");
-}
-
-use chrono::{DateTime, LocalResult, TimeZone, Utc};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+use chrono::{DateTime, LocalResult, TimeZone, Utc};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
@@ -14,10 +11,15 @@ use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::startup;
 use user_defined_function::user_defined_function_server;
 use user_defined_function::user_defined_function_server::UserDefinedFunction;
 use user_defined_function::{DatumRequest, DatumResponse, DatumResponseList, ReadyResponse};
+
+use crate::startup;
+
+mod user_defined_function {
+    tonic::include_proto!("function.v1");
+}
 
 struct UserDefinedFunctionService<T: FnHandler> {
     pub handler: Arc<T>,
@@ -334,6 +336,7 @@ where
 
                 // since we are calling this in a loop, we need make sure that there is reference counting
                 // and the lifetime of self is more than the async function.
+                // try Arc<Self> https://doc.rust-lang.org/reference/items/associated-items.html#methods ?
                 let v = Arc::clone(&self.handler);
                 let m = Arc::clone(&md);
 

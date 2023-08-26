@@ -23,8 +23,8 @@ mod log_sink {
     }
 
     #[async_trait]
-    impl sink::FnHandler for Logger {
-        async fn handle<T: Datum + Send + Sync + 'static>(
+    impl sink::Sinker for Logger {
+        async fn sink<T: Datum + Send + Sync + 'static>(
             &self,
             mut input: tokio::sync::mpsc::Receiver<T>,
         ) -> Vec<Response> {
