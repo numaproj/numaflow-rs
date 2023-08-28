@@ -1,5 +1,4 @@
-use chrono::{DateTime, TimeZone, Utc};
-use prost_types::Timestamp;
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tonic::transport::Server;
 use tonic::{Request, Status, Streaming};
@@ -7,8 +6,8 @@ use tonic::{Request, Status, Streaming};
 use sinker_grpc::sink_server::SinkServer;
 use sinker_grpc::{ReadyResponse, SinkRequest, SinkResponse};
 
+use crate::shared;
 use crate::sink::sinker_grpc::sink_server::Sink;
-use crate::startup;
 
 mod sinker_grpc {
     tonic::include_proto!("sink.v1");
@@ -123,6 +122,7 @@ pub trait Datum {
     fn id(&self) -> &str;
 }
 
+/// Owned copy of SinkRequest from tonic.
 struct OwnedSinkRequest {
     keys: Vec<String>,
     value: Vec<u8>,
@@ -131,21 +131,13 @@ struct OwnedSinkRequest {
     id: String,
 }
 
-fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
-    if let Some(ref t) = t {
-        Utc.timestamp_nanos(t.seconds * (t.nanos as i64))
-    } else {
-        Utc.timestamp_nanos(-1)
-    }
-}
-
 impl OwnedSinkRequest {
     fn new(sr: SinkRequest) -> Self {
         Self {
             keys: sr.keys,
             value: sr.value,
-            watermark: utc_from_timestamp(sr.watermark),
-            eventtime: utc_from_timestamp(sr.event_time),
+            watermark: shared::utc_from_timestamp(sr.watermark),
+            eventtime: shared::utc_from_timestamp(sr.event_time),
             id: sr.id,
         }
     }
@@ -233,7 +225,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sinker + Send + Sync + 'static,
 {
-    startup::write_info_file();
+    shared::write_info_file();
 
     let path = "/var/run/numaflow/sink.sock";
     fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;

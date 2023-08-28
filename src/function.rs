@@ -15,7 +15,7 @@ use user_defined_function::user_defined_function_server;
 use user_defined_function::user_defined_function_server::UserDefinedFunction;
 use user_defined_function::{DatumRequest, DatumResponse, DatumResponseList, ReadyResponse};
 
-use crate::startup;
+use crate::shared;
 
 mod user_defined_function {
     tonic::include_proto!("function.v1");
@@ -397,7 +397,7 @@ where
 {
     // TODO: make port configurable and pass it to info_file
     let addr = "0.0.0.0:55551";
-    startup::write_info_file();
+    shared::write_info_file();
 
     let addr: SocketAddr = addr.parse().unwrap();
 
@@ -434,7 +434,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: FnHandler + Send + Sync + 'static,
 {
-    startup::write_info_file();
+    shared::write_info_file();
 
     let path = "/var/run/numaflow/function.sock";
     fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
