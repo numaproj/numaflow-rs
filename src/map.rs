@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::map::mapper::{map_response, MapRequest, MapResponse, ReadyResponse};
+use crate::map::mapper::{map_response, map_server, MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
 
 mod mapper {
@@ -18,7 +18,7 @@ pub trait Mapper {
 }
 
 #[async_trait]
-impl<T> mapper::map_server::Map for MapService<T>
+impl<T> map_server::Map for MapService<T>
 where
     T: Mapper + Send + Sync + 'static,
 {
@@ -110,4 +110,26 @@ impl Datum for OwnedMapRequest {
     fn event_time(&self) -> DateTime<Utc> {
         self.eventtime
     }
+}
+
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+where
+    T: Mapper + Send + Sync + 'static,
+{
+    shared::write_info_file();
+
+    let path = "/var/run/numaflow/map.sock";
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
+
+    let uds = tokio::net::UnixListener::bind(path)?;
+    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
+
+    let map_svc = MapService { handler: m };
+
+    tonic::transport::Server::builder()
+        .add_service(map_server::MapServer::new(map_svc))
+        .serve_with_incoming(_uds_stream)
+        .await?;
+
+    Ok(())
 }
