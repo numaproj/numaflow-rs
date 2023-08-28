@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::map::mapper::{MapRequest, MapResponse, ReadyResponse};
+use crate::map::mapper::{map_response, MapRequest, MapResponse, ReadyResponse};
+use crate::shared;
 
 mod mapper {
     tonic::include_proto!("map.v1");
@@ -21,8 +22,27 @@ impl<T> mapper::map_server::Map for MapService<T>
 where
     T: Mapper + Send + Sync + 'static,
 {
-    async fn map_fn(&self, _: Request<MapRequest>) -> Result<Response<MapResponse>, Status> {
-        todo!()
+    async fn map_fn(&self, request: Request<MapRequest>) -> Result<Response<MapResponse>, Status> {
+        let request = request.into_inner();
+
+        // call the map handle
+        let result = self.handler.map(OwnedMapRequest::new(request)).await;
+
+        let mut response_list = vec![];
+        // build the response struct
+        for message in result {
+            let datum_response = map_response::Result {
+                keys: message.keys,
+                value: message.value,
+                tags: message.tags,
+            };
+            response_list.push(datum_response);
+        }
+
+        // return the result
+        Ok(Response::new(MapResponse {
+            results: response_list,
+        }))
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
@@ -44,13 +64,50 @@ pub struct Message {
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn keys(&mut self) -> Option<Vec<String>>;
+    fn keys(&self) -> &Vec<String>;
     /// value is the value in (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn value(&mut self) -> Option<Vec<u8>>;
+    fn value(&self) -> &Vec<u8>;
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
     fn watermark(&self) -> DateTime<Utc>;
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
     fn event_time(&self) -> DateTime<Utc>;
+}
+
+/// Owned copy of MapRequest from Datum.
+struct OwnedMapRequest {
+    keys: Vec<String>,
+    value: Vec<u8>,
+    watermark: DateTime<Utc>,
+    eventtime: DateTime<Utc>,
+}
+
+impl OwnedMapRequest {
+    fn new(mr: MapRequest) -> Self {
+        Self {
+            keys: mr.keys,
+            value: mr.value,
+            watermark: shared::utc_from_timestamp(mr.watermark),
+            eventtime: shared::utc_from_timestamp(mr.event_time),
+        }
+    }
+}
+
+impl Datum for OwnedMapRequest {
+    fn keys(&self) -> &Vec<String> {
+        &self.keys
+    }
+
+    fn value(&self) -> &Vec<u8> {
+        &self.value
+    }
+
+    fn watermark(&self) -> DateTime<Utc> {
+        self.watermark
+    }
+
+    fn event_time(&self) -> DateTime<Utc> {
+        self.eventtime
+    }
 }
