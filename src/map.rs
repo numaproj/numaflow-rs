@@ -12,8 +12,56 @@ struct MapService<T> {
     handler: T,
 }
 
+/// Mapper trait for implementing Map handler.
 #[async_trait]
 pub trait Mapper {
+    /// map_handle takes in an input element can can produce 0, 1, or more results. The input is a [`Datum`]
+    /// and the output is a [`Vec`] of [`Message`]. In a `map` function, each element is processed
+    /// independently and there is no state associated with the elements. More about map can be read
+    /// [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#map-udf).
+    ///
+    /// # Example
+    ///
+    /// Following is an example of a cat container that just copies the input to output.
+    ///
+    /// ```rust
+    /// use numaflow::map::start_uds_server;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let map_handler = cat::Cat::new();
+    ///
+    ///     start_uds_server(map_handler).await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// pub(crate) mod cat {
+    ///     pub(crate) struct Cat {}
+    ///
+    ///     impl Cat {
+    ///         pub(crate) fn new() -> Self {
+    ///             Self {}
+    ///         }
+    ///     }
+    ///
+    ///     use numaflow::map;
+    ///
+    ///     #[tonic::async_trait]
+    ///     impl map::Mapper for Cat {
+    ///         async fn map<T>(&self, input: T) -> Vec<map::Message>
+    ///         where
+    ///             T: map::Datum + Send + Sync + 'static,
+    ///         {
+    ///             vec![map::Message {
+    ///                 keys: input.keys().clone(),
+    ///                 value: input.value().clone(),
+    ///                 tags: vec![],
+    ///             }]
+    ///         }
+    ///     }
+    /// }
+    /// ```
     async fn map<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
 }
 
