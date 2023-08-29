@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 
+use chrono::{DateTime, TimeZone, Utc};
+use prost_types::Timestamp;
+
 pub(crate) fn write_info_file() {
     let path = if let Some(_) = std::env::var_os("NUMAFLOW_POD") {
         "/var/run/numaflow/server-info"
@@ -22,4 +25,12 @@ pub(crate) fn write_info_file() {
     let content = format!("{}U+005C__END__", content);
     println!("wrote to {} {}", path, content);
     fs::write(path, content).unwrap();
+}
+
+pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+    if let Some(ref t) = t {
+        Utc.timestamp_nanos(t.seconds * (t.nanos as i64))
+    } else {
+        Utc.timestamp_nanos(-1)
+    }
 }
