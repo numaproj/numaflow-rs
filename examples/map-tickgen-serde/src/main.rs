@@ -1,4 +1,4 @@
-use numaflow::function::start_uds_server;
+use numaflow::map::start_uds_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub(crate) mod tickgen {
     use chrono::{SecondsFormat, TimeZone, Utc};
-    use numaflow::function;
+    use numaflow::map;
     use numaflow::function::{Datum, Message, Metadata};
     use serde::Serialize;
     use tokio::sync::mpsc::Receiver;
@@ -69,17 +69,17 @@ pub(crate) mod tickgen {
     }
 
     #[tonic::async_trait]
-    impl function::FnHandler for TickGen {
-        async fn map_handle<T: function::Datum + Send + Sync + 'static>(
+    impl map::Mapper for TickGen {
+        async fn map<T: map::Datum + Send + Sync + 'static>(
             &self,
             input: T,
-        ) -> Vec<function::Message> {
+        ) -> Vec<map::Message> {
             let value = input.value();
             if let Ok(payload) = serde_json::from_slice::<Payload>(value) {
                 let ts = Utc
                     .timestamp_nanos(payload.created_ts)
                     .to_rfc3339_opts(SecondsFormat::Nanos, true);
-                vec![function::Message {
+                vec![map::Message {
                     keys: input.keys().clone(),
                     value: serde_json::to_vec(&ResultPayload {
                         value: payload.data.value,
@@ -91,18 +91,6 @@ pub(crate) mod tickgen {
             } else {
                 vec![]
             }
-        }
-
-        async fn reduce_handle<
-            T: Datum + Send + Sync + 'static,
-            U: Metadata + Send + Sync + 'static,
-        >(
-            &self,
-            _: Vec<String>,
-            _: Receiver<T>,
-            _: &U,
-        ) -> Vec<Message> {
-            todo!()
         }
     }
 }

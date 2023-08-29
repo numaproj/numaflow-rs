@@ -1,4 +1,4 @@
-use numaflow::function::start_uds_server;
+use numaflow::map::start_uds_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,33 +18,19 @@ pub(crate) mod cat {
         }
     }
 
-    use numaflow::function;
-    use numaflow::function::{Datum, Message, Metadata};
-    use tokio::sync::mpsc::Receiver;
+    use numaflow::map;
 
     #[tonic::async_trait]
-    impl function::FnHandler for Cat {
-        async fn map_handle<T>(&self, input: T) -> Vec<function::Message>
+    impl map::Mapper for Cat {
+        async fn map<T>(&self, input: T) -> Vec<map::Message>
         where
-            T: function::Datum + Send + Sync + 'static,
+            T: map::Datum + Send + Sync + 'static,
         {
-            vec![function::Message {
+            vec![map::Message {
                 keys: input.keys().clone(),
                 value: input.value().clone(),
                 tags: vec![],
             }]
-        }
-
-        async fn reduce_handle<
-            T: Datum + Send + Sync + 'static,
-            U: Metadata + Send + Sync + 'static,
-        >(
-            &self,
-            _: Vec<String>,
-            _: Receiver<T>,
-            _: &U,
-        ) -> Vec<Message> {
-            todo!()
         }
     }
 }
