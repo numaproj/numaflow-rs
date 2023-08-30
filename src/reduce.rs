@@ -140,7 +140,7 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
     let (st, et) = (
         request
             .get(WIN_START_TIME)
-            .expect(format!("expected key {}", WIN_START_TIME).as_str())
+            .unwrap_or_else(|| panic!("expected key {}", WIN_START_TIME))
             .to_str()
             .unwrap()
             .to_string()
@@ -148,7 +148,7 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
             .unwrap(),
         request
             .get(WIN_END_TIME)
-            .expect(format!("expected key {}", WIN_END_TIME).as_str())
+            .unwrap_or_else(|| panic!("expected key {}", WIN_END_TIME))
             .to_str()
             .unwrap()
             .parse::<i64>()
@@ -172,7 +172,7 @@ where
         request: Request<tonic::Streaming<ReduceRequest>>,
     ) -> Result<Response<Self::ReduceFnStream>, Status> {
         // get gRPC window from metadata
-        let (start_win, end_win) = get_window_details(&request.metadata());
+        let (start_win, end_win) = get_window_details(request.metadata());
         let md = Arc::new(IntervalWindow::new(start_win, end_win));
 
         let mut key_to_tx: HashMap<String, Sender<OwnedReduceRequest>> = HashMap::new();
@@ -251,7 +251,7 @@ where
 {
     shared::write_info_file();
 
-    let path = "/var/run/numaflow/map.sock";
+    let path = "/var/run/numaflow/reduce.sock";
     std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
 
     let uds = tokio::net::UnixListener::bind(path)?;
