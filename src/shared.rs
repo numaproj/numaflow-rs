@@ -5,7 +5,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use prost_types::Timestamp;
 
 pub(crate) fn write_info_file() {
-    let path = if let Some(_) = std::env::var_os("NUMAFLOW_POD") {
+    let path = if std::env::var_os("NUMAFLOW_POD").is_some() {
         "/var/run/numaflow/server-info"
     } else {
         "/tmp/numaflow.server-info"

@@ -98,6 +98,7 @@ where
     }
 }
 
+/// Message is the response struct from the [`Mapper::map`] .
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
