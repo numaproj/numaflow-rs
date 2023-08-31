@@ -27,6 +27,60 @@ struct ReduceService<T> {
 /// Trait implemented Reduce reduce handler.
 #[async_trait]
 pub trait Reducer {
+    /// reduce_handle is provided with a set of keys, a channel of [`Datum`], and [`Metadata`]. It
+    /// returns 0, 1, or more results as a [`Vec`] of [`Message`]. Reduce is a stateful operation and
+    /// the channel is for the collection of keys and for that time [Window].
+    /// You can read more about reduce [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/).
+    ///
+    /// # Example
+    ///
+    /// Below is a reduce code to count the number of elements for a given set of keys and window.
+    ///
+    /// ```rust
+    // use numaflow::reduce::start_uds_server;
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let reduce_handler = counter::Counter::new();
+    ///     start_uds_server(reduce_handler).await?;
+    ///     Ok(())
+    /// }
+    /// mod counter {
+    ///     use numaflow::reduce::{Datum, Message};
+    ///     use numaflow::reduce::{Reducer, Metadata};
+    ///     use tokio::sync::mpsc::Receiver;
+    ///     use tonic::async_trait;
+    ///     pub(crate) struct Counter {}
+    ///     impl Counter {
+    ///         pub(crate) fn new() -> Self {
+    ///             Self {}
+    ///         }
+    ///     }
+    ///     #[async_trait]
+    ///     impl Reducer for Counter {
+    ///         async fn reduce<
+    ///             T: Datum + Send + Sync + 'static,
+    ///             U: Metadata + Send + Sync + 'static,
+    ///         >(
+    ///             &self,
+    ///             keys: Vec<String>,
+    ///             mut input: Receiver<T>,
+    ///             md: &U,
+    ///         ) -> Vec<Message> {
+    ///             let mut counter = 0;
+    ///             // the loop exits when input is closed which will happen only on close of book.
+    ///             while (input.recv().await).is_some() {
+    ///                 counter += 1;
+    ///             }
+    ///             vec![Message {
+    ///                 keys: keys.clone(),
+    ///                 value: counter.to_string().into_bytes(),
+    ///                 tags: vec![],
+    ///             }]
+    ///         }
+    ///     }
+    /// }
+    ///```
+    /// [Window]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/windowing/
     async fn reduce<T: Datum + Send + Sync + 'static, U: Metadata + Send + Sync + 'static>(
         &self,
         keys: Vec<String>,
@@ -35,7 +89,7 @@ pub trait Reducer {
     ) -> Vec<Message>;
 }
 
-// IntervalWindow is the start and end boundary of the window.
+/// IntervalWindow is the start and end boundary of the window.
 struct IntervalWindow {
     // st is start time
     st: DateTime<Utc>,
