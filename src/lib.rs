@@ -19,8 +19,5 @@ pub mod map;
 /// reduce is for writing the [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
 pub mod reduce;
 
-/// map and reduce for writing [map and reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/user-defined-functions/) handlers.
-pub mod function;
-
 /// sink for writing [user defined sinks](https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/).
 pub mod sink;
