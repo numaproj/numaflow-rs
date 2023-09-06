@@ -13,6 +13,9 @@
 /// start up code
 mod shared;
 
+/// sourcetransform
+pub mod sourcetransform;
+
 /// map is for writing the [map](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/) handlers.
 pub mod map;
 

@@ -109,7 +109,7 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Datum trait represents an incoming element into the map/reduce handles of [`FnHandler`].
+/// Datum trait represents an incoming element into the map handles of [`Mapper`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None

@@ -1,0 +1,123 @@
+use chrono::{DateTime, Utc};
+use tonic::{async_trait, Request, Response, Status};
+
+use crate::{shared, sourcetransform::sourcetransformer::SourceTransformRequest};
+
+use self::sourcetransformer::{
+    source_transform_response, source_transform_server, ReadyResponse, SourceTransformResponse,
+};
+
+mod sourcetransformer {
+    tonic::include_proto!("sourcetransformer.v1");
+}
+
+struct SourceTransformerService<T> {
+    handler: T,
+}
+
+#[async_trait]
+pub trait SourceTransformer {
+    async fn transform<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
+}
+
+/// Message is the response struct from the [`SourceTransformer::source_tranfrom`] .
+pub struct Message {
+    /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
+    /// be an empty collection.
+    pub keys: Vec<String>,
+    /// Value is the value passed to the next vertex.
+    pub value: Vec<u8>,
+    /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
+    /// event_time from the [`Datum`].
+    pub event_time: DateTime<Utc>,
+    /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
+    pub tags: Vec<String>,
+}
+
+/// Datum trait represents an incoming element into the source_tranfrom handles of [`Sourcetransform`].
+pub trait Datum {
+    /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
+    /// Once called, it will replace the content with None, so subsequent calls will return None
+    fn keys(&self) -> &Vec<String>;
+    /// value is the value in (key, value) terminology of map/reduce paradigm.
+    /// Once called, it will replace the content with None, so subsequent calls will return None
+    fn value(&self) -> &Vec<u8>;
+    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
+    /// time.
+    fn watermark(&self) -> DateTime<Utc>;
+    /// event_time is the time of the element as seen at source or aligned after a reduce operation.
+    fn event_time(&self) -> DateTime<Utc>;
+}
+
+impl Datum for OwnedSourceTransformRequest {
+    fn keys(&self) -> &Vec<String> {
+        &self.keys
+    }
+
+    fn value(&self) -> &Vec<u8> {
+        &self.value
+    }
+
+    fn watermark(&self) -> DateTime<Utc> {
+        self.watermark
+    }
+
+    fn event_time(&self) -> DateTime<Utc> {
+        self.eventtime
+    }
+}
+
+/// Owned copy of MapRequest from Datum.
+struct OwnedSourceTransformRequest {
+    keys: Vec<String>,
+    value: Vec<u8>,
+    watermark: DateTime<Utc>,
+    eventtime: DateTime<Utc>,
+}
+
+impl OwnedSourceTransformRequest {
+    fn new(str: SourceTransformRequest) -> Self {
+        Self {
+            keys: str.keys,
+            value: str.value,
+            watermark: shared::utc_from_timestamp(str.watermark),
+            eventtime: shared::utc_from_timestamp(str.event_time),
+        }
+    }
+}
+#[async_trait]
+impl<T> source_transform_server::SourceTransform for SourceTransformerService<T>
+where
+    T: SourceTransformer + Send + Sync + 'static,
+{
+    async fn source_transform_fn(
+        &self,
+        request: Request<SourceTransformRequest>,
+    ) -> Result<Response<SourceTransformResponse>, Status> {
+        let request = request.into_inner();
+
+        let messages = self
+            .handler
+            .transform(OwnedSourceTransformRequest::new(request))
+            .await;
+
+        let results = messages
+            .into_iter()
+            .map(move |msg| source_transform_response::Result {
+                keys: msg.keys,
+                event_time: Some(prost_types::Timestamp {
+                    seconds: 0,
+                    nanos: 0,
+                }),
+                value: msg.value,
+                tags: msg.tags,
+            })
+            .collect::<Vec<source_transform_response::Result>>();
+
+        Ok(Response::new(SourceTransformResponse { results }))
+    }
+
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
+        Ok(Response::new(ReadyResponse { ready: true }))
+    }
+}
