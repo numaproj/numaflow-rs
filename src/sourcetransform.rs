@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::{shared, sourcetransform::sourcetransformer::SourceTransformRequest};
+use crate::{
+    shared::{self, prost_timestamp_from_utc},
+    sourcetransform::sourcetransformer::SourceTransformRequest,
+};
 
 use self::sourcetransformer::{
     source_transform_response, source_transform_server, ReadyResponse, SourceTransformResponse,
@@ -105,10 +108,7 @@ where
             .into_iter()
             .map(move |msg| source_transform_response::Result {
                 keys: msg.keys,
-                event_time: Some(prost_types::Timestamp {
-                    seconds: 0,
-                    nanos: 0,
-                }),
+                event_time: prost_timestamp_from_utc(msg.event_time),
                 value: msg.value,
                 tags: msg.tags,
             })
@@ -120,4 +120,28 @@ where
     async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
         Ok(Response::new(ReadyResponse { ready: true }))
     }
+}
+
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+where
+    T: SourceTransformer + Send + Sync + 'static,
+{
+    shared::write_info_file();
+
+    let path = "/var/run/numaflow/map.sock";
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
+
+    let uds = tokio::net::UnixListener::bind(path)?;
+    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
+
+    let source_transformer_svc = SourceTransformerService { handler: m };
+
+    tonic::transport::Server::builder()
+        .add_service(source_transform_server::SourceTransformServer::new(
+            source_transformer_svc,
+        ))
+        .serve_with_incoming(_uds_stream)
+        .await?;
+
+    Ok(())
 }
