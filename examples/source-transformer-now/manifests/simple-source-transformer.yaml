@@ -1,0 +1,26 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: simple-source-transformer
+spec:
+  vertices:
+    - name: in
+      source:
+        # A self data generating source
+        generator:
+          rpu: 10
+          duration: 1s
+          keyCount: 5
+          value: 5
+        transformer:
+          container:
+            image: docker.intuit.com/personal/yhl01/rust-source-transformer:v1
+    - name: out
+      sink:
+        # A simple log printing sink
+        log: { }
+  edges:
+    - from: in
+      to: out
+
+

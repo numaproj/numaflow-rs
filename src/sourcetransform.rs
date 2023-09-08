@@ -128,7 +128,7 @@ where
 {
     shared::write_info_file();
 
-    let path = "/var/run/numaflow/map.sock";
+    let path = "/var/run/numaflow/sourcetransform.sock";
     std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
 
     let uds = tokio::net::UnixListener::bind(path)?;
