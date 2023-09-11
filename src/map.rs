@@ -15,7 +15,7 @@ struct MapService<T> {
 /// Mapper trait for implementing Map handler.
 #[async_trait]
 pub trait Mapper {
-    /// map_handle takes in an input element can can produce 0, 1, or more results. The input is a [`Datum`]
+    /// map takes in an input element can can produce 0, 1, or more results. The input is a [`Datum`]
     /// and the output is a [`Vec`] of [`Message`]. In a `map` function, each element is processed
     /// independently and there is no state associated with the elements. More about map can be read
     /// [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#map-udf).
@@ -109,7 +109,7 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Datum trait represents an incoming element into the map/reduce handles of [`FnHandler`].
+/// Datum trait represents an incoming element into the map handles of [`Mapper`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None

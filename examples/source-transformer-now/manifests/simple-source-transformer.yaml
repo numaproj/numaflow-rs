@@ -1,29 +1,27 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-rust-tickgen-serde
+  name: simple-rust-transformer
 spec:
   vertices:
     - name: in
       source:
         # A self data generating source
         generator:
-          rpu: 300
+          rpu: 10
           duration: 1s
           keyCount: 5
           value: 5
-    - name: tickgen-value
-      scale:
-        min: 1
-      udf:
-        container:
-          image: quay.io/numaio/numaflow-rs/map-tickgen-serde:v1
+        transformer:
+          container:
+            image: quay.io/numaio/numaflow-rs/source-transformer-now:v1
+            imagePullPolicy: Always
     - name: out
       sink:
         # A simple log printing sink
         log: { }
   edges:
     - from: in
-      to: tickgen-value
-    - from: tickgen-value
       to: out
+
+

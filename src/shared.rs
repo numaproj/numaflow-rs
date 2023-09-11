@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 
 pub(crate) fn write_info_file() {
@@ -33,4 +33,11 @@ pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
     } else {
         Utc.timestamp_nanos(-1)
     }
+}
+
+pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
+    Some(Timestamp {
+        seconds: t.timestamp(),
+        nanos: t.nanosecond() as i32,
+    })
 }
