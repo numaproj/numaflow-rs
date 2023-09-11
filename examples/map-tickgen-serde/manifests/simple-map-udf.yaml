@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-tickgen-serde
+  name: simple-rust-tickgen-serde
 spec:
   vertices:
     - name: in

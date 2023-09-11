@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-map-cat
+  name: simple-rust-map-cat
 spec:
   vertices:
     - name: in

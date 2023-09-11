@@ -10,7 +10,6 @@ WORKDIR /examples
 COPY src ./src
 
 COPY ./Cargo.toml ./Cargo.toml
-
 COPY ./Cargo.lock ./Cargo.lock
 
 # build for release
