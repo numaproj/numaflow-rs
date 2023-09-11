@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-source-transformer
+  name: simple-rust-transformer
 spec:
   vertices:
     - name: in
@@ -14,7 +14,8 @@ spec:
           value: 5
         transformer:
           container:
-            image: docker.intuit.com/personal/yhl01/rust-source-transformer:v1
+            image: quay.io/numaio/numaflow-rs/source-transformer-now:v1
+            imagePullPolicy: Always
     - name: out
       sink:
         # A simple log printing sink
