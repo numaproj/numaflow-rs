@@ -3,6 +3,7 @@ fn main() {
         .build_server(true)
         .compile(
             &[
+                "proto/source.proto",
                 "proto/sourcetransform.proto",
                 "proto/map.proto",
                 "proto/reduce.proto",
