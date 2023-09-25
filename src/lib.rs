@@ -13,7 +13,10 @@
 /// start up code
 mod shared;
 
-/// sourcetransform
+/// source is for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
+pub mod source;
+
+/// sourcetransform for writing [source data transformers](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/).
 pub mod sourcetransform;
 
 /// map is for writing the [map](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/) handlers.
