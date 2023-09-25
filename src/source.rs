@@ -6,7 +6,7 @@ use crate::source::sourcer::{
     AckRequest, AckResponse, PendingResponse, ReadRequest, ReadResponse, ReadyResponse,
 };
 use chrono::{DateTime, Utc};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 
@@ -21,7 +21,7 @@ struct SourceService<T> {
 #[async_trait]
 pub trait Sourcer {
     /// read ...
-    async fn read(&self, request: SourceReadRequest) -> Vec<Message>;
+    async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
     /// Ack ...
     async fn ack(&self, offsets: Vec<Offset>);
     /// pending...
@@ -55,33 +55,43 @@ where
         request: Request<ReadRequest>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let sr = request.into_inner().request.unwrap();
-
-        let responses = self
-            .handler
-            .read(SourceReadRequest {
-                count: sr.num_records as usize,
-                timeout: Duration::from_millis(sr.timeout_in_ms as u64),
-            })
-            .await;
-
         let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
+        let (mtx, mut mrx) = mpsc::channel::<Message>(1);
+
         tokio::spawn(async move {
-            for resp in responses {
-                tx.send(Ok(ReadResponse {
-                    result: Some(sourcer::read_response::Result {
-                        payload: resp.value,
-                        offset: Some(sourcer::Offset {
-                            offset: resp.offset.offset,
-                            partition_id: resp.offset.partition_id,
-                        }),
-                        event_time: prost_timestamp_from_utc(resp.event_time),
-                        keys: resp.keys,
-                    }),
-                }))
-                .await
-                .unwrap();
+            loop {
+                match mrx.blocking_recv() {
+                    Some(resp) => {
+                        tx.send(Ok(ReadResponse {
+                            result: Some(sourcer::read_response::Result {
+                                payload: resp.value,
+                                offset: Some(sourcer::Offset {
+                                    offset: resp.offset.offset,
+                                    partition_id: resp.offset.partition_id,
+                                }),
+                                event_time: prost_timestamp_from_utc(resp.event_time),
+                                keys: resp.keys,
+                            }),
+                        }))
+                        .await
+                        .unwrap();
+                    }
+                    None => {
+                        break;
+                    }
+                };
             }
         });
+
+        self.handler
+            .read(
+                SourceReadRequest {
+                    count: sr.num_records as usize,
+                    timeout: Duration::from_millis(sr.timeout_in_ms as u64),
+                },
+                mtx,
+            )
+            .await;
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
