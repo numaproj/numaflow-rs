@@ -1,3 +1,6 @@
+#![warn(missing_docs)]
+
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shared::prost_timestamp_from_utc;
@@ -15,19 +18,21 @@ mod sourcer {
 }
 
 struct SourceService<T> {
-    handler: T,
+    handler: Arc<T>,
 }
 
 #[async_trait]
+/// Sourcer trait implements [`read`], [`ack`], and [`pending`] functions for implementing user-defined source.
 pub trait Sourcer {
-    /// read ...
+    /// read ... FILL AFTER EXAMPLE
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
-    /// Ack ...
+    /// Ack ... FILL AFTER EXAMPLE
     async fn ack(&self, offsets: Vec<Offset>);
-    /// pending...
+    /// pending... FILL AFTER EXAMPLE
     async fn pending(&self) -> usize;
 }
 
+/// [`read`]
 pub struct SourceReadRequest {
     /// count ...
     pub count: usize,
@@ -55,43 +60,45 @@ where
         request: Request<ReadRequest>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let sr = request.into_inner().request.unwrap();
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
-        let (mtx, mut mrx) = mpsc::channel::<Message>(1);
 
+        // tx.rx pair for sending data over to user-defined source
+        let (stx, mut srx) = mpsc::channel::<Message>(1);
+        // tx,rx pair for gRPC response
+        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
+
+        // start the ud-source rx asynchronously and start populating the gRPC response so it can be streamed to the gRPC client (numaflow).
         tokio::spawn(async move {
-            loop {
-                match mrx.blocking_recv() {
-                    Some(resp) => {
-                        tx.send(Ok(ReadResponse {
-                            result: Some(sourcer::read_response::Result {
-                                payload: resp.value,
-                                offset: Some(sourcer::Offset {
-                                    offset: resp.offset.offset,
-                                    partition_id: resp.offset.partition_id,
-                                }),
-                                event_time: prost_timestamp_from_utc(resp.event_time),
-                                keys: resp.keys,
-                            }),
-                        }))
-                        .await
-                        .unwrap();
-                    }
-                    None => {
-                        break;
-                    }
-                };
+            while let Some(resp) = srx.recv().await {
+                tx.send(Ok(ReadResponse {
+                    result: Some(sourcer::read_response::Result {
+                        payload: resp.value,
+                        offset: Some(sourcer::Offset {
+                            offset: resp.offset.offset,
+                            partition_id: resp.offset.partition_id,
+                        }),
+                        event_time: prost_timestamp_from_utc(resp.event_time),
+                        keys: resp.keys,
+                    }),
+                }))
+                .await
+                .unwrap();
             }
         });
 
-        self.handler
-            .read(
-                SourceReadRequest {
-                    count: sr.num_records as usize,
-                    timeout: Duration::from_millis(sr.timeout_in_ms as u64),
-                },
-                mtx,
-            )
-            .await;
+        let handler_fn = Arc::clone(&self.handler);
+        // we want to start streaming to the server as soon as possible
+        tokio::spawn(async move {
+            // user-defined source read handler
+            handler_fn
+                .read(
+                    SourceReadRequest {
+                        count: sr.num_records as usize,
+                        timeout: Duration::from_millis(sr.timeout_in_ms as u64),
+                    },
+                    stx,
+                )
+                .await
+        });
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
