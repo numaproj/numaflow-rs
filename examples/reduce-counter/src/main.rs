@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 mod counter {
     use numaflow::reduce::{Datum, Message};
-    use numaflow::reduce::{Reducer, Metadata};
+    use numaflow::reduce::{Metadata, Reducer};
     use tokio::sync::mpsc::Receiver;
     use tonic::async_trait;
 
@@ -25,10 +25,7 @@ mod counter {
 
     #[async_trait]
     impl Reducer for Counter {
-        async fn reduce<
-            T: Datum + Send + Sync + 'static,
-            U: Metadata + Send + Sync + 'static,
-        >(
+        async fn reduce<T: Datum + Send + Sync + 'static, U: Metadata + Send + Sync + 'static>(
             &self,
             keys: Vec<String>,
             mut input: Receiver<T>,
