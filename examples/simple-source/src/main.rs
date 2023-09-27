@@ -1,6 +1,11 @@
+use numaflow::source::start_uds_server;
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_handle = simple_source::SimpleSource::new();
+    start_uds_server(source_handle).await?;
+
+    Ok(())
 }
 
 pub(crate) mod simple_source {
