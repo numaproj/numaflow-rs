@@ -23,7 +23,15 @@ struct SourceService<T> {
 }
 
 #[async_trait]
-/// Sourcer trait implements [`read`], [`ack`], and [`pending`] functions for implementing user-defined source.
+/// Sourcer trait implements [`Sourcer::read`], [`ack`], and [`pending`] functions for implementing user-defined source.
+/// **NOTE**
+/// As per the standard convention, both  [`read`](Read) and  [`numaflow::source::sourcer::ack`](Ack) should be mutable
+/// since they have to update some state. Unfortunately the SDK provides only a shared reference self and thus makes it unmutable. This is because
+/// gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have use SharedState pattern to mutate
+/// the values as recommended in [issue-427]. This might change in future as async traits evolves.
+///
+/// [tonic]: https://github.com/hyperium/tonic/
+/// [issue-427]: https://github.com/hyperium/tonic/issues/427
 pub trait Sourcer {
     /// read reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
