@@ -103,7 +103,7 @@ impl IntervalWindow {
     }
 }
 
-/// Metadata are additional information passed into the [`FnHandler::reduce_handle`].
+/// Metadata are additional information passed into the [`Reducer::reduce`].
 pub trait Metadata {
     /// start_time is the window start time.
     fn start_time(&self) -> &DateTime<Utc>;

@@ -23,19 +23,25 @@ struct SourceService<T> {
 }
 
 #[async_trait]
-/// Sourcer trait implements [`Sourcer::read`], [`ack`], and [`pending`] functions for implementing user-defined source.
-/// **NOTE**
-/// As per the standard convention, both  [`read`](Read) and  [`numaflow::source::sourcer::ack`](Ack) should be mutable
-/// since they have to update some state. Unfortunately the SDK provides only a shared reference self and thus makes it unmutable. This is because
-/// gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have use SharedState pattern to mutate
+/// Sourcer trait implements [`Sourcer::read`], [`Sourcer::ack`], and [`Sourcer::pending`] functions for implementing [user-defined source].
+///
+/// ## Example
+/// Please refer to [simple source](https://github.com/numaproj/numaflow-rs/tree/main/examples/simple-source) for an example.
+///
+/// ## NOTE
+/// The standard convention for both [`Sourcer::read`] and [`Sourcer::ack`] is that they should be mutable,
+/// since they have to update some state. Unfortunately the SDK provides only a shared reference of self and thus makes it unmutable. This is because
+/// gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have to use [SharedState] pattern to mutate
 /// the values as recommended in [issue-427]. This might change in future as async traits evolves.
 ///
+/// [user-defined source]: https://numaflow.numaproj.io/user-guide/sources/overview/
 /// [tonic]: https://github.com/hyperium/tonic/
+/// [SharedState]: https://tokio.rs/tokio/tutorial/shared-state
 /// [issue-427]: https://github.com/hyperium/tonic/issues/427
 pub trait Sourcer {
     /// read reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
-    /// Ack acknowledges the messages that have been processed by the user-defined source.
+    /// acknowledges the messages that have been processed by the user-defined source.
     async fn ack(&self, offsets: Vec<Offset>);
     /// pending returns the number of messages that are yet to be processed by the user-defined source.
     async fn pending(&self) -> usize;

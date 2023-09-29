@@ -96,7 +96,7 @@ pub trait Sinker {
     ) -> Vec<Response>;
 }
 
-/// Response is the result returned from the [`Sinker::handle`].
+/// Response is the result returned from the [`Sinker::sink`].
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,
@@ -107,7 +107,7 @@ pub struct Response {
     pub err: String,
 }
 
-/// Datum trait represents an incoming element into the [`Sinker::handle`].
+/// Datum trait represents an incoming element into the [`Sinker::sink`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     fn keys(&self) -> &Vec<String>;

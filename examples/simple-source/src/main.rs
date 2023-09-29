@@ -1,12 +1,4 @@
 ///! An example for simple User Defined Source. It generates a continuous increasing sequence of offsets and some data for each call to [`numaflow::source::sourcer::read`].
-///! **NOTE**
-///! As per the standard convention, both  [`numaflow::source::sourcer::read`](Read) and  [`numaflow::source::sourcer::ack`](Ack) should be mutable
-///! since they have to update some state. Unfortunately the SDK provides only a shared reference self and thus makes it unmutable. This is because
-///! gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have use SharedState pattern to mutate
-///! the values as recommended in [issue-427]. This might change in future as async traits evolves.
-///!
-///! [tonic]: https://github.com/hyperium/tonic/
-///! [issue-427]: https://github.com/hyperium/tonic/issues/427
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +19,9 @@ pub(crate) mod simple_source {
     use tokio::{sync::mpsc::Sender, time::Instant};
     use tonic::async_trait;
 
+    /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
+    /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK
+    /// does not provide a mutable reference as explained in [`numaflow::source::Sourcer`]
     pub(crate) struct SimpleSource {
         read_idx: AtomicUsize,
         yet_to_ack: RwLock<HashMap<u32, bool>>,
