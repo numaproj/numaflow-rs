@@ -22,14 +22,14 @@ struct SourceTransformerService<T> {
 #[async_trait]
 pub trait SourceTransformer {
     /// transform takes in an input element and can produce 0, 1, or more results. The input is a [`Datum`]
-    /// and the output is a ['Vec`] of [`Message`]. In a `transform` each element is processed independently 
+    /// and the output is a ['Vec`] of [`Message`]. In a `transform` each element is processed independently
     /// and there is no state associated with the elements. Source transformer can be used for transforming
-    /// and assigning event time to input messages. More about source transformer can be read 
+    /// and assigning event time to input messages. More about source transformer can be read
     /// [here](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/)
-    /// 
+    ///
     /// #Example
-    /// 
-    /// 
+    ///
+    ///
     /// ```rust
     /// use numaflow::sourcetransform::start_uds_server;
     ///
@@ -38,9 +38,9 @@ pub trait SourceTransformer {
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///    let transformer_handler = now_transformer::Now::new();
-    /// 
+    ///
     ///    start_uds_server(transformer_handler).await?;
-    /// 
+    ///
     ///    Ok(())
     ///}
     ///
@@ -74,7 +74,7 @@ pub trait SourceTransformer {
     async fn transform<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
 }
 
-/// Message is the response struct from the [`SourceTransformer::source_tranfrom`] .
+/// Message is the response struct from the [`SourceTransformer::transform`] .
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
@@ -88,7 +88,7 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Datum trait represents an incoming element into the source_tranfrom handles of [`Sourcetransform`].
+/// Datum trait represents an incoming element into the source_tranfrom handles of [`SourceTransformer`].
 pub trait Datum {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None

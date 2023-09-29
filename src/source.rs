@@ -3,14 +3,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::prost_timestamp_from_utc;
-use crate::source::sourcer::source_server::Source;
+use crate::shared::{self, prost_timestamp_from_utc};
+use crate::source::sourcer::source_server::{Source, SourceServer};
 use crate::source::sourcer::{
     AckRequest, AckResponse, PendingResponse, ReadRequest, ReadResponse, ReadyResponse,
 };
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::transport::Server;
 use tonic::{async_trait, Request, Response, Status};
 
 mod sourcer {
@@ -22,29 +23,43 @@ struct SourceService<T> {
 }
 
 #[async_trait]
-/// Sourcer trait implements [`read`], [`ack`], and [`pending`] functions for implementing user-defined source.
+/// Sourcer trait implements [`Sourcer::read`], [`Sourcer::ack`], and [`Sourcer::pending`] functions for implementing [user-defined source].
+///
+/// ## Example
+/// Please refer to [simple source](https://github.com/numaproj/numaflow-rs/tree/main/examples/simple-source) for an example.
+///
+/// ## NOTE
+/// The standard convention for both [`Sourcer::read`] and [`Sourcer::ack`] is that they should be mutable,
+/// since they have to update some state. Unfortunately the SDK provides only a shared reference of self and thus makes it unmutable. This is because
+/// gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have to use [SharedState] pattern to mutate
+/// the values as recommended in [issue-427]. This might change in future as async traits evolves.
+///
+/// [user-defined source]: https://numaflow.numaproj.io/user-guide/sources/overview/
+/// [tonic]: https://github.com/hyperium/tonic/
+/// [SharedState]: https://tokio.rs/tokio/tutorial/shared-state
+/// [issue-427]: https://github.com/hyperium/tonic/issues/427
 pub trait Sourcer {
-    /// read ... FILL AFTER EXAMPLE
+    /// read reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
-    /// Ack ... FILL AFTER EXAMPLE
+    /// acknowledges the messages that have been processed by the user-defined source.
     async fn ack(&self, offsets: Vec<Offset>);
-    /// pending... FILL AFTER EXAMPLE
+    /// pending returns the number of messages that are yet to be processed by the user-defined source.
     async fn pending(&self) -> usize;
 }
 
-/// [`read`]
+/// SourceReadRequest is the request from the gRPC client (numaflow) to the user's [`Sourcer::read`].
 pub struct SourceReadRequest {
-    /// count ...
+    /// count is the number of messages to be read.
     pub count: usize,
-    /// timeout ...
+    /// timeout is the timeout in milliseconds.
     pub timeout: Duration,
 }
 
-/// ...
+/// Offset is the offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
 pub struct Offset {
-    /// ...
+    /// offset is the offset in bytes.
     pub offset: Vec<u8>,
-    /// ...
+    /// partition_id is the partition_id of the message.
     pub partition_id: String,
 }
 
@@ -106,6 +121,7 @@ where
     async fn ack_fn(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
         let ar: AckRequest = request.into_inner();
 
+        // invoke the user-defined source's ack handler
         let offsets = ar
             .request
             .unwrap()
@@ -125,6 +141,7 @@ where
     }
 
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<PendingResponse>, Status> {
+        // invoke the user-defined source's pending handler
         let pending = self.handler.pending().await;
 
         Ok(Response::new(PendingResponse {
@@ -139,14 +156,42 @@ where
     }
 }
 
-/// ...
+/// Message is the response from the user's [`Sourcer::read`]
 pub struct Message {
-    /// ...
+    /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
-    /// ...
+    /// Offset is the offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
     pub offset: Offset,
-    /// ...
+    /// EventTime is the time at which the message was generated.
     pub event_time: DateTime<Utc>,
-    /// ...
+    /// Keys are the keys of the message.
     pub keys: Vec<String>,
+}
+
+/// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+where
+    T: Sourcer + Send + Sync + 'static,
+{
+    shared::write_info_file();
+
+    let path = "/var/run/numaflow/source.sock";
+    fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
+    use std::fs;
+    use tokio::net::UnixListener;
+    use tokio_stream::wrappers::UnixListenerStream;
+
+    let uds = UnixListener::bind(path)?;
+    let _uds_stream = UnixListenerStream::new(uds);
+
+    let source_service = SourceService {
+        handler: Arc::new(m),
+    };
+
+    Server::builder()
+        .add_service(SourceServer::new(source_service))
+        .serve_with_incoming(_uds_stream)
+        .await?;
+
+    Ok(())
 }

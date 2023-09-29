@@ -1,0 +1,22 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: kafka-pl
+spec:
+  vertices:
+    - name: in
+      scale:
+        min: 1
+      source:
+        udsource:
+          container:
+            image: quay.io/numaio/numaflow-rs/simple-source:v1
+            imagePullPolicy: Always
+    - name: out
+      scale:
+        min: 1
+      sink:
+        log: {}
+  edges:
+    - from: in
+      to: out
