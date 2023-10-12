@@ -8,6 +8,7 @@ fn main() {
                 "proto/map.proto",
                 "proto/reduce.proto",
                 "proto/sink.proto",
+                "proto/sideinput.proto",
             ],
             &["proto"],
         )

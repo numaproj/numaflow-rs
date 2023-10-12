@@ -27,3 +27,6 @@ pub mod reduce;
 
 /// sink for writing [user defined sinks](https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/).
 pub mod sink;
+
+/// building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/)
+pub mod sideinput;
