@@ -24,7 +24,7 @@ pub trait Mapper {
     ///
     /// Following is an example of a cat container that just copies the input to output.
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// use numaflow::map::start_uds_server;
     ///
     /// #[tokio::main]

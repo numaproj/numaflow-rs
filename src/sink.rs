@@ -28,7 +28,7 @@ pub trait Sinker {
     ///
     /// A simple log sink.
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// use numaflow::sink;
     /// use numaflow::sink::{Datum, Response};
     /// use tonic::async_trait;

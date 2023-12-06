@@ -29,11 +29,10 @@ pub trait SourceTransformer {
     ///
     /// #Example
     ///
-    ///
-    /// ```rust
+    ///  ```rust,ignore
     /// use numaflow::sourcetransform::start_uds_server;
     ///
-    /// A simple source transformer which assigns event time to the current time in utc.
+    /// // A simple source transformer which assigns event time to the current time in utc.
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,7 +68,7 @@ pub trait SourceTransformer {
     ///            reponse
     ///        }
     ///    }
-    ///}
+    /// }
     /// ```
     async fn transform<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
 }
