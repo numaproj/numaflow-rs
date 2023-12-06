@@ -32,7 +32,7 @@ pub trait SourceTransformer {
     ///  ```rust,ignore
     /// use numaflow::sourcetransform::start_uds_server;
     ///
-    /// //A simple source transformer which assigns event time to the current time in utc.
+    /// // A simple source transformer which assigns event time to the current time in utc.
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
