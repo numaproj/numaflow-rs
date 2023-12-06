@@ -36,7 +36,7 @@ pub trait Reducer {
     ///
     /// Below is a reduce code to count the number of elements for a given set of keys and window.
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// use numaflow::reduce::start_uds_server;
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
