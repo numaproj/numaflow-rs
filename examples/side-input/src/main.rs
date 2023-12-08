@@ -6,20 +6,20 @@ use std::sync::Mutex;
 
 
 
-struct MyHandler {
+struct SideInputHandler {
     counter: Mutex<u32>,
 }
 
-impl MyHandler {
+impl SideInputHandler {
     pub fn new() -> Self {
-        MyHandler {
+        SideInputHandler {
             counter: Mutex::new(0),
         }
     }
 }
 
 #[async_trait]
-impl SideInputer for MyHandler {
+impl SideInputer for SideInputHandler {
 
     async fn retrieve_sideinput(& self) -> Option<Vec<u8>> {
         let current_time = SystemTime::now()
@@ -39,7 +39,7 @@ impl SideInputer for MyHandler {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let handler = MyHandler::new();
-    start_uds_server(handler).await?;
+    let side_input_handler = SideInputHandler::new();
+    start_uds_server(side_input_handler).await?;
     Ok(())
 }
