@@ -4,7 +4,6 @@ use std::path::Path;
 use tonic::{async_trait};
 use tokio::spawn;
 
-
 const DIR_PATH: &str = "/var/run/numaflow/sideinput.sock";
 struct UdfMapper {}
 #[async_trait]
@@ -20,21 +19,22 @@ impl Mapper for UdfMapper {
 }
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let udf_map=UdfMapper{};
-    start_uds_server(udf_map).await?;
-
     // Spawn the file watcher task
     spawn(async {
-        match file_watcher() {
+        match file_watcher().await {
             Ok(_) => println!("File watcher is running"),
             Err(e) => println!("File watcher error: {:?}", e),
         }
     });
+
+    let udf_map=UdfMapper{};
+    start_uds_server(udf_map).await?;
+
     Ok(())
 }
 
 
-fn file_watcher() -> Result<()>{
+async fn file_watcher() -> Result<()>{
     let mut watcher = notify::recommended_watcher(|res| {
         match res {
             Ok(event) => println!("event: {:?}", event),
