@@ -2,9 +2,10 @@ use notify::{Watcher, RecursiveMode, Result};
 use numaflow::map::{Mapper,Message,start_uds_server,Datum};
 use std::path::Path;
 use tonic::{async_trait};
+use tokio::spawn;
+
 
 const DIR_PATH: &str = "/var/run/numaflow/sideinput.sock";
-
 struct UdfMapper {}
 #[async_trait]
 impl Mapper for UdfMapper {
@@ -21,6 +22,14 @@ impl Mapper for UdfMapper {
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let udf_map=UdfMapper{};
     start_uds_server(udf_map).await?;
+
+    // Spawn the file watcher task
+    spawn(async {
+        match file_watcher() {
+            Ok(_) => println!("File watcher is running"),
+            Err(e) => println!("File watcher error: {:?}", e),
+        }
+    });
     Ok(())
 }
 
