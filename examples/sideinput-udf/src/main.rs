@@ -4,7 +4,7 @@ use std::path::Path;
 use tonic::{async_trait};
 use tokio::spawn;
 
-const DIR_PATH: &str = "/var/run/numaflow/sideinput.sock";
+const DIR_PATH: &str = "/var/numaflow/side-inputs";
 struct UdfMapper {}
 #[async_trait]
 impl Mapper for UdfMapper {
