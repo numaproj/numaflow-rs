@@ -1,10 +1,12 @@
-use std::collections::HashMap;
 use std::fs;
+use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use tracing::info;
 
-pub(crate) fn write_info_file() {
+#[tracing::instrument]
+pub(crate) fn write_info_file() -> io::Result<()> {
     let path = if std::env::var_os("NUMAFLOW_POD").is_some() {
         "/var/run/numaflow/server-info"
     } else {
@@ -21,10 +23,9 @@ pub(crate) fn write_info_file() {
     });
 
     // Convert to a string of JSON and print it out
-    let content = info.to_string();
-    let content = format!("{}U+005C__END__", content);
-    println!("wrote to {} {}", path, content);
-    fs::write(path, content).unwrap();
+    let content = format!("{}U+005C__END__", info);
+    info!(path, content, "Writing to file");
+    fs::write(path, content)
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
