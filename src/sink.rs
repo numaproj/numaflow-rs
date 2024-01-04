@@ -225,16 +225,15 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sinker + Send + Sync + 'static,
 {
-    shared::write_info_file();
+    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
 
     let path = "/var/run/numaflow/sink.sock";
-    fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
-    use std::fs;
-    use tokio::net::UnixListener;
-    use tokio_stream::wrappers::UnixListenerStream;
+    let path = std::path::Path::new(path);
+    std::fs::create_dir_all(path.parent().unwrap())
+        .map_err(|e| format!("creating directory /var/run/numaflow : {e:?}"))?;
 
-    let uds = UnixListener::bind(path)?;
-    let _uds_stream = UnixListenerStream::new(uds);
+    let uds = tokio::net::UnixListener::bind(path)?;
+    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
 
     let sink_service = SinkService { handler: m };
 
