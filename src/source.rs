@@ -50,6 +50,7 @@ pub trait Sourcer {
     /// Returns the partitions associated with the source. This will be used by the platform to determine
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
+    /// If None is returned, Numaflow replica-id will be returned as the partition.
     async fn partitions(&self) -> Option<Vec<i32>>;
 }
 
