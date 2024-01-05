@@ -8,15 +8,16 @@ name = "numaflow"
 path = "src/lib.rs"
 
 [dependencies]
-tonic = "0.9"
-prost = "0.11"
-prost-types = "0.11.9"
+tonic = "0.10.2"
+prost = "0.12.3"
+prost-types = "0.12.3"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
-serde = { version = "1.0.103", features = ["derive"] }
-chrono = "0.4.26"
-serde_json = "1.0.103"
-futures-util = "0.3.28"
+serde = { version = "1.0.194", features = ["derive"] }
+chrono = "0.4.31"
+serde_json = "1.0.111"
+futures-util = "0.3.30"
+tracing = "0.1.40"
 
 [build-dependencies]
-tonic-build = "0.9"
+tonic-build = "0.10.2"

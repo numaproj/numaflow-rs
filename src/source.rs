@@ -14,6 +14,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Server;
 use tonic::{async_trait, Request, Response, Status};
 
+use self::sourcer::{partitions_response, PartitionsResponse};
+
 mod sourcer {
     tonic::include_proto!("source.v1");
 }
@@ -23,14 +25,14 @@ struct SourceService<T> {
 }
 
 #[async_trait]
-/// Sourcer trait implements [`Sourcer::read`], [`Sourcer::ack`], and [`Sourcer::pending`] functions for implementing [user-defined source].
+/// Trait representing a [user defined source](https://numaflow.numaproj.io/user-guide/sources/overview/).
 ///
 /// ## Example
 /// Please refer to [simple source](https://github.com/numaproj/numaflow-rs/tree/main/examples/simple-source) for an example.
 ///
 /// ## NOTE
 /// The standard convention for both [`Sourcer::read`] and [`Sourcer::ack`] is that they should be mutable,
-/// since they have to update some state. Unfortunately the SDK provides only a shared reference of self and thus makes it unmutable. This is because
+/// since they have to update some state. Unfortunately the SDK provides only a shared reference of self and thus makes it immutable. This is because
 /// gRPC [tonic] provides only a shared reference for its traits. This means, the implementer for trait will have to use [SharedState] pattern to mutate
 /// the values as recommended in [issue-427]. This might change in future as async traits evolves.
 ///
@@ -39,28 +41,33 @@ struct SourceService<T> {
 /// [SharedState]: https://tokio.rs/tokio/tutorial/shared-state
 /// [issue-427]: https://github.com/hyperium/tonic/issues/427
 pub trait Sourcer {
-    /// read reads the messages from the source and sends them to the transmitter.
+    /// Reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
-    /// acknowledges the messages that have been processed by the user-defined source.
+    /// Acknowledges the messages that have been processed by the user-defined source.
     async fn ack(&self, offsets: Vec<Offset>);
-    /// pending returns the number of messages that are yet to be processed by the user-defined source.
+    /// Returns the number of messages that are yet to be processed by the user-defined source.
     async fn pending(&self) -> usize;
+    /// Returns the partitions associated with the source. This will be used by the platform to determine
+    /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
+    /// Kafka is an example of source where a reader can read from multiple partitions.
+    /// If None is returned, Numaflow replica-id will be returned as the partition.
+    async fn partitions(&self) -> Option<Vec<i32>>;
 }
 
-/// SourceReadRequest is the request from the gRPC client (numaflow) to the user's [`Sourcer::read`].
+/// A request from the gRPC client (numaflow) to the user's [`Sourcer::read`].
 pub struct SourceReadRequest {
-    /// count is the number of messages to be read.
+    /// The number of messages to be read.
     pub count: usize,
-    /// timeout is the timeout in milliseconds.
+    /// Request timeout in milliseconds.
     pub timeout: Duration,
 }
 
-/// Offset is the offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
+/// The offset of the message.
 pub struct Offset {
-    /// offset is the offset in bytes.
+    /// Offset value in bytes.
     pub offset: Vec<u8>,
-    /// partition_id is the partition_id of the message.
-    pub partition_id: String,
+    /// Partition ID of the message.
+    pub partition_id: i32,
 }
 
 #[async_trait]
@@ -76,7 +83,7 @@ where
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let sr = request.into_inner().request.unwrap();
 
-        // tx.rx pair for sending data over to user-defined source
+        // tx,rx pair for sending data over to user-defined source
         let (stx, mut srx) = mpsc::channel::<Message>(1);
         // tx,rx pair for gRPC response
         let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
@@ -146,8 +153,24 @@ where
 
         Ok(Response::new(PendingResponse {
             result: Some(sourcer::pending_response::Result {
-                count: pending as u64,
+                count: pending as i64,
             }),
+        }))
+    }
+
+    async fn partitions_fn(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<PartitionsResponse>, Status> {
+        let partitions = match self.handler.partitions().await {
+            Some(v) => v,
+            None => vec![std::env::var("NUMAFLOW_REPLICA")
+                .unwrap_or_default()
+                .parse::<i32>()
+                .unwrap_or_default()],
+        };
+        Ok(Response::new(PartitionsResponse {
+            result: Some(partitions_response::Result { partitions }),
         }))
     }
 
@@ -173,16 +196,15 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    shared::write_info_file();
+    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
 
     let path = "/var/run/numaflow/source.sock";
-    fs::create_dir_all(std::path::Path::new(path).parent().unwrap())?;
-    use std::fs;
-    use tokio::net::UnixListener;
-    use tokio_stream::wrappers::UnixListenerStream;
+    let path = std::path::Path::new(path);
+    let parent = path.parent().unwrap();
+    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
 
-    let uds = UnixListener::bind(path)?;
-    let _uds_stream = UnixListenerStream::new(uds);
+    let uds = tokio::net::UnixListener::bind(path)?;
+    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
 
     let source_service = SourceService {
         handler: Arc::new(m),
@@ -191,7 +213,6 @@ where
     Server::builder()
         .add_service(SourceServer::new(source_service))
         .serve_with_incoming(_uds_stream)
-        .await?;
-
-    Ok(())
+        .await
+        .map_err(Into::into)
 }
