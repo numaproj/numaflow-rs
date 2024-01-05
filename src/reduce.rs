@@ -307,8 +307,8 @@ where
 
     let path = "/var/run/numaflow/reduce.sock";
     let path = std::path::Path::new(path);
-    std::fs::create_dir_all(path.parent().unwrap())
-        .map_err(|e| format!("creating directory /var/run/numaflow : {e:?}"))?;
+    let parent = path.parent().unwrap();
+    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
 
     let uds = tokio::net::UnixListener::bind(path)?;
     let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
