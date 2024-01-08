@@ -303,23 +303,14 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Reducer + Send + Sync + 'static,
 {
-    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
-
-    let path = "/var/run/numaflow/reduce.sock";
-    let path = std::path::Path::new(path);
-    let parent = path.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(path)?;
-    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
-
+    let listener = shared::create_listener_stream()?;
     let reduce_svc = ReduceService {
         handler: Arc::new(m),
     };
 
     tonic::transport::Server::builder()
         .add_service(reduce_server::ReduceServer::new(reduce_svc))
-        .serve_with_incoming(_uds_stream)
+        .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
 }

@@ -1,6 +1,5 @@
 #![warn(missing_docs)]
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shared::{self, prost_timestamp_from_utc};
@@ -21,7 +20,7 @@ mod sourcer {
 }
 
 struct SourceService<T> {
-    handler: Arc<T>,
+    handler: T,
 }
 
 #[async_trait]
@@ -73,7 +72,7 @@ pub struct Offset {
 #[async_trait]
 impl<T> Source for SourceService<T>
 where
-    T: Sourcer + Send + Sync + 'static,
+    T: Sourcer + Clone + Send + Sync + 'static,
 {
     type ReadFnStream = ReceiverStream<Result<ReadResponse, Status>>;
 
@@ -107,11 +106,11 @@ where
             }
         });
 
-        let handler_fn = Arc::clone(&self.handler);
+        let handler = self.handler.clone();
         // we want to start streaming to the server as soon as possible
         tokio::spawn(async move {
             // user-defined source read handler
-            handler_fn
+            handler
                 .read(
                     SourceReadRequest {
                         count: sr.num_records as usize,
@@ -191,28 +190,17 @@ pub struct Message {
     pub keys: Vec<String>,
 }
 
-/// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
+/// Starts a gRPC server over an UDS (unix-domain-socket) endpoint.
 pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
-    T: Sourcer + Send + Sync + 'static,
+    T: Sourcer + Clone + Send + Sync + 'static,
 {
-    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
-
-    let path = "/var/run/numaflow/source.sock";
-    let path = std::path::Path::new(path);
-    let parent = path.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(path)?;
-    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
-
-    let source_service = SourceService {
-        handler: Arc::new(m),
-    };
+    let listener = shared::create_listener_stream()?;
+    let source_service = SourceService { handler: m };
 
     Server::builder()
         .add_service(SourceServer::new(source_service))
-        .serve_with_incoming(_uds_stream)
+        .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
 }

@@ -48,21 +48,12 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: SideInputer + Send + Sync + 'static,
 {
-    crate::shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
-
-    let path = "/var/run/numaflow/sideinput.sock";
-    let path = std::path::Path::new(path);
-    let parent = path.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(path)?;
-    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
-
+    let listener = crate::shared::create_listener_stream()?;
     let si_svc = SideInputService { handler: m };
 
     tonic::transport::Server::builder()
         .add_service(side_input_server::SideInputServer::new(si_svc))
-        .serve_with_incoming(_uds_stream)
+        .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
 }

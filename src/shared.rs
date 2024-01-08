@@ -3,10 +3,11 @@ use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
 #[tracing::instrument]
-pub(crate) fn write_info_file() -> io::Result<()> {
+fn write_info_file() -> io::Result<()> {
     let path = if std::env::var_os("NUMAFLOW_POD").is_some() {
         "/var/run/numaflow/server-info"
     } else {
@@ -26,6 +27,18 @@ pub(crate) fn write_info_file() -> io::Result<()> {
     let content = format!("{}U+005C__END__", info);
     info!(path, content, "Writing to file");
     fs::write(path, content)
+}
+
+pub(crate) fn create_listener_stream() -> Result<UnixListenerStream, Box<dyn std::error::Error>> {
+    write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
+
+    let path = "/var/run/numaflow/map.sock";
+    let path = std::path::Path::new(path);
+    let parent = path.parent().unwrap();
+    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
+
+    let uds = tokio::net::UnixListener::bind(path)?;
+    Ok(tokio_stream::wrappers::UnixListenerStream::new(uds))
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
