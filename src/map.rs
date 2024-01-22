@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::map::mapper::{map_response, map_server, MapRequest, MapResponse, ReadyResponse};
+use crate::map::mapper::{
+    map_response, map_server, MapRequest as RPCMapRequest, MapResponse, ReadyResponse,
+};
 use crate::shared;
 
 mod mapper {
@@ -30,9 +32,7 @@ pub trait Mapper {
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let map_handler = cat::Cat::new();
-    ///
     ///     start_uds_server(map_handler).await?;
-    ///
     ///     Ok(())
     /// }
     ///
@@ -49,20 +49,17 @@ pub trait Mapper {
     ///
     ///     #[tonic::async_trait]
     ///     impl map::Mapper for Cat {
-    ///         async fn map<T>(&self, input: T) -> Vec<map::Message>
-    ///         where
-    ///             T: map::Datum + Send + Sync + 'static,
-    ///         {
+    ///         async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
     ///             vec![map::Message {
-    ///                 keys: input.keys().clone(),
-    ///                 value: input.value().clone(),
+    ///                 keys: input.keys,
+    ///                 value: input.value,
     ///                 tags: vec![],
     ///             }]
     ///         }
     ///     }
     /// }
     /// ```
-    async fn map<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
+    async fn map(&self, input: MapRequest) -> Vec<Message>;
 }
 
 #[async_trait]
@@ -70,26 +67,15 @@ impl<T> map_server::Map for MapService<T>
 where
     T: Mapper + Send + Sync + 'static,
 {
-    async fn map_fn(&self, request: Request<MapRequest>) -> Result<Response<MapResponse>, Status> {
+    async fn map_fn(
+        &self,
+        request: Request<RPCMapRequest>,
+    ) -> Result<Response<MapResponse>, Status> {
         let request = request.into_inner();
+        let result = self.handler.map(request.into()).await;
 
-        // call the map handle
-        let result = self.handler.map(OwnedMapRequest::new(request)).await;
-
-        let mut response_list = vec![];
-        // build the response struct
-        for message in result {
-            let datum_response = map_response::Result {
-                keys: message.keys,
-                value: message.value,
-                tags: message.tags,
-            };
-            response_list.push(datum_response);
-        }
-
-        // return the result
         Ok(Response::new(MapResponse {
-            results: response_list,
+            results: result.into_iter().map(|msg| msg.into()).collect(),
         }))
     }
 
@@ -109,55 +95,36 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Datum trait represents an incoming element into the map handles of [`Mapper`].
-pub trait Datum {
-    /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
-    /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn keys(&self) -> &Vec<String>;
-    /// value is the value in (key, value) terminology of map/reduce paradigm.
-    /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn value(&self) -> &Vec<u8>;
-    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
-    /// time.
-    fn watermark(&self) -> DateTime<Utc>;
-    /// event_time is the time of the element as seen at source or aligned after a reduce operation.
-    fn event_time(&self) -> DateTime<Utc>;
-}
-
-/// Owned copy of MapRequest from Datum.
-struct OwnedMapRequest {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    watermark: DateTime<Utc>,
-    eventtime: DateTime<Utc>,
-}
-
-impl OwnedMapRequest {
-    fn new(mr: MapRequest) -> Self {
-        Self {
-            keys: mr.keys,
-            value: mr.value,
-            watermark: shared::utc_from_timestamp(mr.watermark),
-            eventtime: shared::utc_from_timestamp(mr.event_time),
+impl From<Message> for map_response::Result {
+    fn from(value: Message) -> Self {
+        map_response::Result {
+            keys: value.keys,
+            value: value.value,
+            tags: value.tags,
         }
     }
 }
 
-impl Datum for OwnedMapRequest {
-    fn keys(&self) -> &Vec<String> {
-        &self.keys
-    }
+/// Incoming request into the map handles of [`Mapper`].
+pub struct MapRequest {
+    /// Set of keys in the (key, value) terminology of map/reduce paradigm.
+    pub keys: Vec<String>,
+    /// The value in the (key, value) terminology of map/reduce paradigm.
+    pub value: Vec<u8>,
+    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
+    pub watermark: DateTime<Utc>,
+    /// Time of the element as seen at source or aligned after a reduce operation.
+    pub eventtime: DateTime<Utc>,
+}
 
-    fn value(&self) -> &Vec<u8> {
-        &self.value
-    }
-
-    fn watermark(&self) -> DateTime<Utc> {
-        self.watermark
-    }
-
-    fn event_time(&self) -> DateTime<Utc> {
-        self.eventtime
+impl From<RPCMapRequest> for MapRequest {
+    fn from(value: RPCMapRequest) -> Self {
+        Self {
+            keys: value.keys,
+            value: value.value,
+            watermark: shared::utc_from_timestamp(value.watermark),
+            eventtime: shared::utc_from_timestamp(value.event_time),
+        }
     }
 }
 
@@ -165,21 +132,12 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Mapper + Send + Sync + 'static,
 {
-    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
-
-    let path = "/var/run/numaflow/map.sock";
-    let path = std::path::Path::new(path);
-    let parent = path.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(path)?;
-    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
-
+    let listener = shared::create_listener_stream()?;
     let map_svc = MapService { handler: m };
 
     tonic::transport::Server::builder()
         .add_service(map_server::MapServer::new(map_svc))
-        .serve_with_incoming(_uds_stream)
+        .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
 }
