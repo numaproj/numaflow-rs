@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shared::{self, prost_timestamp_from_utc};
@@ -20,7 +21,7 @@ mod sourcer {
 }
 
 struct SourceService<T> {
-    handler: T,
+    handler: Arc<T>,
 }
 
 #[async_trait]
@@ -72,7 +73,7 @@ pub struct Offset {
 #[async_trait]
 impl<T> Source for SourceService<T>
 where
-    T: Sourcer + Clone + Send + Sync + 'static,
+    T: Sourcer + Send + Sync + 'static,
 {
     type ReadFnStream = ReceiverStream<Result<ReadResponse, Status>>;
 
@@ -106,11 +107,11 @@ where
             }
         });
 
-        let handler = self.handler.clone();
+        let handler_fn = Arc::clone(&self.handler);
         // we want to start streaming to the server as soon as possible
         tokio::spawn(async move {
             // user-defined source read handler
-            handler
+            handler_fn
                 .read(
                     SourceReadRequest {
                         count: sr.num_records as usize,
@@ -193,10 +194,12 @@ pub struct Message {
 /// Starts a gRPC server over an UDS (unix-domain-socket) endpoint.
 pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
-    T: Sourcer + Clone + Send + Sync + 'static,
+    T: Sourcer + Send + Sync + 'static,
 {
     let listener = shared::create_listener_stream()?;
-    let source_service = SourceService { handler: m };
+    let source_service = SourceService {
+        handler: Arc::new(m),
+    };
 
     Server::builder()
         .add_service(SourceServer::new(source_service))
