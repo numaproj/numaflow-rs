@@ -176,7 +176,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: SourceTransformer + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream()?;
+    let listener = shared::create_listener_stream("sourcetransform")?;
     let source_transformer_svc = SourceTransformerService { handler: m };
 
     tonic::transport::Server::builder()

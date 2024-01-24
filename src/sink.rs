@@ -225,7 +225,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sinker + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream()?;
+    let listener = shared::create_listener_stream("sink")?;
     let sink_service = SinkService { handler: m };
 
     Server::builder()

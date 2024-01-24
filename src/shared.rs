@@ -29,11 +29,12 @@ fn write_info_file() -> io::Result<()> {
     fs::write(path, content)
 }
 
-pub(crate) fn create_listener_stream() -> Result<UnixListenerStream, Box<dyn std::error::Error>> {
+pub(crate) fn create_listener_stream(
+    socket_name: &str,
+) -> Result<UnixListenerStream, Box<dyn std::error::Error>> {
     write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
 
-    let path = "/var/run/numaflow/map.sock";
-    let path = std::path::Path::new(path);
+    let path = std::path::Path::new("/var/run/numaflow").join(format!("{socket_name}.sock"));
     let parent = path.parent().unwrap();
     std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
 

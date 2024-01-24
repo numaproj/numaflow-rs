@@ -196,7 +196,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream()?;
+    let listener = shared::create_listener_stream("source")?;
     let source_service = SourceService {
         handler: Arc::new(m),
     };

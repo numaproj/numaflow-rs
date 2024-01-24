@@ -132,7 +132,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Mapper + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream()?;
+    let listener = shared::create_listener_stream("map")?;
     let map_svc = MapService { handler: m };
 
     tonic::transport::Server::builder()

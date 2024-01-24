@@ -48,7 +48,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: SideInputer + Send + Sync + 'static,
 {
-    let listener = crate::shared::create_listener_stream()?;
+    let listener = crate::shared::create_listener_stream("sideinput")?;
     let si_svc = SideInputService { handler: m };
 
     tonic::transport::Server::builder()

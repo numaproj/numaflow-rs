@@ -303,7 +303,7 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Reducer + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream()?;
+    let listener = shared::create_listener_stream("reduce")?;
     let reduce_svc = ReduceService {
         handler: Arc::new(m),
     };
