@@ -17,45 +17,34 @@ struct MapService<T> {
 /// Mapper trait for implementing Map handler.
 #[async_trait]
 pub trait Mapper {
-    /// map takes in an input element can can produce 0, 1, or more results. The input is a [`Datum`]
-    /// and the output is a [`Vec`] of [`Message`]. In a `map` function, each element is processed
-    /// independently and there is no state associated with the elements. More about map can be read
-    /// [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#map-udf).
+    /// The `map` takes in an input element and can produce 0, 1, or more results.
+    /// In a `map` function, each element is processed independently and there is no state associated with the elements.
+    /// More about map can be read [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#map-udf).
     ///
     /// # Example
     ///
     /// Following is an example of a cat container that just copies the input to output.
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use numaflow::map::start_uds_server;
+    /// use numaflow::map;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let map_handler = cat::Cat::new();
-    ///     start_uds_server(map_handler).await?;
+    ///     start_uds_server(Cat).await?;
     ///     Ok(())
     /// }
     ///
-    /// pub(crate) mod cat {
-    ///     pub(crate) struct Cat {}
+    /// struct Cat;
     ///
-    ///     impl Cat {
-    ///         pub(crate) fn new() -> Self {
-    ///             Self {}
-    ///         }
-    ///     }
-    ///
-    ///     use numaflow::map;
-    ///
-    ///     #[tonic::async_trait]
-    ///     impl map::Mapper for Cat {
-    ///         async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-    ///             vec![map::Message {
-    ///                 keys: input.keys,
-    ///                 value: input.value,
-    ///                 tags: vec![],
-    ///             }]
-    ///         }
+    /// #[tonic::async_trait]
+    /// impl map::Mapper for Cat {
+    ///     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
+    ///         vec![map::Message {
+    ///             keys: input.keys,
+    ///             value: input.value,
+    ///             tags: vec![],
+    ///         }]
     ///     }
     /// }
     /// ```
