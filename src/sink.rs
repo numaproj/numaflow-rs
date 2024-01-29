@@ -221,11 +221,17 @@ where
 }
 
 /// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
-pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: Sinker + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream("sink")?;
+    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
+        "/var/run/numaflow/server-info"
+    } else {
+        "/tmp/numaflow.server-info"
+    };
+    let socket_file = "/var/run/numaflow/sink.sock";
+    let listener = shared::create_listener_stream(socket_file, server_info_file)?;
     let sink_service = SinkService { handler: m };
 
     Server::builder()

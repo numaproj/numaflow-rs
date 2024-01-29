@@ -192,11 +192,17 @@ pub struct Message {
 }
 
 /// Starts a gRPC server over an UDS (unix-domain-socket) endpoint.
-pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    let listener = shared::create_listener_stream("source")?;
+    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
+        "/var/run/numaflow/server-info"
+    } else {
+        "/tmp/numaflow.server-info"
+    };
+    let socket_file = "/var/run/numaflow/source.sock";
+    let listener = shared::create_listener_stream(socket_file, server_info_file)?;
     let source_service = SourceService {
         handler: Arc::new(m),
     };

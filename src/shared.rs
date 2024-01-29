@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
@@ -6,13 +7,11 @@ use prost_types::Timestamp;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
-#[tracing::instrument]
-fn write_info_file() -> io::Result<()> {
-    let path = if std::env::var_os("NUMAFLOW_POD").is_some() {
-        "/var/run/numaflow/server-info"
-    } else {
-        "/tmp/numaflow.server-info"
-    };
+// #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
+#[tracing::instrument(fields(path = ?path.as_ref()))]
+fn write_info_file(path: impl AsRef<Path>) -> io::Result<()> {
+    let parent = path.as_ref().parent().unwrap();
+    std::fs::create_dir_all(parent)?;
 
     // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
     let metadata: HashMap<String, String> = HashMap::new();
@@ -25,20 +24,20 @@ fn write_info_file() -> io::Result<()> {
 
     // Convert to a string of JSON and print it out
     let content = format!("{}U+005C__END__", info);
-    info!(path, content, "Writing to file");
+    info!(content, "Writing to file");
     fs::write(path, content)
 }
 
 pub(crate) fn create_listener_stream(
-    socket_name: &str,
-) -> Result<UnixListenerStream, Box<dyn std::error::Error>> {
-    write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
+    socket_file: impl AsRef<Path>,
+    server_info_file: impl AsRef<Path>,
+) -> Result<UnixListenerStream, Box<dyn std::error::Error + Send + Sync>> {
+    write_info_file(server_info_file).map_err(|e| format!("writing info file: {e:?}"))?;
 
-    let path = std::path::Path::new("/var/run/numaflow").join(format!("{socket_name}.sock"));
-    let parent = path.parent().unwrap();
+    let parent = socket_file.as_ref().parent().unwrap();
     std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
 
-    let uds = tokio::net::UnixListener::bind(path)?;
+    let uds = tokio::net::UnixListener::bind(socket_file)?;
     Ok(tokio_stream::wrappers::UnixListenerStream::new(uds))
 }
 

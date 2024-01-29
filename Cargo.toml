@@ -21,3 +21,7 @@ tracing = "0.1.40"
 
 [build-dependencies]
 tonic-build = "0.10.2"
+
+[dev-dependencies]
+tempfile = "3.9.0"
+tower = "0.4.13"

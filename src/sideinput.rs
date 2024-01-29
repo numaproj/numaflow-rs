@@ -44,11 +44,17 @@ where
     }
 }
 
-pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: SideInputer + Send + Sync + 'static,
 {
-    let listener = crate::shared::create_listener_stream("sideinput")?;
+    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
+        "/var/run/numaflow/server-info"
+    } else {
+        "/tmp/numaflow.server-info"
+    };
+    let socket_file = "/var/run/numaflow/sideinput.sock";
+    let listener = crate::shared::create_listener_stream(socket_file, server_info_file)?;
     let si_svc = SideInputService { handler: m };
 
     tonic::transport::Server::builder()
