@@ -29,13 +29,10 @@ pub trait Mapper {
     ///
     /// ```no_run
     /// use numaflow::map;
-    /// use tokio::sync::oneshot;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    ///     // Channel can be used to wait for SIGTERM in the background and notify server for graceful shutdown
-    ///     let (_shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    ///     map::Server::new(Cat).start(shutdown_rx).await?;
+    ///     map::Server::new(Cat).start().await?;
     ///     Ok(())
     /// }
     ///
@@ -179,7 +176,7 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start(
+    pub async fn start_with_shutdown(
         &mut self,
         shutdown: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -204,6 +201,33 @@ impl<T> Server<T> {
             .await
             .map_err(Into::into)
     }
+
+    /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: Mapper + Send + Sync + 'static,
+    {
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(wait_for_signal(tx));
+        self.start_with_shutdown(rx).await
+    }
+}
+
+async fn wait_for_signal(tx: oneshot::Sender<()>) {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut interrupt =
+        signal(SignalKind::interrupt()).expect("Failed to register SIGINT interrupt handler");
+    let mut termination =
+        signal(SignalKind::terminate()).expect("Failed to register SIGTERM interrupt handler");
+    tokio::select! {
+        _ = interrupt.recv() =>  {
+            tracing::info!("Received SIGINT. Stopping gRPC server")
+        }
+        _ = termination.recv() => {
+            tracing::info!("Received SIGTERM. Stopping gRPC server")
+        }
+    }
+    tx.send(()).expect("Sending shutdown signal to gRPC server");
 }
 
 #[cfg(test)]
@@ -245,7 +269,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start(shutdown_rx).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -272,6 +296,7 @@ mod tests {
         let msg = &resp.results[0];
         assert_eq!(msg.keys.first(), Some(&"first".to_owned()));
         assert_eq!(msg.value, "hello".as_bytes());
+
         shutdown_tx
             .send(())
             .expect("Sending shutdown signal to gRPC server");
