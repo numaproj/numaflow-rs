@@ -136,7 +136,7 @@ impl<T> Server<T> {
         };
         Server {
             sock_addr: "/var/run/numaflow/map.sock".into(),
-            max_message_size: 4 * 1024 * 1024,
+            max_message_size: 64 * 1024 * 1024,
             server_info_file: server_info_file.into(),
             map_svc: Some(map_svc),
         }
