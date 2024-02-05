@@ -1,14 +1,16 @@
-use notify::{Watcher, RecursiveMode, Result};
-use numaflow::map::{Mapper,Message,start_uds_server,Datum};
+use notify::{RecursiveMode, Result, Watcher};
+use numaflow::map::{MapRequest, Mapper, Message, Server};
 use std::path::Path;
-use tonic::{async_trait};
 use tokio::spawn;
+use tonic::async_trait;
 
 const DIR_PATH: &str = "/var/numaflow/side-inputs";
-struct UdfMapper {}
+
+struct UdfMapper;
+
 #[async_trait]
 impl Mapper for UdfMapper {
-    async fn map<T: Datum + Send + Sync + 'static>(&self, _request:T) -> Vec<Message> {
+    async fn map(&self, _input: MapRequest) -> Vec<Message> {
         let message = Message {
             keys: vec![],
             value: b"some_value".to_vec(),
@@ -17,8 +19,9 @@ impl Mapper for UdfMapper {
         vec![message]
     }
 }
+
 #[tokio::main]
-async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Spawn the file watcher task
     spawn(async {
         match file_watcher().await {
@@ -26,20 +29,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Err(e) => println!("File watcher error: {:?}", e),
         }
     });
-
-    let udf_map=UdfMapper{};
-    start_uds_server(udf_map).await?;
-
-    Ok(())
+    Server::new(UdfMapper).start().await
 }
 
-
-async fn file_watcher() -> Result<()>{
-    let mut watcher = notify::recommended_watcher(|res| {
-        match res {
-            Ok(event) => println!("event: {:?}", event),
-            Err(e) => println!("watch error: {:?}", e),
-        }
+async fn file_watcher() -> Result<()> {
+    let mut watcher = notify::recommended_watcher(|res| match res {
+        Ok(event) => println!("event: {:?}", event),
+        Err(e) => println!("watch error: {:?}", e),
     })?;
     watcher.watch(Path::new(DIR_PATH), RecursiveMode::Recursive)?;
     Ok(())

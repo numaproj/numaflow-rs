@@ -1,4 +1,4 @@
-FROM rust:1.70 as build
+FROM rust:1.75-bookworm as build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -16,7 +16,7 @@ COPY ./Cargo.lock ./Cargo.lock
 RUN cargo build --release
 
 # our final base
-FROM rust
+FROM debian:bookworm
 
 # copy the build artifact from the build stage
 COPY --from=build /examples/target/release/server .

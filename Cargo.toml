@@ -11,7 +11,7 @@ path = "src/lib.rs"
 tonic = "0.10.2"
 prost = "0.12.3"
 prost-types = "0.12.3"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
 serde = { version = "1.0.194", features = ["derive"] }
 chrono = "0.4.31"
@@ -21,3 +21,7 @@ tracing = "0.1.40"
 
 [build-dependencies]
 tonic-build = "0.10.2"
+
+[dev-dependencies]
+tempfile = "3.9.0"
+tower = "0.4.13"

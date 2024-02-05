@@ -1,36 +1,20 @@
-use numaflow::map::start_uds_server;
+use numaflow::map;
+use std::error::Error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let map_handler = cat::Cat::new();
-
-    start_uds_server(map_handler).await?;
-
-    Ok(())
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    map::Server::new(Cat).start().await
 }
 
-pub(crate) mod cat {
-    pub(crate) struct Cat {}
+struct Cat;
 
-    impl Cat {
-        pub(crate) fn new() -> Self {
-            Self {}
-        }
-    }
-
-    use numaflow::map;
-
-    #[tonic::async_trait]
-    impl map::Mapper for Cat {
-        async fn map<T>(&self, input: T) -> Vec<map::Message>
-        where
-            T: map::Datum + Send + Sync + 'static,
-        {
-            vec![map::Message {
-                keys: input.keys().clone(),
-                value: input.value().clone(),
-                tags: vec![],
-            }]
-        }
+#[tonic::async_trait]
+impl map::Mapper for Cat {
+    async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
+        vec![map::Message {
+            keys: input.keys,
+            value: input.value,
+            tags: vec![],
+        }]
     }
 }

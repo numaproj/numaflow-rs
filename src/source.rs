@@ -191,28 +191,25 @@ pub struct Message {
     pub keys: Vec<String>,
 }
 
-/// start_uds_server starts a gRPC server over an UDS (unix-domain-socket) endpoint.
-pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error>>
+/// Starts a gRPC server over an UDS (unix-domain-socket) endpoint.
+pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    shared::write_info_file().map_err(|e| format!("writing info file: {e:?}"))?;
-
-    let path = "/var/run/numaflow/source.sock";
-    let path = std::path::Path::new(path);
-    let parent = path.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(path)?;
-    let _uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
-
+    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
+        "/var/run/numaflow/server-info"
+    } else {
+        "/tmp/numaflow.server-info"
+    };
+    let socket_file = "/var/run/numaflow/source.sock";
+    let listener = shared::create_listener_stream(socket_file, server_info_file)?;
     let source_service = SourceService {
         handler: Arc::new(m),
     };
 
     Server::builder()
         .add_service(SourceServer::new(source_service))
-        .serve_with_incoming(_uds_stream)
+        .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
 }
