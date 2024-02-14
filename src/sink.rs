@@ -3,11 +3,13 @@ use tokio::sync::mpsc;
 use tonic::transport::Server;
 use tonic::{Request, Status, Streaming};
 
-use sinker_grpc::sink_server::SinkServer;
-use sinker_grpc::{ReadyResponse, SinkRequest, SinkResponse};
+use crate::sink::sinker_grpc::{
+    sink_response,
+    sink_server::{Sink, SinkServer},
+    ReadyResponse, SinkRequest as RPCSinkRequest, SinkResponse,
+};
 
 use crate::shared;
-use crate::sink::sinker_grpc::sink_server::Sink;
 
 mod sinker_grpc {
     tonic::include_proto!("sink.v1");
@@ -90,10 +92,33 @@ pub trait Sinker {
     ///     Ok(())
     /// }
     /// ```
-    async fn sink<T: Datum + Send + Sync + 'static>(
-        &self,
-        input: mpsc::Receiver<T>,
-    ) -> Vec<Response>;
+    async fn sink(&self, mut input: mpsc::Receiver<SinkRequest>) -> Vec<Response>;
+}
+
+/// Incoming request into the  handler of [`Sinker`].
+pub struct SinkRequest {
+    /// Set of keys in the (key, value) terminology of map/reduce paradigm.
+    pub keys: Vec<String>,
+    /// The value in the (key, value) terminology of map/reduce paradigm.
+    pub value: Vec<u8>,
+    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
+    pub watermark: DateTime<Utc>,
+    /// Time of the element as seen at source or aligned after a reduce operation.
+    pub eventtime: DateTime<Utc>,
+    /// ID is the unique id of the message to be send to the Sink.
+    pub id: String,
+}
+
+impl From<RPCSinkRequest> for SinkRequest {
+    fn from(sr: RPCSinkRequest) -> Self {
+        Self {
+            keys: sr.keys,
+            value: sr.value,
+            watermark: shared::utc_from_timestamp(sr.watermark),
+            eventtime: shared::utc_from_timestamp(sr.event_time),
+            id: sr.id,
+        }
+    }
 }
 
 /// Response is the result returned from the [`Sinker::sink`].
@@ -107,61 +132,13 @@ pub struct Response {
     pub err: String,
 }
 
-/// Datum trait represents an incoming element into the [`Sinker::sink`].
-pub trait Datum {
-    /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
-    fn keys(&self) -> &Vec<String>;
-    /// value is the value in (key, value) terminology of map/reduce paradigm.
-    fn value(&self) -> &Vec<u8>;
-    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
-    /// time.
-    fn watermark(&self) -> DateTime<Utc>;
-    /// event_time is the time of the element as seen at source or aligned after a reduce operation.
-    fn event_time(&self) -> DateTime<Utc>;
-    /// ID corresponds the unique ID in the message.
-    fn id(&self) -> &str;
-}
-
-/// Owned copy of SinkRequest from tonic.
-struct OwnedSinkRequest {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    watermark: DateTime<Utc>,
-    eventtime: DateTime<Utc>,
-    id: String,
-}
-
-impl OwnedSinkRequest {
-    fn new(sr: SinkRequest) -> Self {
+impl From<Response> for sink_response::Result {
+    fn from(r: Response) -> Self {
         Self {
-            keys: sr.keys,
-            value: sr.value,
-            watermark: shared::utc_from_timestamp(sr.watermark),
-            eventtime: shared::utc_from_timestamp(sr.event_time),
-            id: sr.id,
+            id: r.id,
+            success: r.success,
+            err_msg: r.err.to_string(),
         }
-    }
-}
-
-impl Datum for OwnedSinkRequest {
-    fn keys(&self) -> &Vec<String> {
-        &self.keys
-    }
-
-    fn value(&self) -> &Vec<u8> {
-        &self.value
-    }
-
-    fn watermark(&self) -> DateTime<Utc> {
-        self.watermark
-    }
-
-    fn event_time(&self) -> DateTime<Utc> {
-        self.eventtime
-    }
-
-    fn id(&self) -> &str {
-        &self.id
     }
 }
 
@@ -172,12 +149,12 @@ where
 {
     async fn sink_fn(
         &self,
-        request: Request<Streaming<SinkRequest>>,
+        request: Request<Streaming<RPCSinkRequest>>,
     ) -> Result<tonic::Response<SinkResponse>, Status> {
         let mut stream = request.into_inner();
 
         // TODO: what should be the idle buffer size?
-        let (tx, rx) = mpsc::channel::<OwnedSinkRequest>(1);
+        let (tx, rx) = mpsc::channel::<SinkRequest>(1);
 
         // call the user's sink handle
         let sink_handle = self.handler.sink(rx);
@@ -189,9 +166,8 @@ where
                 .await
                 .expect("expected next message from stream")
             {
-                let owned_next_message = OwnedSinkRequest::new(next_message);
                 // panic is good i think!
-                tx.send(owned_next_message)
+                tx.send(next_message.into())
                     .await
                     .expect("send be successfully received!");
             }
@@ -200,18 +176,8 @@ where
         // wait for the sink handle to respond
         let responses = sink_handle.await;
 
-        // build the result
-        let mut sink_responses: Vec<sinker_grpc::sink_response::Result> = Vec::new();
-        for response in responses {
-            sink_responses.push(sinker_grpc::sink_response::Result {
-                id: response.id,
-                success: response.success,
-                err_msg: response.err.to_string(),
-            })
-        }
-
         Ok(tonic::Response::new(SinkResponse {
-            results: sink_responses,
+            results: responses.into_iter().map(|r| r.into()).collect(),
         }))
     }
 

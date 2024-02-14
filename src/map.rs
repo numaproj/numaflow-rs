@@ -95,7 +95,7 @@ impl From<Message> for map_response::Result {
     }
 }
 
-/// Incoming request into the map handles of [`Mapper`].
+/// Incoming request into the map handler of [`Mapper`].
 pub struct MapRequest {
     /// Set of keys in the (key, value) terminology of map/reduce paradigm.
     pub keys: Vec<String>,
@@ -127,7 +127,7 @@ pub struct Server<T> {
     map_svc: Option<T>,
 }
 
-impl<T> Server<T> {
+impl<T: Mapper> Server<T> {
     pub fn new(map_svc: T) -> Self {
         let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
             "/var/run/numaflow/server-info"
@@ -208,26 +208,9 @@ impl<T> Server<T> {
         T: Mapper + Send + Sync + 'static,
     {
         let (tx, rx) = oneshot::channel::<()>();
-        tokio::spawn(wait_for_signal(tx));
+        tokio::spawn(shared::wait_for_signal(tx));
         self.start_with_shutdown(rx).await
     }
-}
-
-async fn wait_for_signal(tx: oneshot::Sender<()>) {
-    use tokio::signal::unix::{signal, SignalKind};
-    let mut interrupt =
-        signal(SignalKind::interrupt()).expect("Failed to register SIGINT interrupt handler");
-    let mut termination =
-        signal(SignalKind::terminate()).expect("Failed to register SIGTERM interrupt handler");
-    tokio::select! {
-        _ = interrupt.recv() =>  {
-            tracing::info!("Received SIGINT. Stopping gRPC server")
-        }
-        _ = termination.recv() => {
-            tracing::info!("Received SIGTERM. Stopping gRPC server")
-        }
-    }
-    tx.send(()).expect("Sending shutdown signal to gRPC server");
 }
 
 #[cfg(test)]
