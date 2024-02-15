@@ -142,7 +142,8 @@ impl<T: Mapper> Server<T> {
         }
     }
 
-    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections. Defaults value is `/var/run/numaflow/map.sock`
+    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
+    /// Default value is `/var/run/numaflow/map.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.sock_addr = file.into();
         self
