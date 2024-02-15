@@ -1,12 +1,9 @@
+use numaflow::sink::{self, Response, SinkRequest};
 use std::error::Error;
-
-use numaflow::sink::{self, start_uds_server, Response, SinkRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    start_uds_server(Logger {}).await?;
-
-    Ok(())
+    sink::Server::new(Logger {}).start().await
 }
 
 struct Logger {}
