@@ -20,18 +20,18 @@ struct SinkService<T: Sinker> {
     pub handler: T,
 }
 
-/// Sinker trait implements the user defined sink handle.
+/// Sinker trait for implementing user defined sinks.
 ///
 /// Types implementing this trait can be passed as user-defined sink handle.
 #[tonic::async_trait]
 pub trait Sinker {
-    /// The sink handle is given a stream of [`Datum`]. The result is [`Response`].
+    /// The sink handle is given a stream of [`SinkRequest`] and the result is [`Response`].
     ///
     /// # Example
     ///
     /// A simple log sink.
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use numaflow::sink::{self, Response, SinkRequest};
     /// use std::error::Error;
     ///
@@ -40,7 +40,7 @@ pub trait Sinker {
     ///     sink::Server::new(Logger {}).start().await
     /// }
     ///
-    /// struct Logger {}
+    /// struct Logger;
     ///
     /// #[tonic::async_trait]
     /// impl sink::Sinker for Logger {
@@ -105,7 +105,7 @@ impl From<RPCSinkRequest> for SinkRequest {
     }
 }
 
-/// Response is the result returned from the [`Sinker::sink`].
+/// The result of the call to [`Sinker::sink`] method.
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,

@@ -127,7 +127,7 @@ pub struct Server<T> {
     map_svc: Option<T>,
 }
 
-impl<T: Mapper> Server<T> {
+impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
         let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
             "/var/run/numaflow/server-info"

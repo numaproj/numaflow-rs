@@ -6,7 +6,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     sink::Server::new(Logger {}).start().await
 }
 
-struct Logger {}
+struct Logger;
 
 #[tonic::async_trait]
 impl sink::Sinker for Logger {
