@@ -35,12 +35,12 @@ pub trait Sinker {
     /// use numaflow::sink::{self, Response, SinkRequest};
     /// use std::error::Error;
     ///
+    /// struct Logger;
+    ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    ///     sink::Server::new(Logger {}).start().await
+    ///     sink::Server::new(Logger).start().await
     /// }
-    ///
-    /// struct Logger;
     ///
     /// #[tonic::async_trait]
     /// impl sink::Sinker for Logger {

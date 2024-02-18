@@ -3,7 +3,7 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    sink::Server::new(Logger {}).start().await
+    sink::Server::new(Logger).start().await
 }
 
 struct Logger;
