@@ -4,6 +4,7 @@ use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
@@ -54,4 +55,21 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
         seconds: t.timestamp(),
         nanos: t.nanosecond() as i32,
     })
+}
+
+pub(crate) async fn wait_for_signal(tx: oneshot::Sender<()>) {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut interrupt =
+        signal(SignalKind::interrupt()).expect("Failed to register SIGINT interrupt handler");
+    let mut termination =
+        signal(SignalKind::terminate()).expect("Failed to register SIGTERM interrupt handler");
+    tokio::select! {
+        _ = interrupt.recv() =>  {
+            tracing::info!("Received SIGINT. Stopping gRPC server")
+        }
+        _ = termination.recv() => {
+            tracing::info!("Received SIGTERM. Stopping gRPC server")
+        }
+    }
+    tx.send(()).expect("Sending shutdown signal to gRPC server");
 }
