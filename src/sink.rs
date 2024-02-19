@@ -150,7 +150,7 @@ where
                 .await
                 .expect("expected next message from stream")
             {
-                // panic is good i think!
+                // FIXME: panic is very bad idea!
                 tx.send(next_message.into())
                     .await
                     .expect("send be successfully received!");
