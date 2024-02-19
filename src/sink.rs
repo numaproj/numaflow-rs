@@ -179,7 +179,7 @@ pub struct Server<T> {
     svc: Option<T>,
 }
 
-impl<T: Sinker> Server<T> {
+impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
         let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
             "/var/run/numaflow/server-info"
