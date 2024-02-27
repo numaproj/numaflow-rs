@@ -1,11 +1,9 @@
 ///! An example for simple User Defined Source. It generates a continuous increasing sequence of offsets and some data for each call to [`numaflow::source::sourcer::read`].
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let source_handle = simple_source::SimpleSource::new();
-    numaflow::source::start_uds_server(source_handle).await?;
-
-    Ok(())
+    numaflow::source::Server::new(source_handle).start().await
 }
 
 pub(crate) mod simple_source {
@@ -58,7 +56,7 @@ pub(crate) mod simple_source {
                         value: format!("{i} at {offset}").into_bytes(),
                         offset: Offset {
                             offset: offset.to_be_bytes().to_vec(),
-                            partition_id: "0".to_string(),
+                            partition_id: 0,
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
@@ -86,6 +84,10 @@ pub(crate) mod simple_source {
         async fn pending(&self) -> usize {
             // pending for simple source is zero since we are not reading from any external source
             0
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![1])
         }
     }
 }
