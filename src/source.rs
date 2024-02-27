@@ -298,6 +298,7 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
+    use super::sourcer;
     use chrono::Utc;
     use std::vec;
     use std::{error::Error, time::Duration};
@@ -406,8 +407,7 @@ mod tests {
 
         let resp = client.read_fn(request).await?;
         let resp = resp.into_inner();
-        use super::sourcer::read_response::Result;
-        let result: Vec<Result> = resp
+        let result: Vec<sourcer::read_response::Result> = resp
             .map(|item| item.unwrap().result.unwrap())
             .collect()
             .await;
@@ -439,7 +439,6 @@ mod tests {
             .iter()
             .map(|item| item.clone().offset.unwrap())
             .collect();
-        use super::sourcer;
         let ack_request = tonic::Request::new(sourcer::AckRequest {
             request: Some(sourcer::ack_request::Request {
                 offsets: offsets_to_ack,
@@ -470,7 +469,7 @@ mod tests {
         assert_eq!(
             partitions.result.unwrap().partitions,
             vec![2],
-            "Expected number of partitios to be 3"
+            "Expected number of partitions to be 2"
         );
 
         shutdown_tx
