@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 pub(crate) mod simple_source {
     use std::{
-        collections::HashMap,
+        collections::HashSet,
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
     };
@@ -22,14 +22,14 @@ pub(crate) mod simple_source {
     /// does not provide a mutable reference as explained in [`numaflow::source::Sourcer`]
     pub(crate) struct SimpleSource {
         read_idx: AtomicUsize,
-        yet_to_ack: RwLock<HashMap<u32, bool>>,
+        yet_to_ack: RwLock<HashSet<u32>>,
     }
 
     impl SimpleSource {
         pub fn new() -> Self {
             Self {
                 read_idx: AtomicUsize::new(0),
-                yet_to_ack: RwLock::new(HashMap::new()),
+                yet_to_ack: RwLock::new(HashSet::new()),
             }
         }
     }
@@ -37,6 +37,9 @@ pub(crate) mod simple_source {
     #[async_trait]
     impl Sourcer for SimpleSource {
         async fn read(&self, source_request: SourceReadRequest, transmitter: Sender<Message>) {
+            if !self.yet_to_ack.read().unwrap().is_empty() {
+                return;
+            }
             let start = Instant::now();
 
             for i in 1..=source_request.count {
@@ -65,10 +68,8 @@ pub(crate) mod simple_source {
                     .unwrap();
 
                 // add the entry to hashmap to mark the offset as pending to-be-acked
-                match self.yet_to_ack.write() {
-                    Ok(mut guard) => guard.insert(offset as u32, true),
-                    Err(_) => panic!("lock has been poisoned!"),
-                };
+                let mut yet_to_ack = self.yet_to_ack.write().expect("lock has been poisoned");
+                yet_to_ack.insert(offset as u32);
             }
         }
 

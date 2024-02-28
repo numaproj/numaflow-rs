@@ -5,19 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shared::{self, prost_timestamp_from_utc};
-use crate::source::sourcer::source_server::Source;
-use crate::source::sourcer::{
-    AckRequest, AckResponse, PendingResponse, ReadRequest, ReadResponse, ReadyResponse,
-};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 
-use self::sourcer::{partitions_response, source_server, PartitionsResponse};
-
-mod sourcer {
+mod proto {
     tonic::include_proto!("source.v1");
 }
 
@@ -72,30 +66,30 @@ pub struct Offset {
 }
 
 #[async_trait]
-impl<T> Source for SourceService<T>
+impl<T> proto::source_server::Source for SourceService<T>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    type ReadFnStream = ReceiverStream<Result<ReadResponse, Status>>;
+    type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
     async fn read_fn(
         &self,
-        request: Request<ReadRequest>,
+        request: Request<proto::ReadRequest>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let sr = request.into_inner().request.unwrap();
 
         // tx,rx pair for sending data over to user-defined source
         let (stx, mut srx) = mpsc::channel::<Message>(1);
         // tx,rx pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
+        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(1);
 
         // start the ud-source rx asynchronously and start populating the gRPC response so it can be streamed to the gRPC client (numaflow).
         tokio::spawn(async move {
             while let Some(resp) = srx.recv().await {
-                tx.send(Ok(ReadResponse {
-                    result: Some(sourcer::read_response::Result {
+                tx.send(Ok(proto::ReadResponse {
+                    result: Some(proto::read_response::Result {
                         payload: resp.value,
-                        offset: Some(sourcer::Offset {
+                        offset: Some(proto::Offset {
                             offset: resp.offset.offset,
                             partition_id: resp.offset.partition_id,
                         }),
@@ -126,11 +120,14 @@ where
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
-    async fn ack_fn(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
-        let ar: AckRequest = request.into_inner();
+    async fn ack_fn(
+        &self,
+        request: Request<proto::AckRequest>,
+    ) -> Result<Response<proto::AckResponse>, Status> {
+        let ar: proto::AckRequest = request.into_inner();
 
-        let success_response = Response::new(AckResponse {
-            result: Some(sourcer::ack_response::Result { success: Some(()) }),
+        let success_response = Response::new(proto::AckResponse {
+            result: Some(proto::ack_response::Result { success: Some(()) }),
         });
 
         let Some(request) = ar.request else {
@@ -152,12 +149,12 @@ where
         Ok(success_response)
     }
 
-    async fn pending_fn(&self, _: Request<()>) -> Result<Response<PendingResponse>, Status> {
+    async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
         let pending = self.handler.pending().await;
 
-        Ok(Response::new(PendingResponse {
-            result: Some(sourcer::pending_response::Result {
+        Ok(Response::new(proto::PendingResponse {
+            result: Some(proto::pending_response::Result {
                 count: pending as i64,
             }),
         }))
@@ -166,7 +163,7 @@ where
     async fn partitions_fn(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<PartitionsResponse>, Status> {
+    ) -> Result<Response<proto::PartitionsResponse>, Status> {
         let partitions = match self.handler.partitions().await {
             Some(v) => v,
             None => vec![std::env::var("NUMAFLOW_REPLICA")
@@ -174,13 +171,13 @@ where
                 .parse::<i32>()
                 .unwrap_or_default()],
         };
-        Ok(Response::new(PartitionsResponse {
-            result: Some(partitions_response::Result { partitions }),
+        Ok(Response::new(proto::PartitionsResponse {
+            result: Some(proto::partitions_response::Result { partitions }),
         }))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
-        Ok(Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
@@ -269,7 +266,7 @@ impl<T> Server<T> {
             handler: Arc::new(handler),
         };
 
-        let source_svc = source_server::SourceServer::new(source_service)
+        let source_svc = proto::source_server::SourceServer::new(source_service)
             .max_decoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
@@ -298,7 +295,7 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::sourcer;
+    use super::proto;
     use chrono::Utc;
     use std::vec;
     use std::{error::Error, time::Duration};
@@ -316,7 +313,7 @@ mod tests {
     struct Counter {
         end: usize,
         pos: Mutex<usize>,
-        acked: Mutex<usize>,
+        acked: std::sync::Mutex<usize>,
     }
 
     impl Counter {
@@ -324,7 +321,7 @@ mod tests {
             Self {
                 end,
                 pos: Mutex::new(0),
-                acked: Mutex::new(0),
+                acked: std::sync::Mutex::new(0),
             }
         }
     }
@@ -356,11 +353,11 @@ mod tests {
         }
 
         async fn ack(&self, offsets: Vec<Offset>) {
-            *self.acked.lock().await += offsets.len()
+            *self.acked.lock().unwrap() += offsets.len()
         }
 
         async fn pending(&self) -> usize {
-            self.end - *self.acked.lock().await
+            self.end - *self.acked.lock().unwrap()
         }
 
         async fn partitions(&self) -> Option<Vec<i32>> {
@@ -397,9 +394,9 @@ mod tests {
             }))
             .await?;
 
-        let mut client = sourcer::source_client::SourceClient::new(channel);
-        let request = tonic::Request::new(sourcer::ReadRequest {
-            request: Some(sourcer::read_request::Request {
+        let mut client = proto::source_client::SourceClient::new(channel);
+        let request = tonic::Request::new(proto::ReadRequest {
+            request: Some(proto::read_request::Request {
                 num_records: 5,
                 timeout_in_ms: 500,
             }),
@@ -407,7 +404,7 @@ mod tests {
 
         let resp = client.read_fn(request).await?;
         let resp = resp.into_inner();
-        let result: Vec<sourcer::read_response::Result> = resp
+        let result: Vec<proto::read_response::Result> = resp
             .map(|item| item.unwrap().result.unwrap())
             .collect()
             .await;
@@ -435,12 +432,12 @@ mod tests {
             "Expected pending messages to be 8 before ACK"
         );
 
-        let offsets_to_ack: Vec<sourcer::Offset> = result
+        let offsets_to_ack: Vec<proto::Offset> = result
             .iter()
             .map(|item| item.clone().offset.unwrap())
             .collect();
-        let ack_request = tonic::Request::new(sourcer::AckRequest {
-            request: Some(sourcer::ack_request::Request {
+        let ack_request = tonic::Request::new(proto::AckRequest {
+            request: Some(proto::ack_request::Request {
                 offsets: offsets_to_ack,
             }),
         });
