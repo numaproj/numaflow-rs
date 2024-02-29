@@ -154,7 +154,7 @@ impl<T> Server<T> {
         self.sock_addr.as_path()
     }
 
-    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 4MB.
+    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
         self.max_message_size = message_size;
         self

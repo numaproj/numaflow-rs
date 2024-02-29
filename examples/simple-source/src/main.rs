@@ -1,16 +1,14 @@
 ///! An example for simple User Defined Source. It generates a continuous increasing sequence of offsets and some data for each call to [`numaflow::source::sourcer::read`].
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let source_handle = simple_source::SimpleSource::new();
-    numaflow::source::start_uds_server(source_handle).await?;
-
-    Ok(())
+    numaflow::source::Server::new(source_handle).start().await
 }
 
 pub(crate) mod simple_source {
     use std::{
-        collections::HashMap,
+        collections::HashSet,
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
     };
@@ -24,14 +22,14 @@ pub(crate) mod simple_source {
     /// does not provide a mutable reference as explained in [`numaflow::source::Sourcer`]
     pub(crate) struct SimpleSource {
         read_idx: AtomicUsize,
-        yet_to_ack: RwLock<HashMap<u32, bool>>,
+        yet_to_ack: RwLock<HashSet<u32>>,
     }
 
     impl SimpleSource {
         pub fn new() -> Self {
             Self {
                 read_idx: AtomicUsize::new(0),
-                yet_to_ack: RwLock::new(HashMap::new()),
+                yet_to_ack: RwLock::new(HashSet::new()),
             }
         }
     }
@@ -39,6 +37,9 @@ pub(crate) mod simple_source {
     #[async_trait]
     impl Sourcer for SimpleSource {
         async fn read(&self, source_request: SourceReadRequest, transmitter: Sender<Message>) {
+            if !self.yet_to_ack.read().unwrap().is_empty() {
+                return;
+            }
             let start = Instant::now();
 
             for i in 1..=source_request.count {
@@ -58,7 +59,7 @@ pub(crate) mod simple_source {
                         value: format!("{i} at {offset}").into_bytes(),
                         offset: Offset {
                             offset: offset.to_be_bytes().to_vec(),
-                            partition_id: "0".to_string(),
+                            partition_id: 0,
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
@@ -67,10 +68,8 @@ pub(crate) mod simple_source {
                     .unwrap();
 
                 // add the entry to hashmap to mark the offset as pending to-be-acked
-                match self.yet_to_ack.write() {
-                    Ok(mut guard) => guard.insert(offset as u32, true),
-                    Err(_) => panic!("lock has been poisoned!"),
-                };
+                let mut yet_to_ack = self.yet_to_ack.write().expect("lock has been poisoned");
+                yet_to_ack.insert(offset as u32);
             }
         }
 
@@ -86,6 +85,10 @@ pub(crate) mod simple_source {
         async fn pending(&self) -> usize {
             // pending for simple source is zero since we are not reading from any external source
             0
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![1])
         }
     }
 }

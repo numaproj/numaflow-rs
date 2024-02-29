@@ -1,22 +1,17 @@
 #![warn(missing_docs)]
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shared::{self, prost_timestamp_from_utc};
-use crate::source::sourcer::source_server::{Source, SourceServer};
-use crate::source::sourcer::{
-    AckRequest, AckResponse, PendingResponse, ReadRequest, ReadResponse, ReadyResponse,
-};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::Server;
 use tonic::{async_trait, Request, Response, Status};
 
-use self::sourcer::{partitions_response, PartitionsResponse};
-
-mod sourcer {
+mod proto {
     tonic::include_proto!("source.v1");
 }
 
@@ -71,30 +66,30 @@ pub struct Offset {
 }
 
 #[async_trait]
-impl<T> Source for SourceService<T>
+impl<T> proto::source_server::Source for SourceService<T>
 where
     T: Sourcer + Send + Sync + 'static,
 {
-    type ReadFnStream = ReceiverStream<Result<ReadResponse, Status>>;
+    type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
     async fn read_fn(
         &self,
-        request: Request<ReadRequest>,
+        request: Request<proto::ReadRequest>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let sr = request.into_inner().request.unwrap();
 
         // tx,rx pair for sending data over to user-defined source
         let (stx, mut srx) = mpsc::channel::<Message>(1);
         // tx,rx pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(1);
+        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(1);
 
         // start the ud-source rx asynchronously and start populating the gRPC response so it can be streamed to the gRPC client (numaflow).
         tokio::spawn(async move {
             while let Some(resp) = srx.recv().await {
-                tx.send(Ok(ReadResponse {
-                    result: Some(sourcer::read_response::Result {
+                tx.send(Ok(proto::ReadResponse {
+                    result: Some(proto::read_response::Result {
                         payload: resp.value,
-                        offset: Some(sourcer::Offset {
+                        offset: Some(proto::Offset {
                             offset: resp.offset.offset,
                             partition_id: resp.offset.partition_id,
                         }),
@@ -103,7 +98,7 @@ where
                     }),
                 }))
                 .await
-                .unwrap();
+                .expect("receiver dropped");
             }
         });
 
@@ -125,13 +120,22 @@ where
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
-    async fn ack_fn(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
-        let ar: AckRequest = request.into_inner();
+    async fn ack_fn(
+        &self,
+        request: Request<proto::AckRequest>,
+    ) -> Result<Response<proto::AckResponse>, Status> {
+        let ar: proto::AckRequest = request.into_inner();
+
+        let success_response = Response::new(proto::AckResponse {
+            result: Some(proto::ack_response::Result { success: Some(()) }),
+        });
+
+        let Some(request) = ar.request else {
+            return Ok(success_response);
+        };
 
         // invoke the user-defined source's ack handler
-        let offsets = ar
-            .request
-            .unwrap()
+        let offsets = request
             .offsets
             .into_iter()
             .map(|so| Offset {
@@ -142,17 +146,15 @@ where
 
         self.handler.ack(offsets).await;
 
-        Ok(Response::new(AckResponse {
-            result: Some(sourcer::ack_response::Result { success: Some(()) }),
-        }))
+        Ok(success_response)
     }
 
-    async fn pending_fn(&self, _: Request<()>) -> Result<Response<PendingResponse>, Status> {
+    async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
         let pending = self.handler.pending().await;
 
-        Ok(Response::new(PendingResponse {
-            result: Some(sourcer::pending_response::Result {
+        Ok(Response::new(proto::PendingResponse {
+            result: Some(proto::pending_response::Result {
                 count: pending as i64,
             }),
         }))
@@ -161,7 +163,7 @@ where
     async fn partitions_fn(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<PartitionsResponse>, Status> {
+    ) -> Result<Response<proto::PartitionsResponse>, Status> {
         let partitions = match self.handler.partitions().await {
             Some(v) => v,
             None => vec![std::env::var("NUMAFLOW_REPLICA")
@@ -169,47 +171,314 @@ where
                 .parse::<i32>()
                 .unwrap_or_default()],
         };
-        Ok(Response::new(PartitionsResponse {
-            result: Some(partitions_response::Result { partitions }),
+        Ok(Response::new(proto::PartitionsResponse {
+            result: Some(proto::partitions_response::Result { partitions }),
         }))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
-        Ok(Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
 /// Message is the response from the user's [`Sourcer::read`]
 pub struct Message {
-    /// Value is the value passed to the next vertex.
+    /// The value passed to the next vertex.
     pub value: Vec<u8>,
-    /// Offset is the offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
+    /// Offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
     pub offset: Offset,
-    /// EventTime is the time at which the message was generated.
+    /// The time at which the message was generated.
     pub event_time: DateTime<Utc>,
-    /// Keys are the keys of the message.
+    /// Keys of the message.
     pub keys: Vec<String>,
 }
 
-/// Starts a gRPC server over an UDS (unix-domain-socket) endpoint.
-pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-where
-    T: Sourcer + Send + Sync + 'static,
-{
-    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
-        "/var/run/numaflow/server-info"
-    } else {
-        "/tmp/numaflow.server-info"
-    };
-    let socket_file = "/var/run/numaflow/source.sock";
-    let listener = shared::create_listener_stream(socket_file, server_info_file)?;
-    let source_service = SourceService {
-        handler: Arc::new(m),
-    };
+/// gRPC server for starting a [`Sourcer`] service
+#[derive(Debug)]
+pub struct Server<T> {
+    sock_addr: PathBuf,
+    max_message_size: usize,
+    server_info_file: PathBuf,
+    svc: Option<T>,
+}
 
-    Server::builder()
-        .add_service(SourceServer::new(source_service))
-        .serve_with_incoming(listener)
-        .await
-        .map_err(Into::into)
+impl<T> Server<T> {
+    /// Creates a new gRPC `Server` instance
+    pub fn new(source_svc: T) -> Self {
+        let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
+            "/var/run/numaflow/server-info"
+        } else {
+            "/tmp/numaflow.server-info"
+        };
+        Server {
+            sock_addr: "/var/run/numaflow/source.sock".into(),
+            max_message_size: 64 * 1024 * 1024,
+            server_info_file: server_info_file.into(),
+            svc: Some(source_svc),
+        }
+    }
+
+    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
+    /// Default value is `/var/run/numaflow/source.sock`
+    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.sock_addr = file.into();
+        self
+    }
+
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/source.sock`
+    pub fn socket_file(&self) -> &std::path::Path {
+        self.sock_addr.as_path()
+    }
+
+    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 4MB.
+    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
+        self.max_message_size = message_size;
+        self
+    }
+
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
+    }
+
+    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/tmp/numaflow.server-info`
+    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.server_info_file = file.into();
+        self
+    }
+
+    /// Get the path to the file where numaflow server info is stored. Default value is `/tmp/numaflow.server-info`
+    pub fn server_info_file(&self) -> &std::path::Path {
+        self.server_info_file.as_path()
+    }
+
+    /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
+    pub async fn start_with_shutdown(
+        &mut self,
+        shutdown: oneshot::Receiver<()>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: Sourcer + Send + Sync + 'static,
+    {
+        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
+        let handler = self.svc.take().unwrap();
+        let source_service = SourceService {
+            handler: Arc::new(handler),
+        };
+
+        let source_svc = proto::source_server::SourceServer::new(source_service)
+            .max_decoding_message_size(self.max_message_size)
+            .max_decoding_message_size(self.max_message_size);
+
+        let shutdown = async {
+            shutdown
+                .await
+                .expect("Receiving message from shutdown channel");
+        };
+        tonic::transport::Server::builder()
+            .add_service(source_svc)
+            .serve_with_incoming_shutdown(listener, shutdown)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: Sourcer + Send + Sync + 'static,
+    {
+        let (tx, rx) = oneshot::channel::<()>();
+        tokio::spawn(shared::wait_for_signal(tx));
+        self.start_with_shutdown(rx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::proto;
+    use chrono::Utc;
+    use std::collections::HashSet;
+    use std::vec;
+    use std::{error::Error, time::Duration};
+    use tokio_stream::StreamExt;
+    use tower::service_fn;
+
+    use crate::source::{self, Message, Offset, SourceReadRequest};
+    use tempfile::TempDir;
+    use tokio::sync::mpsc::Sender;
+    use tokio::sync::oneshot;
+    use tonic::transport::Uri;
+
+    // A source that repeats the `num` for the requested count
+    struct Repeater {
+        num: usize,
+        yet_to_ack: std::sync::RwLock<HashSet<String>>,
+    }
+
+    impl Repeater {
+        fn new(num: usize) -> Self {
+            Self {
+                num,
+                yet_to_ack: std::sync::RwLock::new(HashSet::new()),
+            }
+        }
+    }
+
+    #[tonic::async_trait]
+    impl source::Sourcer for Repeater {
+        async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
+            let event_time = Utc::now();
+            let mut message_offsets = Vec::with_capacity(request.count);
+            for i in 0..request.count {
+                // we assume timestamp in nanoseconds would be unique on each read operation from our source
+                let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+                transmitter
+                    .send(Message {
+                        value: self.num.to_le_bytes().to_vec(),
+                        event_time,
+                        offset: Offset {
+                            offset: offset.clone().into_bytes(),
+                            partition_id: 0,
+                        },
+                        keys: vec![],
+                    })
+                    .await
+                    .unwrap();
+                message_offsets.push(offset)
+            }
+            self.yet_to_ack.write().unwrap().extend(message_offsets)
+        }
+
+        async fn ack(&self, offsets: Vec<Offset>) {
+            for offset in offsets {
+                self.yet_to_ack
+                    .write()
+                    .unwrap()
+                    .remove(&String::from_utf8(offset.offset).unwrap());
+            }
+        }
+
+        async fn pending(&self) -> usize {
+            // The pending function should return the number of pending messages that can be read from the source.
+            // However, for this source the pending messages will always be 0.
+            // For testing purposes, we return the number of messages that are not yet acknowledged as pending.
+            self.yet_to_ack.read().unwrap().len()
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![2])
+        }
+    }
+
+    #[tokio::test]
+    async fn source_server() -> Result<(), Box<dyn Error>> {
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("source.sock");
+        let server_info_file = tmp_dir.path().join("server_info");
+
+        let mut server = source::Server::new(Repeater::new(8))
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // Connect to a Uds socket
+                let sock_file = sock_file.clone();
+                tokio::net::UnixStream::connect(sock_file)
+            }))
+            .await?;
+
+        let mut client = proto::source_client::SourceClient::new(channel);
+        let request = tonic::Request::new(proto::ReadRequest {
+            request: Some(proto::read_request::Request {
+                num_records: 5,
+                timeout_in_ms: 500,
+            }),
+        });
+
+        let resp = client.read_fn(request).await?;
+        let resp = resp.into_inner();
+        let result: Vec<proto::read_response::Result> = resp
+            .map(|item| item.unwrap().result.unwrap())
+            .collect()
+            .await;
+        let response_values: Vec<usize> = result
+            .iter()
+            .map(|item| {
+                usize::from_le_bytes(
+                    item.payload
+                        .clone()
+                        .try_into()
+                        .expect("expected Vec length to be 8"),
+                )
+            })
+            .collect();
+        assert_eq!(response_values, vec![8, 8, 8, 8, 8]);
+
+        let pending_before_ack = client
+            .pending_fn(tonic::Request::new(()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            pending_before_ack.result.unwrap().count,
+            5,
+            "Expected pending messages to be 5 before ACK"
+        );
+
+        let offsets_to_ack: Vec<proto::Offset> = result
+            .iter()
+            .map(|item| item.clone().offset.unwrap())
+            .collect();
+        let ack_request = tonic::Request::new(proto::AckRequest {
+            request: Some(proto::ack_request::Request {
+                offsets: offsets_to_ack,
+            }),
+        });
+        let resp = client.ack_fn(ack_request).await.unwrap().into_inner();
+        assert!(
+            resp.result.unwrap().success.is_some(),
+            "Expected acknowledgement request to be successful"
+        );
+
+        let pending_before_ack = client
+            .pending_fn(tonic::Request::new(()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            pending_before_ack.result.unwrap().count,
+            0,
+            "Expected pending messages to be 0 after ACK"
+        );
+
+        let partitions = client
+            .partitions_fn(tonic::Request::new(()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            partitions.result.unwrap().partitions,
+            vec![2],
+            "Expected number of partitions to be 2"
+        );
+
+        shutdown_tx
+            .send(())
+            .expect("Sending shutdown signal to gRPC server");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
 }
