@@ -297,9 +297,9 @@ impl<T> Server<T> {
 mod tests {
     use super::proto;
     use chrono::Utc;
+    use std::collections::HashSet;
     use std::vec;
     use std::{error::Error, time::Duration};
-    use tokio::sync::Mutex;
     use tokio_stream::StreamExt;
     use tower::service_fn;
 
@@ -309,55 +309,60 @@ mod tests {
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
 
-    // A source that returns numbers in the range [0..end)
-    struct Counter {
-        end: usize,
-        pos: Mutex<usize>,
-        acked: std::sync::Mutex<usize>,
+    // A source that repeats the `num` for the requested count
+    struct Repeater {
+        num: usize,
+        yet_to_ack: std::sync::RwLock<HashSet<String>>,
     }
 
-    impl Counter {
-        fn new(end: usize) -> Self {
+    impl Repeater {
+        fn new(num: usize) -> Self {
             Self {
-                end,
-                pos: Mutex::new(0),
-                acked: std::sync::Mutex::new(0),
+                num,
+                yet_to_ack: std::sync::RwLock::new(HashSet::new()),
             }
         }
     }
 
     #[tonic::async_trait]
-    impl source::Sourcer for Counter {
+    impl source::Sourcer for Repeater {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
-            let mut pos = self.pos.lock().await;
-            if *pos >= self.end {
-                return;
-            }
-            let mut count = 0;
-            while *pos < self.end && count < request.count {
+            let event_time = Utc::now();
+            let mut message_offsets = Vec::with_capacity(request.count);
+            for i in 0..request.count {
+                // we assume timestamp in nanoseconds would be unique on each read operation from our source
+                let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
                     .send(Message {
-                        value: pos.to_le_bytes().to_vec(),
-                        event_time: Utc::now(),
+                        value: self.num.to_le_bytes().to_vec(),
+                        event_time,
                         offset: Offset {
-                            offset: pos.to_string().into_bytes(),
+                            offset: offset.clone().into_bytes(),
                             partition_id: 0,
                         },
                         keys: vec![],
                     })
                     .await
                     .unwrap();
-                count += 1;
-                *pos += 1;
+                message_offsets.push(offset)
             }
+            self.yet_to_ack.write().unwrap().extend(message_offsets)
         }
 
         async fn ack(&self, offsets: Vec<Offset>) {
-            *self.acked.lock().unwrap() += offsets.len()
+            for offset in offsets {
+                self.yet_to_ack
+                    .write()
+                    .unwrap()
+                    .remove(&String::from_utf8(offset.offset).unwrap());
+            }
         }
 
         async fn pending(&self) -> usize {
-            self.end - *self.acked.lock().unwrap()
+            // The pending function should return the number of pending messages that can be read from the source.
+            // However, for this source the pending messages will always be 0.
+            // For testing purposes, we return the number of messages that are not yet acknowledged as pending.
+            self.yet_to_ack.read().unwrap().len()
         }
 
         async fn partitions(&self) -> Option<Vec<i32>> {
@@ -371,7 +376,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("source.sock");
         let server_info_file = tmp_dir.path().join("server_info");
 
-        let mut server = source::Server::new(Counter::new(8))
+        let mut server = source::Server::new(Repeater::new(8))
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -419,7 +424,7 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(response_values, vec![0, 1, 2, 3, 4]);
+        assert_eq!(response_values, vec![8, 8, 8, 8, 8]);
 
         let pending_before_ack = client
             .pending_fn(tonic::Request::new(()))
@@ -428,8 +433,8 @@ mod tests {
             .into_inner();
         assert_eq!(
             pending_before_ack.result.unwrap().count,
-            8,
-            "Expected pending messages to be 8 before ACK"
+            5,
+            "Expected pending messages to be 5 before ACK"
         );
 
         let offsets_to_ack: Vec<proto::Offset> = result
@@ -454,8 +459,8 @@ mod tests {
             .into_inner();
         assert_eq!(
             pending_before_ack.result.unwrap().count,
-            3,
-            "Expected pending messages to be 3 after ACK"
+            0,
+            "Expected pending messages to be 0 after ACK"
         );
 
         let partitions = client
