@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use tokio::sync::oneshot;
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::map::mapper::{
-    map_response, map_server, MapRequest as RPCMapRequest, MapResponse, ReadyResponse,
-};
+// use crate::map::proto::{
+//   map_response, map_server, MapRequest as RPCMapRequest, MapResponse, ReadyResponse,
+//};
 use crate::shared;
 
-mod mapper {
+mod proto {
     tonic::include_proto!("map.v1");
 }
 
@@ -53,24 +53,24 @@ pub trait Mapper {
 }
 
 #[async_trait]
-impl<T> map_server::Map for MapService<T>
+impl<T> proto::map_server::Map for MapService<T>
 where
     T: Mapper + Send + Sync + 'static,
 {
     async fn map_fn(
         &self,
-        request: Request<RPCMapRequest>,
-    ) -> Result<Response<MapResponse>, Status> {
+        request: Request<proto::MapRequest>,
+    ) -> Result<Response<proto::MapResponse>, Status> {
         let request = request.into_inner();
         let result = self.handler.map(request.into()).await;
 
-        Ok(Response::new(MapResponse {
+        Ok(Response::new(proto::MapResponse {
             results: result.into_iter().map(|msg| msg.into()).collect(),
         }))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
-        Ok(Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
@@ -85,9 +85,9 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-impl From<Message> for map_response::Result {
+impl From<Message> for proto::map_response::Result {
     fn from(value: Message) -> Self {
-        map_response::Result {
+        proto::map_response::Result {
             keys: value.keys,
             value: value.value,
             tags: value.tags,
@@ -107,8 +107,8 @@ pub struct MapRequest {
     pub eventtime: DateTime<Utc>,
 }
 
-impl From<RPCMapRequest> for MapRequest {
-    fn from(value: RPCMapRequest) -> Self {
+impl From<proto::MapRequest> for MapRequest {
+    fn from(value: proto::MapRequest) -> Self {
         Self {
             keys: value.keys,
             value: value.value,
@@ -187,7 +187,7 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.map_svc.take().unwrap();
         let map_svc = MapService { handler };
-        let map_svc = map_server::MapServer::new(map_svc)
+        let map_svc = proto::map_server::MapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
@@ -220,7 +220,7 @@ mod tests {
     use tower::service_fn;
 
     use crate::map;
-    use crate::map::mapper::map_client::MapClient;
+    use crate::map::proto::map_client::MapClient;
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
@@ -267,7 +267,7 @@ mod tests {
             .await?;
 
         let mut client = MapClient::new(channel);
-        let request = tonic::Request::new(map::mapper::MapRequest {
+        let request = tonic::Request::new(map::proto::MapRequest {
             keys: vec!["first".into(), "second".into()],
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
