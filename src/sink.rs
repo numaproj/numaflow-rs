@@ -4,15 +4,9 @@ use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Status, Streaming};
 
-use crate::sink::sinker_grpc::{
-    sink_response,
-    sink_server::{Sink, SinkServer},
-    ReadyResponse, SinkRequest as RPCSinkRequest, SinkResponse,
-};
-
 use crate::shared;
 
-mod sinker_grpc {
+mod proto {
     tonic::include_proto!("sink.v1");
 }
 
@@ -93,8 +87,8 @@ pub struct SinkRequest {
     pub id: String,
 }
 
-impl From<RPCSinkRequest> for SinkRequest {
-    fn from(sr: RPCSinkRequest) -> Self {
+impl From<proto::SinkRequest> for SinkRequest {
+    fn from(sr: proto::SinkRequest) -> Self {
         Self {
             keys: sr.keys,
             value: sr.value,
@@ -116,7 +110,7 @@ pub struct Response {
     pub err: String,
 }
 
-impl From<Response> for sink_response::Result {
+impl From<Response> for proto::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
@@ -127,14 +121,14 @@ impl From<Response> for sink_response::Result {
 }
 
 #[tonic::async_trait]
-impl<T> Sink for SinkService<T>
+impl<T> proto::sink_server::Sink for SinkService<T>
 where
     T: Sinker + Send + Sync + 'static,
 {
     async fn sink_fn(
         &self,
-        request: Request<Streaming<RPCSinkRequest>>,
-    ) -> Result<tonic::Response<SinkResponse>, Status> {
+        request: Request<Streaming<proto::SinkRequest>>,
+    ) -> Result<tonic::Response<proto::SinkResponse>, Status> {
         let mut stream = request.into_inner();
 
         // TODO: what should be the idle buffer size?
@@ -160,13 +154,16 @@ where
         // wait for the sink handle to respond
         let responses = sink_handle.await;
 
-        Ok(tonic::Response::new(SinkResponse {
+        Ok(tonic::Response::new(proto::SinkResponse {
             results: responses.into_iter().map(|r| r.into()).collect(),
         }))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<tonic::Response<ReadyResponse>, Status> {
-        Ok(tonic::Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(
+        &self,
+        _: Request<()>,
+    ) -> Result<tonic::Response<proto::ReadyResponse>, Status> {
+        Ok(tonic::Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
@@ -239,7 +236,7 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let svc = SinkService { handler };
-        let svc = SinkServer::new(svc)
+        let svc = proto::sink_server::SinkServer::new(svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
@@ -272,7 +269,7 @@ mod tests {
     use tower::service_fn;
 
     use crate::sink;
-    use crate::sink::sinker_grpc::sink_client::SinkClient;
+    use crate::sink::proto::sink_client::SinkClient;
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
@@ -345,7 +342,7 @@ mod tests {
             .await?;
 
         let mut client = SinkClient::new(channel);
-        let request = sink::sinker_grpc::SinkRequest {
+        let request = sink::proto::SinkRequest {
             keys: vec!["first".into(), "second".into()],
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
