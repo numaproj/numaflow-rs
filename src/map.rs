@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use tokio::sync::oneshot;
 use tonic::{async_trait, Request, Response, Status};
 
-// use crate::map::proto::{
-//   map_response, map_server, MapRequest as RPCMapRequest, MapResponse, ReadyResponse,
-//};
 use crate::shared;
 
 mod proto {
