@@ -1,8 +1,6 @@
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::sideinput::sideinputer::{side_input_server, ReadyResponse, SideInputResponse};
-
-mod sideinputer {
+mod proto {
     tonic::include_proto!("sideinput.v1");
 }
 
@@ -16,21 +14,21 @@ pub trait SideInputer {
 }
 
 #[async_trait]
-impl<T> side_input_server::SideInput for SideInputService<T>
+impl<T> proto::side_input_server::SideInput for SideInputService<T>
 where
     T: SideInputer + Send + Sync + 'static,
 {
     async fn retrieve_side_input(
         &self,
         _: Request<()>,
-    ) -> Result<Response<SideInputResponse>, Status> {
+    ) -> Result<Response<proto::SideInputResponse>, Status> {
         let msg = self.handler.retrieve_sideinput().await;
         let si = match msg {
-            Some(value) => SideInputResponse {
+            Some(value) => proto::SideInputResponse {
                 value,
                 no_broadcast: false,
             },
-            None => SideInputResponse {
+            None => proto::SideInputResponse {
                 value: Vec::new(),
                 no_broadcast: true,
             },
@@ -39,8 +37,8 @@ where
         Ok(Response::new(si))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
-        Ok(Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
@@ -58,7 +56,7 @@ where
     let si_svc = SideInputService { handler: m };
 
     tonic::transport::Server::builder()
-        .add_service(side_input_server::SideInputServer::new(si_svc))
+        .add_service(proto::side_input_server::SideInputServer::new(si_svc))
         .serve_with_incoming(listener)
         .await
         .map_err(Into::into)
