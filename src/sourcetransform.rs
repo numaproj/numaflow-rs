@@ -1,16 +1,9 @@
 use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::{
-    shared::{self, prost_timestamp_from_utc},
-    sourcetransform::sourcetransformer::SourceTransformRequest,
-};
+use crate::shared::{self, prost_timestamp_from_utc};
 
-use self::sourcetransformer::{
-    source_transform_response, source_transform_server, ReadyResponse, SourceTransformResponse,
-};
-
-mod sourcetransformer {
+mod proto {
     tonic::include_proto!("sourcetransformer.v1");
 }
 
@@ -70,7 +63,7 @@ pub trait SourceTransformer {
     ///    }
     /// }
     /// ```
-    async fn transform<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message>;
+    async fn transform(&self, input: SourceTransformRequest) -> Vec<Message>;
 }
 
 /// Message is the response struct from the [`SourceTransformer::transform`] .
@@ -87,88 +80,66 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Datum trait represents an incoming element into the source_tranfrom handles of [`SourceTransformer`].
-pub trait Datum {
+/// Owned copy of MapRequest from Datum.
+pub struct SourceTransformRequest {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn keys(&self) -> &Vec<String>;
+    pub keys: Vec<String>,
     /// value is the value in (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None
-    fn value(&self) -> &Vec<u8>;
+    pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
-    fn watermark(&self) -> DateTime<Utc>;
+    pub watermark: DateTime<Utc>,
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
-    fn event_time(&self) -> DateTime<Utc>;
+    pub eventtime: DateTime<Utc>,
 }
 
-impl Datum for OwnedSourceTransformRequest {
-    fn keys(&self) -> &Vec<String> {
-        &self.keys
-    }
-
-    fn value(&self) -> &Vec<u8> {
-        &self.value
-    }
-
-    fn watermark(&self) -> DateTime<Utc> {
-        self.watermark
-    }
-
-    fn event_time(&self) -> DateTime<Utc> {
-        self.eventtime
-    }
-}
-
-/// Owned copy of MapRequest from Datum.
-struct OwnedSourceTransformRequest {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    watermark: DateTime<Utc>,
-    eventtime: DateTime<Utc>,
-}
-
-impl OwnedSourceTransformRequest {
-    fn new(str: SourceTransformRequest) -> Self {
-        Self {
-            keys: str.keys,
-            value: str.value,
-            watermark: shared::utc_from_timestamp(str.watermark),
-            eventtime: shared::utc_from_timestamp(str.event_time),
+impl From<Message> for proto::source_transform_response::Result {
+    fn from(value: Message) -> Self {
+        proto::source_transform_response::Result {
+            keys: value.keys,
+            value: value.value,
+            event_time: prost_timestamp_from_utc(value.event_time),
+            tags: value.tags,
         }
     }
 }
+
+impl From<proto::SourceTransformRequest> for SourceTransformRequest {
+    fn from(value: proto::SourceTransformRequest) -> Self {
+        Self {
+            keys: value.keys,
+            value: value.value,
+            watermark: shared::utc_from_timestamp(value.watermark),
+            eventtime: shared::utc_from_timestamp(value.event_time),
+        }
+    }
+}
+
 #[async_trait]
-impl<T> source_transform_server::SourceTransform for SourceTransformerService<T>
+impl<T> proto::source_transform_server::SourceTransform for SourceTransformerService<T>
 where
     T: SourceTransformer + Send + Sync + 'static,
 {
     async fn source_transform_fn(
         &self,
-        request: Request<SourceTransformRequest>,
-    ) -> Result<Response<SourceTransformResponse>, Status> {
+        request: Request<proto::SourceTransformRequest>,
+    ) -> Result<Response<proto::SourceTransformResponse>, Status> {
         let request = request.into_inner();
 
-        let messages = self
-            .handler
-            .transform(OwnedSourceTransformRequest::new(request))
-            .await;
+        let messages = self.handler.transform(request.into()).await;
 
-        let results = messages
-            .into_iter()
-            .map(move |msg| source_transform_response::Result {
-                keys: msg.keys,
-                event_time: prost_timestamp_from_utc(msg.event_time),
-                value: msg.value,
-                tags: msg.tags,
-            })
-            .collect::<Vec<source_transform_response::Result>>();
-
-        Ok(Response::new(SourceTransformResponse { results }))
+        Ok(Response::new(proto::SourceTransformResponse {
+            results: messages
+                .into_iter()
+                .map(move |msg| msg.into())
+                .collect::<Vec<_>>(),
+        }))
     }
 
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
-        Ok(Response::new(ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
@@ -186,7 +157,7 @@ where
     let source_transformer_svc = SourceTransformerService { handler: m };
 
     tonic::transport::Server::builder()
-        .add_service(source_transform_server::SourceTransformServer::new(
+        .add_service(proto::source_transform_server::SourceTransformServer::new(
             source_transformer_svc,
         ))
         .serve_with_incoming(listener)
