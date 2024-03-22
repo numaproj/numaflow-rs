@@ -27,43 +27,30 @@ pub trait SourceTransformer {
     ///
     ///  ```no_run
     /// use numaflow::sourcetransform;
+    /// use std::error::Error;
     ///
-    /// // A simple source transformer which assigns event time to the current time in utc.
+    /// A simple source transformer which assigns event time to the current time in utc.
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///    let transformer_handler = now_transformer::Now::new();
+    /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    ///     sourcetransform::Server::new(NowCat).start().await
+    /// }
     ///
-    ///    start_uds_server(transformer_handler).await?;
+    /// struct NowCat;
     ///
-    ///    Ok(())
-    ///}
-    ///
-    ///pub(crate) mod now_transformer {
-    ///    use numaflow::sourcetransform::{Datum, Message, SourceTransformer};
-    ///    use tonic::async_trait;
-    ///
-    ///    pub(crate) struct Now {}
-    ///
-    ///    impl Now {
-    ///        pub(crate) fn new() -> Self {
-    ///            Self {}
-    ///        }
-    ///    }
-    ///
-    ///    #[async_trait]
-    ///    impl SourceTransformer for Now {
-    ///        async fn transform<T: Datum + Send + Sync + 'static>(&self, input: T) -> Vec<Message> {
-    ///            let mut reponse = vec![];
-    ///            reponse.push(Message {
-    ///                value: input.value().clone(),
-    ///                keys: input.keys().clone(),
-    ///                tags: vec![],
-    ///                event_time: chrono::offset::Utc::now(),
-    ///            });
-    ///            reponse
-    ///        }
-    ///    }
+    /// #[tonic::async_trait]
+    /// impl sourcetransform::SourceTransformer for NowCat {
+    ///     async fn transform(
+    ///         &self,
+    ///         input: sourcetransform::SourceTransformRequest,
+    ///     ) -> Vec<sourcetransform::Message> {
+    ///         vec![sourcetransform::Message {
+    ///             keys: input.keys,
+    ///             value: input.value,
+    ///             event_time: chrono::offset::Utc::now(),
+    ///             tags: vec![],
+    ///         }]
+    ///     }
     /// }
     /// ```
     async fn transform(&self, input: SourceTransformRequest) -> Vec<Message>;
@@ -83,7 +70,7 @@ pub struct Message {
     pub tags: Vec<String>,
 }
 
-/// Owned copy of MapRequest from Datum.
+/// Incoming request to the Source Transformer.
 pub struct SourceTransformRequest {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
     /// Once called, it will replace the content with None, so subsequent calls will return None
@@ -152,7 +139,7 @@ pub struct Server<T> {
     sock_addr: PathBuf,
     max_message_size: usize,
     server_info_file: PathBuf,
-    map_svc: Option<T>,
+    sourcetrf_svc: Option<T>,
 }
 
 impl<T> Server<T> {
@@ -166,18 +153,18 @@ impl<T> Server<T> {
             sock_addr: "/var/run/numaflow/sourcetransform.sock".into(),
             max_message_size: 64 * 1024 * 1024,
             server_info_file: server_info_file.into(),
-            map_svc: Some(sourcetransformer_svc),
+            sourcetrf_svc: Some(sourcetransformer_svc),
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    /// Default value is `/var/run/numaflow/map.sock`
+    /// Default value is `/var/run/numaflow/sourcetransform.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.sock_addr = file.into();
         self
     }
 
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/map.sock`
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/XXX.sock`
     pub fn socket_file(&self) -> &std::path::Path {
         self.sock_addr.as_path()
     }
@@ -213,11 +200,12 @@ impl<T> Server<T> {
         T: SourceTransformer + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
-        let handler = self.map_svc.take().unwrap();
-        let map_svc = SourceTransformerService { handler };
-        let map_svc = proto::source_transform_server::SourceTransformServer::new(map_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+        let handler = self.sourcetrf_svc.take().unwrap();
+        let sourcetrf_svc = SourceTransformerService { handler };
+        let sourcetrf_svc =
+            proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
+                .max_encoding_message_size(self.max_message_size)
+                .max_decoding_message_size(self.max_message_size);
 
         let shutdown = async {
             shutdown
@@ -225,7 +213,7 @@ impl<T> Server<T> {
                 .expect("Receiving message from shutdown channel");
         };
         tonic::transport::Server::builder()
-            .add_service(map_svc)
+            .add_service(sourcetrf_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
             .await
             .map_err(Into::into)
@@ -254,7 +242,7 @@ mod tests {
     use tonic::transport::Uri;
 
     #[tokio::test]
-    async fn map_server() -> Result<(), Box<dyn Error>> {
+    async fn sourcetransformer_server() -> Result<(), Box<dyn Error>> {
         struct NowCat;
         #[tonic::async_trait]
         impl sourcetransform::SourceTransformer for NowCat {
@@ -272,7 +260,7 @@ mod tests {
         }
 
         let tmp_dir = TempDir::new()?;
-        let sock_file = tmp_dir.path().join("map.sock");
+        let sock_file = tmp_dir.path().join("sourcetransform.sock");
         let server_info_file = tmp_dir.path().join("server_info");
 
         let mut server = sourcetransform::Server::new(NowCat)

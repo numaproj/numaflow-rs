@@ -1,7 +1,7 @@
 use numaflow::sourcetransform;
+use std::error::Error;
 
 /// A simple source transformer which assigns event time to the current time in utc.
-use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
