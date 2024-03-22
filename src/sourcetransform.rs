@@ -14,10 +14,10 @@ struct SourceTransformerService<T> {
     handler: T,
 }
 
-/// SourceTransformer trait for implementing Source Transformer Handler.
+/// SourceTransformer trait for implementing SourceTransform handler.
 #[async_trait]
 pub trait SourceTransformer {
-    /// transform takes in an input element and can produce 0, 1, or more results. The input is a [`Datum`]
+    /// transform takes in an input element and can produce 0, 1, or more results. The input is a [`SourceTransformRequest`]
     /// and the output is a ['Vec`] of [`Message`]. In a `transform` each element is processed independently
     /// and there is no state associated with the elements. Source transformer can be used for transforming
     /// and assigning event time to input messages. More about source transformer can be read
@@ -25,8 +25,8 @@ pub trait SourceTransformer {
     ///
     /// #Example
     ///
-    ///  ```rust,ignore
-    /// use numaflow::sourcetransform::start_uds_server;
+    ///  ```no_run
+    /// use numaflow::sourcetransform;
     ///
     /// // A simple source transformer which assigns event time to the current time in utc.
     ///
