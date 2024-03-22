@@ -25,11 +25,11 @@ pub trait SourceTransformer {
     ///
     /// #Example
     ///
-    ///  ```no_run
+    /// ```no_run
     /// use numaflow::sourcetransform;
     /// use std::error::Error;
     ///
-    /// A simple source transformer which assigns event time to the current time in utc.
+    /// // A simple source transformer which assigns event time to the current time in utc.
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
