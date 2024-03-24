@@ -18,7 +18,7 @@ struct SourceTransformerService<T> {
 #[async_trait]
 pub trait SourceTransformer {
     /// transform takes in an input element and can produce 0, 1, or more results. The input is a [`SourceTransformRequest`]
-    /// and the output is a ['Vec`] of [`Message`]. In a `transform` each element is processed independently
+    /// and the output is a [`Vec`] of [`Message`]. In a `transform` each element is processed independently
     /// and there is no state associated with the elements. Source transformer can be used for transforming
     /// and assigning event time to input messages. More about source transformer can be read
     /// [here](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/)
@@ -123,7 +123,7 @@ where
         Ok(Response::new(proto::SourceTransformResponse {
             results: messages
                 .into_iter()
-                .map(move |msg| msg.into())
+                .map(|msg| msg.into())
                 .collect::<Vec<_>>(),
         }))
     }
@@ -139,7 +139,7 @@ pub struct Server<T> {
     sock_addr: PathBuf,
     max_message_size: usize,
     server_info_file: PathBuf,
-    sourcetrf_svc: Option<T>,
+    svc: Option<T>,
 }
 
 impl<T> Server<T> {
@@ -153,7 +153,7 @@ impl<T> Server<T> {
             sock_addr: "/var/run/numaflow/sourcetransform.sock".into(),
             max_message_size: 64 * 1024 * 1024,
             server_info_file: server_info_file.into(),
-            sourcetrf_svc: Some(sourcetransformer_svc),
+            svc: Some(sourcetransformer_svc),
         }
     }
 
@@ -200,7 +200,7 @@ impl<T> Server<T> {
         T: SourceTransformer + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
-        let handler = self.sourcetrf_svc.take().unwrap();
+        let handler = self.svc.take().unwrap();
         let sourcetrf_svc = SourceTransformerService { handler };
         let sourcetrf_svc =
             proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
