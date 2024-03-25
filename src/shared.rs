@@ -4,7 +4,7 @@ use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
-use tokio::sync::oneshot;
+use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
@@ -57,19 +57,21 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     })
 }
 
-pub(crate) async fn wait_for_signal(tx: oneshot::Sender<()>) {
-    use tokio::signal::unix::{signal, SignalKind};
-    let mut interrupt =
-        signal(SignalKind::interrupt()).expect("Failed to register SIGINT interrupt handler");
-    let mut termination =
-        signal(SignalKind::terminate()).expect("Failed to register SIGTERM interrupt handler");
+pub(crate) async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install SIGINT handler");
+    };
+
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SITERM handler")
+            .recv()
+            .await;
+    };
     tokio::select! {
-        _ = interrupt.recv() =>  {
-            tracing::info!("Received SIGINT. Stopping gRPC server")
-        }
-        _ = termination.recv() => {
-            tracing::info!("Received SIGTERM. Stopping gRPC server")
-        }
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
-    tx.send(()).expect("Sending shutdown signal to gRPC server");
 }

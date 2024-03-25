@@ -1,6 +1,7 @@
-use chrono::{DateTime, Utc};
+use std::future::Future;
 use std::path::PathBuf;
-use tokio::sync::oneshot;
+
+use chrono::{DateTime, Utc};
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
@@ -121,21 +122,16 @@ pub struct Server<T> {
     sock_addr: PathBuf,
     max_message_size: usize,
     server_info_file: PathBuf,
-    map_svc: Option<T>,
+    svc: Option<T>,
 }
 
 impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
-        let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
-            "/var/run/numaflow/server-info"
-        } else {
-            "/tmp/numaflow.server-info"
-        };
         Server {
             sock_addr: "/var/run/numaflow/map.sock".into(),
             max_message_size: 64 * 1024 * 1024,
-            server_info_file: server_info_file.into(),
-            map_svc: Some(map_svc),
+            server_info_file: "/var/run/numaflow/mapper-server-info".into(),
+            svc: Some(map_svc),
         }
     }
 
@@ -157,42 +153,38 @@ impl<T> Server<T> {
         self
     }
 
-    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 4MB.
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
         self.max_message_size
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/tmp/numaflow.server-info`
+    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
     }
 
-    /// Get the path to the file where numaflow server info is stored. Default value is `/tmp/numaflow.server-info`
+    /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
         self.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown(
+    pub async fn start_with_shutdown<F>(
         &mut self,
-        shutdown: oneshot::Receiver<()>,
+        shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Mapper + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
-        let handler = self.map_svc.take().unwrap();
+        let handler = self.svc.take().unwrap();
         let map_svc = MapService { handler };
         let map_svc = proto::map_server::MapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = async {
-            shutdown
-                .await
-                .expect("Receiving message from shutdown channel");
-        };
         tonic::transport::Server::builder()
             .add_service(map_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
@@ -205,9 +197,7 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        let (tx, rx) = oneshot::channel::<()>();
-        tokio::spawn(shared::wait_for_signal(tx));
-        self.start_with_shutdown(rx).await
+        self.start_with_shutdown(shared::shutdown_signal()).await
     }
 }
 
@@ -238,7 +228,7 @@ mod tests {
 
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("map.sock");
-        let server_info_file = tmp_dir.path().join("server_info");
+        let server_info_file = tmp_dir.path().join("mapper-server-info");
 
         let mut server = map::Server::new(Cat)
             .with_server_info_file(&server_info_file)
@@ -250,7 +240,10 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+        let shutdown = async {
+            shutdown_rx.await.unwrap();
+        };
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

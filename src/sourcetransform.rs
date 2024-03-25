@@ -1,7 +1,7 @@
+use std::future::Future;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::oneshot;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared::{self, prost_timestamp_from_utc};
@@ -144,15 +144,10 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(sourcetransformer_svc: T) -> Self {
-        let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
-            "/var/run/numaflow/server-info"
-        } else {
-            "/tmp/numaflow.server-info"
-        };
         Server {
             sock_addr: "/var/run/numaflow/sourcetransform.sock".into(),
             max_message_size: 64 * 1024 * 1024,
-            server_info_file: server_info_file.into(),
+            server_info_file: "/var/run/numaflow/sourcetransformer-server-info".into(),
             svc: Some(sourcetransformer_svc),
         }
     }
@@ -175,29 +170,30 @@ impl<T> Server<T> {
         self
     }
 
-    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 4MB.
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
         self.max_message_size
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/tmp/numaflow.server-info`
+    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcetransformer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
     }
 
-    /// Get the path to the file where numaflow server info is stored. Default value is `/tmp/numaflow.server-info`
+    /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sourcetransformer-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
         self.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown(
+    pub async fn start_with_shutdown<F>(
         &mut self,
-        shutdown: oneshot::Receiver<()>,
+        shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: SourceTransformer + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -207,11 +203,6 @@ impl<T> Server<T> {
                 .max_encoding_message_size(self.max_message_size)
                 .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = async {
-            shutdown
-                .await
-                .expect("Receiving message from shutdown channel");
-        };
         tonic::transport::Server::builder()
             .add_service(sourcetrf_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
@@ -224,9 +215,7 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        let (tx, rx) = oneshot::channel::<()>();
-        tokio::spawn(shared::wait_for_signal(tx));
-        self.start_with_shutdown(rx).await
+        self.start_with_shutdown(shared::shutdown_signal()).await
     }
 }
 
@@ -261,7 +250,7 @@ mod tests {
 
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("sourcetransform.sock");
-        let server_info_file = tmp_dir.path().join("server_info");
+        let server_info_file = tmp_dir.path().join("sourcetransformer-server-info");
 
         let mut server = sourcetransform::Server::new(NowCat)
             .with_server_info_file(&server_info_file)
@@ -273,7 +262,10 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+        let shutdown = async {
+            shutdown_rx.await.unwrap();
+        };
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

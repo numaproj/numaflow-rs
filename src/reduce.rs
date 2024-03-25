@@ -303,13 +303,9 @@ pub async fn start_uds_server<T>(m: T) -> Result<(), Box<dyn std::error::Error +
 where
     T: Reducer + Send + Sync + 'static,
 {
-    let server_info_file = if std::env::var_os("NUMAFLOW_POD").is_some() {
-        "/var/run/numaflow/server-info"
-    } else {
-        "/tmp/numaflow.server-info"
-    };
     let socket_file = "/var/run/numaflow/reduce.sock";
-    let listener = shared::create_listener_stream(socket_file, server_info_file)?;
+    let listener =
+        shared::create_listener_stream(socket_file, "/var/run/numaflow/reducer-server-info")?;
     let reduce_svc = ReduceService {
         handler: Arc::new(m),
     };
