@@ -6,7 +6,8 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
-mod proto {
+/// Numaflow Map Proto definitions.
+pub mod proto {
     tonic::include_proto!("map.v1");
 }
 

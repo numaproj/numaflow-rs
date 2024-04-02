@@ -16,7 +16,8 @@ use crate::shared;
 
 use self::reducer::reduce_server::Reduce;
 
-mod reducer {
+/// Numaflow Reduce Proto definitions.
+pub mod reducer {
     tonic::include_proto!("reduce.v1");
 }
 

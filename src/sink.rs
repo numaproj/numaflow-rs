@@ -7,7 +7,7 @@ use tonic::{Request, Status, Streaming};
 
 use crate::shared;
 
-mod proto {
+pub mod proto {
     tonic::include_proto!("sink.v1");
 }
 
