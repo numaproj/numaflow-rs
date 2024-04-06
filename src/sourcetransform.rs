@@ -6,7 +6,8 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared::{self, prost_timestamp_from_utc};
 
-mod proto {
+/// Numaflow SourceTransformer Proto definitions.
+pub mod proto {
     tonic::include_proto!("sourcetransformer.v1");
 }
 

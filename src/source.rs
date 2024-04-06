@@ -11,7 +11,8 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 
-mod proto {
+/// Source Proto definitions.
+pub mod proto {
     tonic::include_proto!("source.v1");
 }
 

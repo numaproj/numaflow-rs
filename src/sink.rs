@@ -7,7 +7,8 @@ use tonic::{Request, Status, Streaming};
 
 use crate::shared;
 
-mod proto {
+/// Numaflow Sink Proto definitions.
+pub mod proto {
     tonic::include_proto!("sink.v1");
 }
 
