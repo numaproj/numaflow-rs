@@ -32,6 +32,7 @@ pub trait SideInputer {
     /// use numaflow::sideinput::SideInputer;
     /// use tonic::{async_trait};
     /// use std::sync::Mutex;
+    /// use numaflow::sideinput;
     ///
     /// struct SideInputHandler {
     ///     counter: Mutex<u32>,
@@ -65,8 +66,8 @@ pub trait SideInputer {
     /// }
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     use numaflow::sideinput;
+    /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ///
     /// let side_input_handler = SideInputHandler::new();
     ///     sideinput::Server::new(side_input_handler).start().await?;
     ///     Ok(())
