@@ -11,6 +11,10 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
+const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+
 /// Source Proto definitions.
 pub mod proto {
     tonic::include_proto!("source.v1");
@@ -165,13 +169,10 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = match self.handler.partitions().await {
-            Some(v) => v,
-            None => vec![std::env::var("NUMAFLOW_REPLICA")
-                .unwrap_or_default()
-                .parse::<i32>()
-                .unwrap_or_default()],
-        };
+        let partitions = self.handler.partitions().await.unwrap_or_else(|| vec![std::env::var("NUMAFLOW_REPLICA")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default()]);
         Ok(Response::new(proto::PartitionsResponse {
             result: Some(proto::partitions_response::Result { partitions }),
         }))
@@ -207,9 +208,9 @@ impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
         Server {
-            sock_addr: "/var/run/numaflow/source.sock".into(),
-            max_message_size: 64 * 1024 * 1024,
-            server_info_file: "/var/run/numaflow/sourcer-server-info".into(),
+            sock_addr: DEFAULT_SOCK_ADDR.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
             svc: Some(source_svc),
         }
     }

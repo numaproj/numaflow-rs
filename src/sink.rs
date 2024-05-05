@@ -7,6 +7,11 @@ use tonic::{Request, Status, Streaming};
 
 use crate::shared;
 
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
+const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
+
+
 /// Numaflow Sink Proto definitions.
 pub mod proto {
     tonic::include_proto!("sink.v1");
@@ -72,7 +77,7 @@ pub trait Sinker {
     ///     }
     /// }
     /// ```
-    async fn sink(&self, mut input: mpsc::Receiver<SinkRequest>) -> Vec<Response>;
+    async fn sink(&self, input: mpsc::Receiver<SinkRequest>) -> Vec<Response>;
 }
 
 /// Incoming request into the  handler of [`Sinker`].
@@ -181,9 +186,9 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
         Self {
-            sock_addr: "/var/run/numaflow/sink.sock".into(),
-            max_message_size: 64 * 1024 * 1024,
-            server_info_file: "/var/run/numaflow/sinker-server-info".into(),
+            sock_addr: DEFAULT_SOCK_ADDR.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
             svc: Some(svc),
         }
     }

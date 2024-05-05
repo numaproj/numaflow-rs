@@ -6,6 +6,10 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared::{self, prost_timestamp_from_utc};
 
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
+const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
+
 /// Numaflow SourceTransformer Proto definitions.
 pub mod proto {
     tonic::include_proto!("sourcetransformer.v1");
@@ -146,9 +150,9 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(sourcetransformer_svc: T) -> Self {
         Server {
-            sock_addr: "/var/run/numaflow/sourcetransform.sock".into(),
-            max_message_size: 64 * 1024 * 1024,
-            server_info_file: "/var/run/numaflow/sourcetransformer-server-info".into(),
+            sock_addr: DEFAULT_SOCK_ADDR.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
             svc: Some(sourcetransformer_svc),
         }
     }

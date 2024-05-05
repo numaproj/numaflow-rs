@@ -6,6 +6,11 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
+
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
+const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+
 /// Numaflow Map Proto definitions.
 pub mod proto {
     tonic::include_proto!("map.v1");
@@ -129,9 +134,9 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
         Server {
-            sock_addr: "/var/run/numaflow/map.sock".into(),
-            max_message_size: 64 * 1024 * 1024,
-            server_info_file: "/var/run/numaflow/mapper-server-info".into(),
+            sock_addr: DEFAULT_SOCK_ADDR.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
             svc: Some(map_svc),
         }
     }
@@ -159,7 +164,7 @@ impl<T> Server<T> {
         self.max_message_size
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
+    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
@@ -193,7 +198,7 @@ impl<T> Server<T> {
             .map_err(Into::into)
     }
 
-    /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
+    /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Mapper + Send + Sync + 'static,
