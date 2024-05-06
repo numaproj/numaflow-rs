@@ -25,8 +25,55 @@ pub mod proto {
     tonic::include_proto!("reduce.v1");
 }
 
-struct ReduceService<T> {
-    handler: Arc<T>,
+struct ReduceService<C>
+where
+    C: ReducerCreator + Send + Sync + 'static,
+{
+    creator: C,
+}
+
+/// `ReducerCreator` is a trait for creating a new instance of a `Reducer`.
+pub trait ReducerCreator {
+    /// Each type that implements `ReducerCreator` must also specify an associated type `R` that implements the `Reducer` trait.
+    /// The `create` method is used to create a new instance of this `Reducer` type.
+    ///
+    /// # Example
+    ///
+    /// Below is an example of how to implement the `ReducerCreator` trait for a specific type `MyReducerCreator`.
+    /// `MyReducerCreator` creates instances of `MyReducer`, which is a type that implements the `Reducer` trait.
+    ///
+    /// ```rust
+    /// use numaflow::reduce::{Reducer, ReducerCreator, ReduceRequest, Metadata, Message};
+    /// use tokio::sync::mpsc::Receiver;
+    /// use tonic::async_trait;
+    ///
+    /// pub struct MyReducer;
+    ///
+    /// #[async_trait]
+    /// impl Reducer for MyReducer {
+    ///     async fn reduce(
+    ///         &self,
+    ///         keys: Vec<String>,
+    ///         mut input: Receiver<ReduceRequest>,
+    ///         md: &Metadata,
+    ///     ) -> Vec<Message> {
+    ///         // Implementation of the reduce method goes here.
+    ///         vec![]
+    ///     }
+    /// }
+    ///
+    /// pub struct MyReducerCreator;
+    ///
+    /// impl ReducerCreator for MyReducerCreator {
+    ///     type R = MyReducer;
+    ///
+    ///     fn create(&self) -> Self::R {
+    ///         MyReducer
+    ///     }
+    /// }
+    /// ```
+    type R: Reducer + Send + Sync + 'static;
+    fn create(&self) -> Self::R;
 }
 
 /// Reducer trait for implementing Reduce handler.
@@ -46,8 +93,8 @@ pub trait Reducer {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// let reduce_handler = counter::Counter::new();
-    ///     reduce::Server::new(reduce_handler).start().await?;
+    /// let handler_creator = counter::CounterCreator{};
+    ///     reduce::Server::new(handler_creator).start().await?;
     ///     Ok(())
     /// }
     /// mod counter {
@@ -57,6 +104,17 @@ pub trait Reducer {
     ///     use tonic::async_trait;
     /// use numaflow::reduce::proto::reduce_server::Reduce;
     ///     pub(crate) struct Counter {}
+    ///
+    ///     pub(crate) struct CounterCreator {}
+    ///
+    ///    impl numaflow::reduce::ReducerCreator for CounterCreator {
+    ///        type R = Counter;
+    ///
+    ///        fn create(&self) -> Counter {
+    ///           Counter::new()
+    ///       }
+    ///     }
+    ///
     ///     impl Counter {
     ///         pub(crate) fn new() -> Self {
     ///             Self {}
@@ -180,9 +238,9 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
 }
 
 #[async_trait]
-impl<T> proto::reduce_server::Reduce for ReduceService<T>
+impl<C> proto::reduce_server::Reduce for ReduceService<C>
 where
-    T: Reducer + Send + Sync + 'static,
+    C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
@@ -212,12 +270,12 @@ where
                 // since we are calling this in a loop, we need make sure that there is reference counting
                 // and the lifetime of self is more than the async function.
                 // try Arc<Self> https://doc.rust-lang.org/reference/items/associated-items.html#methods ?
-                let v = Arc::clone(&self.handler);
+                let handler = self.creator.create();
                 let m = Arc::clone(&md);
 
                 // spawn task for each unique key
                 let keys = rr.keys.clone();
-                set.spawn(async move { v.reduce(keys, rx, m.as_ref()).await });
+                set.spawn(async move { handler.reduce(keys, rx, m.as_ref()).await });
 
                 // write data into the channel
                 tx.send(rr.into()).await.unwrap();
@@ -265,21 +323,27 @@ where
 
 /// gRPC server to start a reduce service
 #[derive(Debug)]
-pub struct Server<T> {
+pub struct Server<C>
+    where
+        C: ReducerCreator + Send + Sync + 'static,
+{
     sock_addr: PathBuf,
     max_message_size: usize,
     server_info_file: PathBuf,
-    svc: Option<T>,
+    creator: Option<C>,
 }
 
-impl<T> Server<T> {
+impl<C> Server<C>
+    where
+        C: ReducerCreator + Send + Sync + 'static,
+{
     /// Create a new Server with the given reduce service
-    pub fn new(reduce_svc: T) -> Self {
+    pub fn new(creator: C) -> Self {
         Server {
             sock_addr: DEFAULT_SOCK_ADDR.into(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
-            svc: Some(reduce_svc),
+            creator: Some(creator),
         }
     }
 
@@ -323,12 +387,11 @@ impl<T> Server<T> {
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         where
-            T: Reducer + Send + Sync + 'static,
             F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
-        let handler = Arc::new(self.svc.take().unwrap());
-        let reduce_svc = ReduceService { handler };
+        let creator = self.creator.take().unwrap();
+        let reduce_svc = ReduceService { creator };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
@@ -342,8 +405,6 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Reducer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
