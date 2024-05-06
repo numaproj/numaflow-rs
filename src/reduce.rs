@@ -8,8 +8,9 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
 use tonic::{async_trait, Request, Response, Status};
+use tonic::metadata::MetadataMap;
+
 use crate::shared;
 
 const KEY_JOIN_DELIMITER: &str = ":";
@@ -25,10 +26,7 @@ pub mod proto {
     tonic::include_proto!("reduce.v1");
 }
 
-struct ReduceService<C>
-where
-    C: ReducerCreator + Send + Sync + 'static,
-{
+struct ReduceService<C> {
     creator: C,
 }
 
@@ -173,7 +171,7 @@ impl Metadata {
 
 /// Metadata are additional information passed into the [`Reducer::reduce`].
 pub struct Metadata {
-    pub interval_window: IntervalWindow
+    pub interval_window: IntervalWindow,
 }
 
 /// Message is the response from the user's [`Reducer::reduce`].
@@ -239,8 +237,8 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
 
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-where
-    C: ReducerCreator + Send + Sync + 'static,
+    where
+        C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
@@ -307,8 +305,8 @@ where
                 tx.send(Ok(proto::ReduceResponse {
                     results: datum_responses,
                 }))
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
             }
         });
 
@@ -323,20 +321,14 @@ where
 
 /// gRPC server to start a reduce service
 #[derive(Debug)]
-pub struct Server<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
-{
+pub struct Server<C> {
     sock_addr: PathBuf,
     max_message_size: usize,
     server_info_file: PathBuf,
     creator: Option<C>,
 }
 
-impl<C> Server<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
-{
+impl<C> Server<C> {
     /// Create a new Server with the given reduce service
     pub fn new(creator: C) -> Self {
         Server {
@@ -387,7 +379,8 @@ impl<C> Server<C>
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         where
-            F: Future<Output = ()>,
+            F: Future<Output=()>,
+            C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
@@ -404,7 +397,9 @@ impl<C> Server<C>
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
+        where
+            C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
