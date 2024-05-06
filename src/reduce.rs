@@ -68,7 +68,7 @@ pub trait Reducer {
     ///             &self,
     ///             keys: Vec<String>,
     ///             mut input: Receiver<ReduceRequest>,
-    ///             md: Metadata,
+    ///             md: &Metadata,
     ///         ) -> Vec<Message> {
     ///             let mut counter = 0;
     ///             // the loop exits when input is closed which will happen only on close of book.
@@ -89,12 +89,11 @@ pub trait Reducer {
         &self,
         keys: Vec<String>,
         input: mpsc::Receiver<ReduceRequest>,
-        md: Metadata,
+        md: &Metadata,
     ) -> Vec<Message>;
 }
 
 /// IntervalWindow is the start and end boundary of the window.
-#[derive(Clone)]
 pub struct IntervalWindow {
     // start time of the window
     pub start_time: DateTime<Utc>,
@@ -114,7 +113,6 @@ impl Metadata {
     }
 }
 
-#[derive(Clone)]
 /// Metadata are additional information passed into the [`Reducer::reduce`].
 pub struct Metadata {
     pub interval_window: IntervalWindow
@@ -193,7 +191,7 @@ where
     ) -> Result<Response<Self::ReduceFnStream>, Status> {
         // get gRPC window from metadata
         let (start_win, end_win) = get_window_details(request.metadata());
-        let md = Metadata::new(IntervalWindow::new(start_win, end_win));
+        let md = Arc::new(Metadata::new(IntervalWindow::new(start_win, end_win)));
 
         let mut key_to_tx: HashMap<String, Sender<ReduceRequest>> = HashMap::new();
 
@@ -215,11 +213,11 @@ where
                 // and the lifetime of self is more than the async function.
                 // try Arc<Self> https://doc.rust-lang.org/reference/items/associated-items.html#methods ?
                 let v = Arc::clone(&self.handler);
+                let m = Arc::clone(&md);
 
                 // spawn task for each unique key
                 let keys = rr.keys.clone();
-                let reduce_md = md.clone();
-                set.spawn(async move { v.reduce(keys, rx, reduce_md).await });
+                set.spawn(async move { v.reduce(keys, rx, m.as_ref()).await });
 
                 // write data into the channel
                 tx.send(rr.into()).await.unwrap();
