@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
-use tokio::task::JoinSet;
+use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 use tonic::metadata::MetadataMap;
@@ -27,7 +26,7 @@ pub mod proto {
 }
 
 struct ReduceService<C> {
-    creator: C,
+    creator: Arc<C>,
 }
 
 /// `ReducerCreator` is a trait for creating a new instance of a `Reducer`.
@@ -249,75 +248,115 @@ impl<C> proto::reduce_server::Reduce for ReduceService<C>
         let (start_win, end_win) = get_window_details(request.metadata());
         let md = Arc::new(Metadata::new(IntervalWindow::new(start_win, end_win)));
 
-        let mut key_to_tx: HashMap<String, Sender<ReduceRequest>> = HashMap::new();
-
-        // we will be creating a set of tasks for this stream
-        let mut set = JoinSet::new();
+        // Create a new TaskManager
+        let (response_tx, response_rx) = channel::<Result<proto::ReduceResponse, Status>>(1);
+        let mut task_manager = TaskManager::new(self.creator.clone(), md, response_tx);
 
         let mut stream = request.into_inner();
 
         while let Some(rr) = stream.message().await.unwrap() {
-            let task_name = rr.keys.join(KEY_JOIN_DELIMITER);
+            let keys = rr.keys.clone();
+            let task_name = keys.join(KEY_JOIN_DELIMITER);
 
-            if let Some(tx) = key_to_tx.get(&task_name) {
-                tx.send(rr.into()).await.unwrap();
+            if task_manager.tasks.contains_key(&task_name) {
+                task_manager.append_task(keys, rr.into()).await;
             } else {
-                // channel to send data to the user's reduce handle
-                let (tx, rx) = mpsc::channel::<ReduceRequest>(1);
-
-                // since we are calling this in a loop, we need make sure that there is reference counting
-                // and the lifetime of self is more than the async function.
-                // try Arc<Self> https://doc.rust-lang.org/reference/items/associated-items.html#methods ?
-                let handler = self.creator.create();
-                let m = Arc::clone(&md);
-
-                // spawn task for each unique key
-                let keys = rr.keys.clone();
-                set.spawn(async move { handler.reduce(keys, rx, m.as_ref()).await });
-
-                // write data into the channel
-                tx.send(rr.into()).await.unwrap();
-
-                // save the key and for future look up as long as the stream is active
-                key_to_tx.insert(task_name, tx);
+                task_manager.create_task(keys, rr.into()).await;
             }
         }
 
-        // close all the tx channels to tasks to close their corresponding rx
-        key_to_tx.clear();
-
-        // channel to respond to numaflow main car as it expects streaming results.
-        let (tx, rx) = mpsc::channel::<Result<proto::ReduceResponse, Status>>(1);
-
-        // start the result streamer
-        tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let messages = res.unwrap();
-                let mut datum_responses = vec![];
-                for message in messages {
-                    datum_responses.push(proto::reduce_response::Result {
-                        keys: message.keys,
-                        value: message.value,
-                        tags: message.tags,
-                    });
-                }
-                // stream it out to the client
-                tx.send(Ok(proto::ReduceResponse {
-                    results: datum_responses,
-                }))
-                    .await
-                    .unwrap();
-            }
-        });
-
         // return the rx as the streaming endpoint
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(Response::new(ReceiverStream::new(response_rx)))
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
         Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 }
+
+struct Task {
+    tx: Sender<ReduceRequest>,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Task {
+    async fn new<R: Reducer + Send + Sync + 'static>(
+        reducer_handle: R,
+        keys: Vec<String>,
+        md: Arc<Metadata>,
+        response_tx: Sender<Result<proto::ReduceResponse, Status>>,
+    ) -> Self {
+        let (tx, rx) = channel::<ReduceRequest>(1);
+
+        let join_handle = tokio::spawn(async move {
+            let messages = reducer_handle.reduce(keys, rx, md.as_ref()).await;
+            let mut datum_responses = vec![];
+            for message in messages {
+                datum_responses.push(proto::reduce_response::Result {
+                    keys: message.keys,
+                    value: message.value,
+                    tags: message.tags,
+                });
+            }
+
+            // Send the result to the response channel
+            response_tx.send(Ok(proto::ReduceResponse {
+                results: datum_responses,
+            })).await.unwrap();
+        });
+
+        Self {
+            tx,
+            join_handle,
+        }
+    }
+
+    async fn send(&self, rr: ReduceRequest) {
+        self.tx.send(rr).await.unwrap();
+    }
+}
+
+struct TaskManager<C> {
+    tasks: HashMap<String, Task>,
+    response_stream: Sender<Result<proto::ReduceResponse, Status>>,
+    creator: Arc<C>,
+    md: Arc<Metadata>,
+}
+
+impl<C> TaskManager<C> {
+    fn new(creator: Arc<C>, md: Arc<Metadata>, response_stream: Sender<Result<proto::ReduceResponse, Status>>) -> Self {
+        Self {
+            tasks: HashMap::new(),
+            response_stream,
+            creator,
+            md,
+        }
+    }
+
+    async fn create_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
+        where C: ReducerCreator + Send + Sync + 'static
+    {
+        let reducer = self.creator.create();
+        let task = Task::new(reducer, keys.clone(), Arc::clone(&self.md), self.response_stream.clone()).await;
+        self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
+
+        // Send the first message to the task
+        self.tasks.get_mut(&keys.join(KEY_JOIN_DELIMITER)).unwrap().send(rr).await;
+    }
+
+    async fn append_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
+        where C: ReducerCreator + Send + Sync + 'static
+    {
+        let task_name = keys.join(KEY_JOIN_DELIMITER);
+        if let Some(task) = self.tasks.get(&task_name) {
+            task.send(rr).await;
+        } else {
+            // If a task for the given keys doesn't exist yet, create a new one
+            self.create_task(keys, rr).await;
+        }
+    }
+}
+
 
 /// gRPC server to start a reduce service
 #[derive(Debug)]
@@ -384,7 +423,7 @@ impl<C> Server<C> {
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
-        let reduce_svc = ReduceService { creator };
+        let reduce_svc = ReduceService { creator: Arc::new(creator) };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
@@ -397,7 +436,7 @@ impl<C> Server<C> {
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         where
             C: ReducerCreator + Send + Sync + 'static,
     {
