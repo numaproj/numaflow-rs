@@ -109,7 +109,7 @@ pub trait Reducer {
     ///    impl numaflow::reduce::ReducerCreator for CounterCreator {
     ///        type R = Counter;
     ///
-    ///        fn create(&self) -> Counter {
+    ///        fn create(&self) -> Self::R {
     ///           Counter::new()
     ///       }
     ///     }
