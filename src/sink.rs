@@ -83,7 +83,7 @@ pub struct SinkRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub event_time: DateTime<Utc>,
-    /// ID is the unique id of the message to be send to the Sink.
+    /// ID is the unique id of the message to be sent to the Sink.
     pub id: String,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
@@ -109,6 +109,8 @@ pub struct Response {
     /// success indicates whether to write to the sink was successful. If set to `false`, it will be
     /// retried, hence it is better to try till it is successful.
     pub success: bool,
+    /// fallback is used to indicate that the message should be forwarded to the fallback sink.
+    pub fallback: bool,
     /// err string is used to describe the error if [`Response::success`]  was `false`.
     pub err: Option<String>,
 }
@@ -119,6 +121,7 @@ impl Response {
         Self {
             id,
             success: true,
+            fallback: false,
             err: None,
         }
     }
@@ -128,8 +131,21 @@ impl Response {
         Self {
             id,
             success: false,
+            fallback: false,
             err: Some(err),
         }
+    }
+
+    /// Creates a new `Response` instance indicating a failed operation with a fallback
+    /// set to 'true'. So that the message will be forwarded to the fallback sink.
+    pub fn fallback(id: String) -> Self {
+        Self {
+            id,
+            success: false,
+            fallback: true,
+            err: None,
+        }
+
     }
 }
 
@@ -137,7 +153,13 @@ impl From<Response> for proto::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
-            status: if r.success { proto::Status::Success as i32 } else { proto::Status::Failure as i32 },
+            status: if r.fallback {
+                proto::Status::Fallback as i32
+            } else if r.success {
+                proto::Status::Fallback as i32
+            } else {
+                proto::Status::Failure as i32
+            },
             err_msg: r.err.unwrap_or_default(),
         }
     }
@@ -266,7 +288,7 @@ impl<T> Server<T> {
             .map_err(Into::into)
     }
 
-    /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
+    /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         where
             T: Sinker + Send + Sync + 'static,
