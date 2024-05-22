@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -11,6 +12,11 @@ use crate::shared;
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
+
+const DEFAULT_FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
+const DEFAULT_FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
+const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
+const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
 
 
 /// Numaflow Sink Proto definitions.
@@ -145,7 +151,6 @@ impl Response {
             fallback: true,
             err: None,
         }
-
     }
 }
 
@@ -223,10 +228,17 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
+        let container_type = env::var(ENV_UD_CONTAINER_TYPE).unwrap_or_default();
+        let (sock_addr, server_info_file) = if container_type == UD_CONTAINER_FB_SINK {
+            (DEFAULT_FB_SOCK_ADDR.into(), DEFAULT_FB_SERVER_INFO_FILE.into())
+        } else {
+            (DEFAULT_SOCK_ADDR.into(), DEFAULT_SERVER_INFO_FILE.into())
+        };
+
         Self {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
+            sock_addr,
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+            server_info_file,
             svc: Some(svc),
         }
     }
