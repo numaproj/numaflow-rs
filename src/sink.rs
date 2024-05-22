@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -56,17 +57,9 @@ pub trait Sinker {
     ///                 Ok(v) => {
     ///                     println!("{}", v);
     ///                     // record the response
-    ///                     Response {
-    ///                         id: datum.id,
-    ///                         success: true,
-    ///                         err: "".to_string(),
-    ///                     }
+    ///                     Response::ok(datum.id)
     ///                 }
-    ///                 Err(e) => Response {
-    ///                     id: datum.id,
-    ///                     success: true, // there is no point setting success to false as retrying is not going to help
-    ///                     err: format!("Invalid UTF-8 sequence: {}", e),
-    ///                 },
+    ///                 Err(e) => Response::failure(datum.id, format!("Invalid UTF-8 sequence: {}", e)),
     ///             };
     ///
     ///             // return the responses
@@ -92,6 +85,8 @@ pub struct SinkRequest {
     pub event_time: DateTime<Utc>,
     /// ID is the unique id of the message to be send to the Sink.
     pub id: String,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 impl From<proto::SinkRequest> for SinkRequest {
@@ -102,6 +97,7 @@ impl From<proto::SinkRequest> for SinkRequest {
             watermark: shared::utc_from_timestamp(sr.watermark),
             event_time: shared::utc_from_timestamp(sr.event_time),
             id: sr.id,
+            headers: sr.headers,
         }
     }
 }
@@ -110,27 +106,47 @@ impl From<proto::SinkRequest> for SinkRequest {
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,
-    /// success indicates whether the write to the sink was successful. If set to `false`, it will be
+    /// success indicates whether to write to the sink was successful. If set to `false`, it will be
     /// retried, hence it is better to try till it is successful.
     pub success: bool,
     /// err string is used to describe the error if [`Response::success`]  was `false`.
-    pub err: String,
+    pub err: Option<String>,
+}
+
+impl Response {
+    /// Creates a new `Response` instance indicating a successful operation.
+    pub fn ok(id: String) -> Self {
+        Self {
+            id,
+            success: true,
+            err: None,
+        }
+    }
+
+    /// Creates a new `Response` instance indicating a failed operation.
+    pub fn failure(id: String, err: String) -> Self {
+        Self {
+            id,
+            success: false,
+            err: Some(err),
+        }
+    }
 }
 
 impl From<Response> for proto::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
-            success: r.success,
-            err_msg: r.err.to_string(),
+            status: if r.success { proto::Status::Success as i32 } else { proto::Status::Failure as i32 },
+            err_msg: r.err.unwrap_or_default(),
         }
     }
 }
 
 #[tonic::async_trait]
 impl<T> proto::sink_server::Sink for SinkService<T>
-where
-    T: Sinker + Send + Sync + 'static,
+    where
+        T: Sinker + Send + Sync + 'static,
 {
     async fn sink_fn(
         &self,
@@ -232,9 +248,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Sinker + Send + Sync + 'static,
-        F: Future<Output = ()>,
+        where
+            T: Sinker + Send + Sync + 'static,
+            F: Future<Output=()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -252,8 +268,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Sinker + Send + Sync + 'static,
+        where
+            T: Sinker + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -262,13 +278,14 @@ impl<T> Server<T> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
+
+    use tempfile::TempDir;
+    use tokio::sync::oneshot;
+    use tonic::transport::Uri;
     use tower::service_fn;
 
     use crate::sink;
     use crate::sink::proto::sink_client::SinkClient;
-    use tempfile::TempDir;
-    use tokio::sync::oneshot;
-    use tonic::transport::Uri;
 
     #[tokio::test]
     async fn sink_server() -> Result<(), Box<dyn Error>> {
@@ -289,17 +306,9 @@ mod tests {
                         Ok(v) => {
                             println!("{}", v);
                             // record the response
-                            sink::Response {
-                                id: datum.id,
-                                success: true,
-                                err: "".to_string(),
-                            }
+                            sink::Response::ok(datum.id)
                         }
-                        Err(e) => sink::Response {
-                            id: datum.id,
-                            success: true, // there is no point setting success to false as retrying is not going to help
-                            err: format!("Invalid UTF-8 sequence: {}", e),
-                        },
+                        Err(e) => sink::Response::failure(datum.id, format!("Invalid UTF-8 sequence: {}", e)),
                     };
 
                     // return the responses
@@ -347,6 +356,7 @@ mod tests {
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
             id: "1".to_string(),
+            headers: Default::default(),
         };
 
         let resp = client.sink_fn(tokio_stream::iter(vec![request])).await?;
