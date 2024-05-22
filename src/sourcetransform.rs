@@ -10,6 +10,7 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
 
+const DROP: &str ="U+005C__DROP__";
 /// Numaflow SourceTransformer Proto definitions.
 pub mod proto {
     tonic::include_proto!("sourcetransformer.v1");
@@ -62,6 +63,7 @@ pub trait SourceTransformer {
 }
 
 /// Message is the response struct from the [`SourceTransformer::transform`] .
+#[derive(Default)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
@@ -73,6 +75,64 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Vec<String>,
+}
+
+impl Message {
+    pub fn new_message(value: Vec<u8>)->Self{
+        Message {
+            value,
+            ..Default::default() // Use default values for keys and tags
+        }
+    }
+
+    pub fn message_to_drop()->Self{
+        Message {
+            tags:vec![DROP.parse().unwrap()],
+            ..Default::default() // Use default values for keys and tags
+        }
+    }
+
+    pub fn with_keys(mut self,keys:Vec<String>)->  Self{
+        self.keys=keys;
+        self
+    }
+
+    pub fn with_tags(mut self,tags:Vec<String>)->  Self{
+        self.tags=tags;
+        self
+    }
+
+    pub fn keys(mut self) ->Vec<String>{
+        self.keys
+    }
+    pub fn value(mut self) ->Vec<u8>{
+        self.value
+    }
+
+    pub fn tags(mut self) ->Vec<String>{
+        self.tags
+    }
+
+}
+
+pub struct  Messages{
+    messages:Vec<crate::reduce::Message>
+}
+
+impl Messages {
+    fn message_builder() -> Self {
+        Messages {
+            messages: Vec::new(),
+        }
+    }
+    fn append(mut self, msg: crate::reduce::Message) -> Self {
+        self.messages.push(msg);
+        self
+    }
+
+    fn items( &self) ->&Vec<crate::reduce::Message>{
+        &self.messages
+    }
 }
 
 /// Incoming request to the Source Transformer.
