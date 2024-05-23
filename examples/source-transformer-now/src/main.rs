@@ -16,11 +16,13 @@ impl sourcetransform::SourceTransformer for NowCat {
         &self,
         input: sourcetransform::SourceTransformRequest,
     ) -> Vec<sourcetransform::Message> {
-        vec![sourcetransform::Message {
-            keys: input.keys,
-            value: input.value,
-            event_time: chrono::offset::Utc::now(),
-            tags: vec![],
-        }]
+        let message=sourcetransform::MessageBuilder::new()
+            .keys(input.keys)
+            .values(input.value)
+            .tags(vec![])
+            .event_time(chrono::offset::Utc::now())
+            .build();
+
+        vec![message]
     }
 }

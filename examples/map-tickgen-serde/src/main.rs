@@ -1,4 +1,5 @@
 use numaflow::map;
+use numaflow::map::{MessageBuilder};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -38,14 +39,10 @@ impl map::Mapper for TickGen {
         let ts = Utc
             .timestamp_nanos(payload.created_ts)
             .to_rfc3339_opts(SecondsFormat::Nanos, true);
-        vec![map::Message {
-            keys: input.keys,
-            value: serde_json::to_vec(&ResultPayload {
-                value: payload.data.value,
-                time: ts,
-            })
-            .unwrap_or_default(),
-            tags: vec![],
-        }]
+        let message=map::MessageBuilder::new().keys(input.keys).values(serde_json::to_vec(&ResultPayload {
+            value: payload.data.value,
+            time: ts,
+        }).unwrap_or_default()).tags(vec![]).build();
+        vec![message]
     }
 }
