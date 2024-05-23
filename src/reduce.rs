@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{async_trait, Request, Response, Status};
 use tonic::metadata::MetadataMap;
+use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
@@ -20,7 +20,7 @@ const WIN_END_TIME: &str = "x-numaflow-win-end-time";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
-const DROP: &str ="U+005C__DROP__";
+const DROP: &str = "U+005C__DROP__";
 
 /// Numaflow Reduce Proto definitions.
 pub mod proto {
@@ -157,7 +157,10 @@ pub struct IntervalWindow {
 
 impl IntervalWindow {
     fn new(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Self {
-        Self { start_time, end_time }
+        Self {
+            start_time,
+            end_time,
+        }
     }
 }
 
@@ -177,51 +180,49 @@ pub struct Metadata {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
-     keys: Vec<String>,
+    keys: Vec<String>,
     /// Value is the value passed to the next vertex.
-      value: Vec<u8>,
+    value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-     tags: Vec<String>,
+    tags: Vec<String>,
 }
 
-
 #[derive(Default)]
-pub struct MessageBuilder{
+pub struct MessageBuilder {
     keys: Vec<String>,
     value: Vec<u8>,
     tags: Vec<String>,
 }
 impl MessageBuilder {
-    pub fn new()->Self{
+    pub fn new() -> Self {
         Default::default()
     }
     pub fn message_to_drop(mut self) -> Self {
         self.tags.push(DROP.parse().unwrap());
         self
     }
-    pub fn keys(mut self,keys:Vec<String>)->  Self{
-        self.keys=keys;
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = keys;
         self
     }
 
-    pub fn tags(mut self,tags:Vec<String>)->  Self{
-        self.tags=tags;
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
         self
     }
 
-    pub fn values( mut self,value: Vec<u8>)->Self{
-        self.value=value;
+    pub fn values(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
         self
     }
-    pub fn build(self)-> Message {
+    pub fn build(self) -> Message {
         Message {
             keys: self.keys,
-            value:self.value,
+            value: self.value,
             tags: self.tags,
         }
     }
 }
-
 
 /// Incoming request into the reducer handler of [`Reducer`].
 pub struct ReduceRequest {
@@ -275,8 +276,8 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
 
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+where
+    C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
@@ -343,8 +344,8 @@ impl<C> proto::reduce_server::Reduce for ReduceService<C>
                 tx.send(Ok(proto::ReduceResponse {
                     results: datum_responses,
                 }))
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             }
         });
 
@@ -416,9 +417,9 @@ impl<C> Server<C> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            F: Future<Output=()>,
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        F: Future<Output = ()>,
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
@@ -435,9 +436,9 @@ impl<C> Server<C> {
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
-        where
-            C: ReducerCreator + Send + Sync + 'static,
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }

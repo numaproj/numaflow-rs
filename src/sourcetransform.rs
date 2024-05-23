@@ -10,7 +10,7 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
 
-const DROP: &str ="U+005C__DROP__";
+const DROP: &str = "U+005C__DROP__";
 /// Numaflow SourceTransformer Proto definitions.
 pub mod proto {
     tonic::include_proto!("sourcetransformer.v1");
@@ -64,9 +64,9 @@ pub trait SourceTransformer {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-     keys: Vec<String>,
+    keys: Vec<String>,
     /// Value is the value passed to the next vertex.
-     value: Vec<u8>,
+    value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`Datum`].
     event_time: DateTime<Utc>,
@@ -75,50 +75,48 @@ pub struct Message {
 }
 
 #[derive(Default)]
-pub struct MessageBuilder{
+pub struct MessageBuilder {
     keys: Vec<String>,
     value: Vec<u8>,
     tags: Vec<String>,
-    event_time:DateTime<Utc>
+    event_time: DateTime<Utc>,
 }
 impl MessageBuilder {
-    pub fn new()->Self{
+    pub fn new() -> Self {
         Default::default()
     }
     pub fn message_to_drop(mut self) -> Self {
         self.tags.push(DROP.parse().unwrap());
         self
     }
-    pub fn keys(mut self,keys:Vec<String>)->  Self{
-        self.keys=keys;
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = keys;
         self
     }
 
-    pub fn tags(mut self,tags:Vec<String>)->  Self{
-        self.tags=tags;
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
         self
     }
 
-    pub fn values( mut self,value: Vec<u8>)->Self{
-        self.value=value;
+    pub fn values(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
         self
     }
 
-    pub fn event_time(mut self,event_time:DateTime<Utc>)->Self{
-        self.event_time=event_time;
+    pub fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
+        self.event_time = event_time;
         self
-
     }
-    pub fn build(self)-> Message {
+    pub fn build(self) -> Message {
         Message {
             keys: self.keys,
-            value:self.value,
+            value: self.value,
             tags: self.tags,
-            event_time:self.event_time
+            event_time: self.event_time,
         }
     }
 }
-
 
 /// Incoming request to the Source Transformer.
 pub struct SourceTransformRequest {

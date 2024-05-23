@@ -16,7 +16,7 @@ impl sourcetransform::SourceTransformer for NowCat {
         &self,
         input: sourcetransform::SourceTransformRequest,
     ) -> Vec<sourcetransform::Message> {
-        let message=sourcetransform::MessageBuilder::new()
+        let message = sourcetransform::MessageBuilder::new()
             .keys(input.keys)
             .values(input.value)
             .tags(vec![])

@@ -48,7 +48,11 @@ mod counter {
                 md.start_time(),
                 md.end_time()
             );
-            let message=reduce::MessageBuilder::new().keys(keys.clone()).values(counter.to_string().into_bytes()).tags(vec![]).build();
+            let message = reduce::MessageBuilder::new()
+                .keys(keys.clone())
+                .values(counter.to_string().into_bytes())
+                .tags(vec![])
+                .build();
             vec![message]
         }
     }

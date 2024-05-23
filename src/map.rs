@@ -7,11 +7,10 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
-
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-const DROP: &str ="U+005C__DROP__";
+const DROP: &str = "U+005C__DROP__";
 /// Numaflow Map Proto definitions.
 pub mod proto {
     tonic::include_proto!("map.v1");
@@ -82,53 +81,49 @@ where
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-     keys: Vec<String>,
+    keys: Vec<String>,
     /// Value is the value passed to the next vertex.
-     value: Vec<u8>,
+    value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     tags: Vec<String>,
 }
 
 #[derive(Default)]
-pub struct MessageBuilder{
+pub struct MessageBuilder {
     keys: Vec<String>,
     value: Vec<u8>,
     tags: Vec<String>,
 }
-impl  MessageBuilder{
-    pub fn new()->Self{
+impl MessageBuilder {
+    pub fn new() -> Self {
         Default::default()
     }
     pub fn message_to_drop(mut self) -> Self {
         self.tags.push(DROP.parse().unwrap());
         self
     }
-    pub fn keys(mut self,keys:Vec<String>)->  Self{
-        self.keys=keys;
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = keys;
         self
     }
 
-    pub fn tags(mut self,tags:Vec<String>)->  Self{
-        self.tags=tags;
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
         self
     }
 
-    pub fn values( mut self,value: Vec<u8>)->Self{
-        self.value=value;
+    pub fn values(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
         self
     }
-    pub fn build(self)->Message{
-        Message{
+    pub fn build(self) -> Message {
+        Message {
             keys: self.keys,
-            value:self.value,
+            value: self.value,
             tags: self.tags,
         }
     }
 }
-
-
-
-
 
 impl From<Message> for proto::map_response::Result {
     fn from(value: Message) -> Self {
@@ -250,14 +245,14 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, time::Duration};
-    use tower::service_fn;
-    use crate::map::{Message, MessageBuilder};
     use crate::map;
     use crate::map::proto::map_client::MapClient;
+    use crate::map::{Message, MessageBuilder};
+    use std::{error::Error, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
+    use tower::service_fn;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {
@@ -326,23 +321,21 @@ mod tests {
         Ok(())
     }
 
-
     // builder test
     #[test]
-    fn builder_test(){
-        let message=Message{
-            tags:vec![],
-            keys:vec![],
-            value:vec![]
+    fn builder_test() {
+        let message = Message {
+            tags: vec![],
+            keys: vec![],
+            value: vec![],
         };
 
-        let message_builder=MessageBuilder::new()
+        let message_builder = MessageBuilder::new()
             .keys(vec![])
             .values(vec![])
             .tags(vec![])
             .build();
 
-        assert_eq!(message,message_builder)
-
+        assert_eq!(message, message_builder)
     }
 }
