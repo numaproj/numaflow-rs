@@ -97,7 +97,7 @@ pub trait Reducer {
     ///     Ok(())
     /// }
     /// mod counter {
-    ///     use numaflow::reduce::{Message, ReduceRequest};
+    ///     use numaflow::reduce::{Message, MessageBuilder, ReduceRequest};
     ///     use numaflow::reduce::{Reducer, Metadata};
     ///     use tokio::sync::mpsc::Receiver;
     ///     use tonic::async_trait;
@@ -132,11 +132,8 @@ pub trait Reducer {
     ///             while (input.recv().await).is_some() {
     ///                 counter += 1;
     ///             }
-    ///             vec![Message {
-    ///                 keys: keys.clone(),
-    ///                 value: counter.to_string().into_bytes(),
-    ///                 tags: vec![],
-    ///             }]
+    ///             let message=MessageBuilder::new().tags(vec![]).keys(keys.clone()).values(counter.to_string().into_bytes()).build();
+    ///             vec![message]
     ///         }
     ///     }
     /// }
@@ -176,75 +173,55 @@ pub struct Metadata {
 }
 
 /// Message is the response from the user's [`Reducer::reduce`].
-#[derive(Default)]
+
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
-    pub keys: Vec<String>,
+     keys: Vec<String>,
     /// Value is the value passed to the next vertex.
-    pub value: Vec<u8>,
+      value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags: Vec<String>,
+     tags: Vec<String>,
 }
 
 
-impl Message {
-    pub fn new_message(value: Vec<u8>)->Self{
-       Message {
-            value,
-            ..Default::default() // Use default values for keys and tags
-        }
+#[derive(Default)]
+pub struct MessageBuilder{
+    keys: Vec<String>,
+    value: Vec<u8>,
+    tags: Vec<String>,
+}
+impl MessageBuilder {
+    pub fn new()->Self{
+        Default::default()
     }
-
-    pub fn message_to_drop()->Self{
-       Message {
-            tags:vec![DROP.parse().unwrap()],
-            ..Default::default() // Use default values for keys and tags
-        }
+    pub fn message_to_drop(mut self) -> Self {
+        self.tags.push(DROP.parse().unwrap());
+        self
     }
-
-    pub fn with_keys(mut self,keys:Vec<String>)->  Self{
+    pub fn keys(mut self,keys:Vec<String>)->  Self{
         self.keys=keys;
         self
     }
 
-    pub fn with_tags(mut self,tags:Vec<String>)->  Self{
+    pub fn tags(mut self,tags:Vec<String>)->  Self{
         self.tags=tags;
         self
     }
 
-    pub fn keys(mut self) ->Vec<String>{
-        self.keys
-    }
-    pub fn value(mut self) ->Vec<u8>{
-        self.value
-    }
-
-    pub fn tags(mut self) ->Vec<String>{
-        self.tags
-    }
-
-}
-
-pub struct  Messages{
-    messages:Vec<Message>
-}
-
-impl Messages {
-    fn message_builder() -> Self {
-        Messages {
-            messages: Vec::new(),
-        }
-    }
-    fn append(mut self, msg: Message) -> Self {
-        self.messages.push(msg);
+    pub fn values( mut self,value: Vec<u8>)->Self{
+        self.value=value;
         self
     }
-
-    fn items( &self) ->&Vec<Message>{
-        &self.messages
+    pub fn build(self)-> Message {
+        Message {
+            keys: self.keys,
+            value:self.value,
+            tags: self.tags,
+        }
     }
 }
+
 
 /// Incoming request into the reducer handler of [`Reducer`].
 pub struct ReduceRequest {

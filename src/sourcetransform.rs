@@ -50,12 +50,9 @@ pub trait SourceTransformer {
     ///         &self,
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
-    ///         vec![sourcetransform::Message {
-    ///             keys: input.keys,
-    ///             value: input.value,
-    ///             event_time: chrono::offset::Utc::now(),
-    ///             tags: vec![],
-    ///         }]
+    ///     use numaflow::sourcetransform::MessageBuilder;
+    /// let message=MessageBuilder::new().keys(input.keys).values(input.value).tags(vec![]).event_time(chrono::offset::Utc::now()).build();
+    ///         vec![message]
     ///     }
     /// }
     /// ```
@@ -63,77 +60,64 @@ pub trait SourceTransformer {
 }
 
 /// Message is the response struct from the [`SourceTransformer::transform`] .
-#[derive(Default)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    pub keys: Vec<String>,
+     keys: Vec<String>,
     /// Value is the value passed to the next vertex.
-    pub value: Vec<u8>,
+     value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`Datum`].
-    pub event_time: DateTime<Utc>,
+    event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags: Vec<String>,
+    tags: Vec<String>,
 }
 
-impl Message {
-    pub fn new_message(value: Vec<u8>)->Self{
-        Message {
-            value,
-            ..Default::default() // Use default values for keys and tags
-        }
+#[derive(Default)]
+pub struct MessageBuilder{
+    keys: Vec<String>,
+    value: Vec<u8>,
+    tags: Vec<String>,
+    event_time:DateTime<Utc>
+}
+impl MessageBuilder {
+    pub fn new()->Self{
+        Default::default()
     }
-
-    pub fn message_to_drop()->Self{
-        Message {
-            tags:vec![DROP.parse().unwrap()],
-            ..Default::default() // Use default values for keys and tags
-        }
+    pub fn message_to_drop(mut self) -> Self {
+        self.tags.push(DROP.parse().unwrap());
+        self
     }
-
-    pub fn with_keys(mut self,keys:Vec<String>)->  Self{
+    pub fn keys(mut self,keys:Vec<String>)->  Self{
         self.keys=keys;
         self
     }
 
-    pub fn with_tags(mut self,tags:Vec<String>)->  Self{
+    pub fn tags(mut self,tags:Vec<String>)->  Self{
         self.tags=tags;
         self
     }
 
-    pub fn keys(mut self) ->Vec<String>{
-        self.keys
-    }
-    pub fn value(mut self) ->Vec<u8>{
-        self.value
-    }
-
-    pub fn tags(mut self) ->Vec<String>{
-        self.tags
-    }
-
-}
-
-pub struct  Messages{
-    messages:Vec<crate::reduce::Message>
-}
-
-impl Messages {
-    fn message_builder() -> Self {
-        Messages {
-            messages: Vec::new(),
-        }
-    }
-    fn append(mut self, msg: crate::reduce::Message) -> Self {
-        self.messages.push(msg);
+    pub fn values( mut self,value: Vec<u8>)->Self{
+        self.value=value;
         self
     }
 
-    fn items( &self) ->&Vec<crate::reduce::Message>{
-        &self.messages
+    pub fn event_time(mut self,event_time:DateTime<Utc>)->Self{
+        self.event_time=event_time;
+        self
+
+    }
+    pub fn build(self)-> Message {
+        Message {
+            keys: self.keys,
+            value:self.value,
+            tags: self.tags,
+            event_time:self.event_time
+        }
     }
 }
+
 
 /// Incoming request to the Source Transformer.
 pub struct SourceTransformRequest {
