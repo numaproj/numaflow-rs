@@ -60,6 +60,7 @@ pub trait SourceTransformer {
 }
 
 /// Message is the response struct from the [`SourceTransformer::transform`] .
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.

@@ -173,7 +173,7 @@ pub struct Metadata {
 }
 
 /// Message is the response from the user's [`Reducer::reduce`].
-
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].

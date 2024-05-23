@@ -78,7 +78,7 @@ where
 }
 
 /// Message is the response struct from the [`Mapper::map`] .
-
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
@@ -252,7 +252,7 @@ impl<T> Server<T> {
 mod tests {
     use std::{error::Error, time::Duration};
     use tower::service_fn;
-
+    use crate::map::{Message, MessageBuilder};
     use crate::map;
     use crate::map::proto::map_client::MapClient;
     use tempfile::TempDir;
@@ -324,5 +324,25 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
+    }
+
+
+    // builder test
+    #[test]
+    fn builder_test(){
+        let message=Message{
+            tags:vec![],
+            keys:vec![],
+            value:vec![]
+        };
+
+        let message_builder=MessageBuilder::new()
+            .keys(vec![])
+            .values(vec![])
+            .tags(vec![])
+            .build();
+
+        assert_eq!(message,message_builder)
+
     }
 }

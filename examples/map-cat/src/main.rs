@@ -11,10 +11,7 @@ struct Cat;
 #[tonic::async_trait]
 impl map::Mapper for Cat {
     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-        vec![map::Message {
-            keys: input.keys,
-            value: input.value,
-            tags: vec![],
-        }]
+        let message=MessageBuilder::new().keys(input.keys).values(input.value).tags(vec![]).build();
+        vec![message]
     }
 }
