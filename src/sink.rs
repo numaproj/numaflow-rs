@@ -161,7 +161,7 @@ impl From<Response> for proto::sink_response::Result {
             status: if r.fallback {
                 proto::Status::Fallback as i32
             } else if r.success {
-                proto::Status::Fallback as i32
+                proto::Status::Success as i32
             } else {
                 proto::Status::Failure as i32
             },
