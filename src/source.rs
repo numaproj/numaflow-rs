@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -193,6 +194,8 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Keys of the message.
     pub keys: Vec<String>,
+
+    pub headers:HashMap<String,String>
 }
 
 /// gRPC server for starting a [`Sourcer`] service

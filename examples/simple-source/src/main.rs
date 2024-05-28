@@ -12,6 +12,7 @@ pub(crate) mod simple_source {
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
     };
+    use std::collections::HashMap;
 
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use tokio::{sync::mpsc::Sender, time::Instant};
@@ -63,6 +64,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
+                        headers:HashMap::new().insert("key","key")
                     })
                     .await
                     .unwrap();
