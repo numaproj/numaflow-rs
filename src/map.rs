@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -87,6 +88,7 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Vec<String>,
+
 }
 
 impl From<Message> for proto::map_response::Result {
@@ -109,6 +111,9 @@ pub struct MapRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
+
 }
 
 impl From<proto::MapRequest> for MapRequest {
@@ -118,6 +123,7 @@ impl From<proto::MapRequest> for MapRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
+            headers: value.headers
         }
     }
 }

@@ -195,6 +195,8 @@ pub struct ReduceRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 impl From<proto::ReduceRequest> for ReduceRequest {
@@ -204,6 +206,7 @@ impl From<proto::ReduceRequest> for ReduceRequest {
             value: mr.value,
             watermark: shared::utc_from_timestamp(mr.watermark),
             eventtime: shared::utc_from_timestamp(mr.event_time),
+            headers: mr.headers,
         }
     }
 }
