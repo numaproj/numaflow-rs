@@ -291,7 +291,7 @@ impl<T> Server<T> {
 mod tests {
     use super::proto;
     use chrono::Utc;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::vec;
     use std::{error::Error, time::Duration};
     use tokio_stream::StreamExt;
@@ -323,6 +323,8 @@ mod tests {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
+            let mut headers=HashMap::new();
+            headers.insert(String::from("key"),String::from("key"));
             for i in 0..request.count {
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
@@ -335,6 +337,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
+                        headers:headers.clone(),
                     })
                     .await
                     .unwrap();

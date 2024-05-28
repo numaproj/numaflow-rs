@@ -53,7 +53,8 @@ pub(crate) mod simple_source {
                 self.read_idx
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
                 let offset = self.read_idx.load(Ordering::Relaxed);
-
+                let mut headers=HashMap::new();
+                headers.insert(String::from("key"),String::from("key"));
                 // send the message to the transmitter
                 transmitter
                     .send(Message {
@@ -64,7 +65,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
-                        headers:HashMap::new().insert("key","key")
+                        headers:headers.clone()
                     })
                     .await
                     .unwrap();
