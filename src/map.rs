@@ -274,6 +274,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
+            headers:Default::default()
         });
 
         let resp = client.map_fn(request).await?;
