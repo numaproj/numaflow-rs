@@ -195,7 +195,7 @@ pub struct Message {
     /// Keys of the message.
     pub keys: Vec<String>,
 
-    pub headers:HashMap<String,String>
+    pub headers:Arc<HashMap<String, String>>,
 }
 
 /// gRPC server for starting a [`Sourcer`] service
@@ -294,6 +294,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::vec;
     use std::{error::Error, time::Duration};
+    use std::sync::Arc;
     use tokio_stream::StreamExt;
     use tower::service_fn;
 
@@ -325,6 +326,7 @@ mod tests {
             let mut message_offsets = Vec::with_capacity(request.count);
             let mut headers=HashMap::new();
             headers.insert(String::from("key"),String::from("key"));
+            let shared_headers = Arc::new(headers);
             for i in 0..request.count {
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
@@ -337,7 +339,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
-                        headers:headers.clone(),
+                        headers:Arc::clone(&shared_headers), // Cloning the Arc, not the HashMap,
                     })
                     .await
                     .unwrap();

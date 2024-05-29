@@ -13,6 +13,7 @@ pub(crate) mod simple_source {
         sync::RwLock,
     };
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use tokio::{sync::mpsc::Sender, time::Instant};
@@ -55,6 +56,7 @@ pub(crate) mod simple_source {
                 let offset = self.read_idx.load(Ordering::Relaxed);
                 let mut headers=HashMap::new();
                 headers.insert(String::from("key"),String::from("key"));
+                let shared_headers = Arc::new(headers);
                 // send the message to the transmitter
                 transmitter
                     .send(Message {
@@ -65,7 +67,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
-                        headers:headers.clone()
+                        headers:Arc::clone(&shared_headers), // Cloning the Arc, not the HashMap,
                     })
                     .await
                     .unwrap();
