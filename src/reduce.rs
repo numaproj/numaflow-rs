@@ -97,7 +97,7 @@ pub trait Reducer {
     ///     Ok(())
     /// }
     /// mod counter {
-    ///     use numaflow::reduce::{Message, MessageBuilder, ReduceRequest};
+    ///     use numaflow::reduce::{Message, ReduceRequest};
     ///     use numaflow::reduce::{Reducer, Metadata};
     ///     use tokio::sync::mpsc::Receiver;
     ///     use tonic::async_trait;
@@ -132,7 +132,7 @@ pub trait Reducer {
     ///             while (input.recv().await).is_some() {
     ///                 counter += 1;
     ///             }
-    ///             let message=MessageBuilder::new().tags(vec![]).keys(keys.clone()).values(counter.to_string().into_bytes()).build();
+    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone()).build();
     ///             vec![message]
     ///         }
     ///     }
@@ -180,47 +180,43 @@ pub struct Metadata {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
-    keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
-    value: Vec<u8>,
+    pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    tags: Vec<String>,
+    pub tags:Option<Vec<String>>,
 }
 
-#[derive(Default)]
-pub struct MessageBuilder {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    tags: Vec<String>,
-}
-impl MessageBuilder {
-    pub fn new() -> Self {
-        Default::default()
+
+impl Message {
+    pub fn new(value :Vec<u8>) -> Self {
+       Self{
+           value,
+           keys:None,
+           tags:None
+
+       }
     }
     pub fn message_to_drop(mut self) -> Self {
-        self.tags.push(DROP.parse().unwrap());
+        if self.tags.is_none(){
+            self.tags=Some(Vec::new())
+        }
+        self.tags.as_mut().unwrap().push(DROP.parse().unwrap());
         self
     }
     pub fn keys(mut self, keys: Vec<String>) -> Self {
-        self.keys = keys;
+        self.keys = Some(keys);
         self
     }
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
-        self.tags = tags;
+        self.tags = Some(tags);
         self
     }
 
     pub fn values(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
-    }
-    pub fn build(self) -> Message {
-        Message {
-            keys: self.keys,
-            value: self.value,
-            tags: self.tags,
-        }
     }
 }
 
@@ -335,9 +331,9 @@ where
                 let mut datum_responses = vec![];
                 for message in messages {
                     datum_responses.push(proto::reduce_response::Result {
-                        keys: message.keys,
+                        keys: message.keys.unwrap_or_default(),
                         value: message.value,
-                        tags: message.tags,
+                        tags: message.tags.unwrap_or_default(),
                     });
                 }
                 // stream it out to the client

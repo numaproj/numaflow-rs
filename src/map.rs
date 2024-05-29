@@ -45,8 +45,8 @@ pub trait Mapper {
     /// #[tonic::async_trait]
     /// impl map::Mapper for Cat {
     ///     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-    ///        use numaflow::map::MessageBuilder;
-    ///       let message=MessageBuilder::new().keys(input.keys).values(input.value).tags(vec![]).build();
+    ///        use numaflow::map::Message;
+    ///       let message=Message::new(input.value).keys(input.keys).tags(vec![]);
     ///         vec![message]
     ///     }
     /// }
@@ -81,56 +81,51 @@ where
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
-    value: Vec<u8>,
+    pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    tags: Vec<String>,
+    pub tags: Option<Vec<String>>,
 }
 
-#[derive(Default)]
-pub struct MessageBuilder {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    tags: Vec<String>,
-}
-impl MessageBuilder {
-    pub fn new() -> Self {
-        Default::default()
+impl Message {
+    pub fn new(value:Vec<u8>) -> Self {
+        Self{
+            value,
+            keys:None,
+            tags:None
+        }
     }
     pub fn message_to_drop(mut self) -> Self {
-        self.tags.push(DROP.parse().unwrap());
+        if self.tags.is_none(){
+            self.tags=Some(Vec::new());
+        }
+        self.tags.as_mut().unwrap().push(DROP.parse().unwrap());
         self
     }
     pub fn keys(mut self, keys: Vec<String>) -> Self {
-        self.keys = keys;
+        self.keys = Some(keys);
         self
     }
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
-        self.tags = tags;
+        self.tags = Some(tags);
         self
     }
 
-    pub fn values(mut self, value: Vec<u8>) -> Self {
+    pub fn value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
     }
-    pub fn build(self) -> Message {
-        Message {
-            keys: self.keys,
-            value: self.value,
-            tags: self.tags,
-        }
-    }
+
 }
 
 impl From<Message> for proto::map_response::Result {
     fn from(value: Message) -> Self {
         proto::map_response::Result {
-            keys: value.keys,
+            keys: value.keys.unwrap_or_default(),
             value: value.value,
-            tags: value.tags,
+            tags: value.tags.unwrap_or_default(),
         }
     }
 }
@@ -247,7 +242,7 @@ impl<T> Server<T> {
 mod tests {
     use crate::map;
     use crate::map::proto::map_client::MapClient;
-    use crate::map::{Message, MessageBuilder};
+    use crate::map::{Message};
     use std::{error::Error, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::oneshot;
@@ -261,9 +256,9 @@ mod tests {
         impl map::Mapper for Cat {
             async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
                 vec![map::Message {
-                    keys: input.keys,
+                    keys: Some(input.keys),
                     value: input.value,
-                    tags: vec![],
+                    tags: Some(vec![]),
                 }]
             }
         }
@@ -321,21 +316,5 @@ mod tests {
         Ok(())
     }
 
-    // builder test
-    #[test]
-    fn builder_test() {
-        let message = Message {
-            tags: vec![],
-            keys: vec![],
-            value: vec![],
-        };
 
-        let message_builder = MessageBuilder::new()
-            .keys(vec![])
-            .values(vec![])
-            .tags(vec![])
-            .build();
-
-        assert_eq!(message, message_builder)
-    }
 }

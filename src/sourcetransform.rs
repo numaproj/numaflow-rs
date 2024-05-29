@@ -50,8 +50,8 @@ pub trait SourceTransformer {
     ///         &self,
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
-    ///     use numaflow::sourcetransform::MessageBuilder;
-    /// let message=MessageBuilder::new().keys(input.keys).values(input.value).tags(vec![]).event_time(chrono::offset::Utc::now()).build();
+    ///     use numaflow::sourcetransform::Message;
+    /// let message=Message::new(input.value).keys(input.keys).tags(vec![]).event_time(chrono::offset::Utc::now()).build();
     ///         vec![message]
     ///     }
     /// }
@@ -64,38 +64,37 @@ pub trait SourceTransformer {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    keys: Vec<String>,
+    keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`Datum`].
-    event_time: DateTime<Utc>,
+    event_time: Option<DateTime<Utc>>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    tags: Vec<String>,
+    tags: Option<Vec<String>>,
 }
 
-#[derive(Default)]
-pub struct MessageBuilder {
-    keys: Vec<String>,
-    value: Vec<u8>,
-    tags: Vec<String>,
-    event_time: DateTime<Utc>,
-}
-impl MessageBuilder {
-    pub fn new() -> Self {
-        Default::default()
+
+impl Message {
+    pub fn new(value:Vec<u8>) -> Self {
+       Self{
+           value,
+           event_time:None,
+           keys:None,
+           tags:None
+       }
     }
     pub fn message_to_drop(mut self) -> Self {
         self.tags.push(DROP.parse().unwrap());
         self
     }
     pub fn keys(mut self, keys: Vec<String>) -> Self {
-        self.keys = keys;
+        self.keys = Some(keys);
         self
     }
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
-        self.tags = tags;
+        self.tags = Some(tags);
         self
     }
 
@@ -105,17 +104,10 @@ impl MessageBuilder {
     }
 
     pub fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
-        self.event_time = event_time;
+        self.event_time = Some(event_time);
         self
     }
-    pub fn build(self) -> Message {
-        Message {
-            keys: self.keys,
-            value: self.value,
-            tags: self.tags,
-            event_time: self.event_time,
-        }
-    }
+
 }
 
 /// Incoming request to the Source Transformer.
@@ -136,10 +128,10 @@ pub struct SourceTransformRequest {
 impl From<Message> for proto::source_transform_response::Result {
     fn from(value: Message) -> Self {
         proto::source_transform_response::Result {
-            keys: value.keys,
+            keys: value.keys.unwrap_or_default(),
             value: value.value,
-            event_time: prost_timestamp_from_utc(value.event_time),
-            tags: value.tags,
+            event_time: prost_timestamp_from_utc(value.event_time.unwrap_or_default()),
+            tags: value.tags.unwrap_or_default(),
         }
     }
 }
@@ -288,10 +280,10 @@ mod tests {
                 input: sourcetransform::SourceTransformRequest,
             ) -> Vec<sourcetransform::Message> {
                 vec![sourcetransform::Message {
-                    keys: input.keys,
+                    keys: Some(input.keys),
                     value: input.value,
-                    tags: vec![],
-                    event_time: chrono::offset::Utc::now(),
+                    tags: Some(vec![]),
+                    event_time: Some(chrono::offset::Utc::now()),
                 }]
             }
         }
