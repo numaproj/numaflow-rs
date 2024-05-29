@@ -64,14 +64,14 @@ pub trait SourceTransformer {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    keys: Option<Vec<String>>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
-    value: Vec<u8>,
+    pub value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`Datum`].
-    event_time: Option<DateTime<Utc>>,
+    pub event_time: Option<DateTime<Utc>>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    tags: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
 }
 
 /// Represents a message that can be modified and forwarded.
