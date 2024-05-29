@@ -197,6 +197,7 @@ pub struct ReduceRequest {
     pub eventtime: DateTime<Utc>,
 }
 
+// TODO: improve error handling, avoid panics and make sure the errors are propagated to the client.
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
     where
@@ -287,7 +288,16 @@ impl Task {
     /// Sends a `ReduceRequest` to the task.
     async fn send(&self, rr: ReduceRequest) {
         if let Some(ref tx) = self.tx {
-            tx.send(rr).await.unwrap();
+            tx.send(rr).await.expect("send failed, receiver dropped")
+        }
+    }
+
+    /// Closes the task and waits for it to finish.
+    async fn close(&mut self) {
+        // drop the sender to close the task and wait for the task to finish
+        drop(self.tx.take());
+        if let Some(handle) = self.handle.take() {
+            handle.await.unwrap();
         }
     }
 }
@@ -400,13 +410,10 @@ impl<C> TaskManager<C>
     }
 
     /// Closes all tasks in the task manager and sends an EOF message to the response stream.
+    // Method to close all tasks
     async fn close_all_tasks(&mut self) {
         for task in self.tasks.values_mut() {
-            // drop the sender to close the task and wait for the task to finish
-            drop(task.tx.take());
-            if let Some(handle) = task.handle.take() {
-                handle.await.unwrap();
-            }
+            task.close().await;
         }
 
         // after all the tasks have been closed, send an EOF message to the response stream
