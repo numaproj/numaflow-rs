@@ -6,7 +6,6 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
-
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
@@ -58,8 +57,8 @@ pub trait Mapper {
 
 #[async_trait]
 impl<T> proto::map_server::Map for MapService<T>
-where
-    T: Mapper + Send + Sync + 'static,
+    where
+        T: Mapper + Send + Sync + 'static,
 {
     async fn map_fn(
         &self,
@@ -180,9 +179,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Mapper + Send + Sync + 'static,
-        F: Future<Output = ()>,
+        where
+            T: Mapper + Send + Sync + 'static,
+            F: Future<Output=()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -200,8 +199,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Mapper + Send + Sync + 'static,
+        where
+            T: Mapper + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -210,13 +209,14 @@ impl<T> Server<T> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
+
+    use tempfile::TempDir;
+    use tokio::sync::oneshot;
+    use tonic::transport::Uri;
     use tower::service_fn;
 
     use crate::map;
     use crate::map::proto::map_client::MapClient;
-    use tempfile::TempDir;
-    use tokio::sync::oneshot;
-    use tonic::transport::Uri;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {

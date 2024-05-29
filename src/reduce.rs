@@ -1,21 +1,19 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
+use crate::shared::prost_timestamp_from_utc;
 
 const KEY_JOIN_DELIMITER: &str = ":";
-// grpc window metadata
-const WIN_START_TIME: &str = "x-numaflow-win-start-time";
-const WIN_END_TIME: &str = "x-numaflow-win-end-time";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
@@ -199,74 +197,40 @@ pub struct ReduceRequest {
     pub eventtime: DateTime<Utc>,
 }
 
-impl From<proto::ReduceRequest> for ReduceRequest {
-    fn from(mr: proto::ReduceRequest) -> Self {
-        Self {
-            keys: mr.keys,
-            value: mr.value,
-            watermark: shared::utc_from_timestamp(mr.watermark),
-            eventtime: shared::utc_from_timestamp(mr.event_time),
-        }
-    }
-}
-
-// extract start and end time from the gRPC MetadataMap
-// https://youtu.be/s5S2Ed5T-dc?t=662
-fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
-    let (st, et) = (
-        request
-            .get(WIN_START_TIME)
-            .unwrap_or_else(|| panic!("expected key {}", WIN_START_TIME))
-            .to_str()
-            .unwrap()
-            .to_string()
-            .parse::<i64>()
-            .unwrap(),
-        request
-            .get(WIN_END_TIME)
-            .unwrap_or_else(|| panic!("expected key {}", WIN_END_TIME))
-            .to_str()
-            .unwrap()
-            .parse::<i64>()
-            .unwrap(),
-    );
-
-    (
-        Utc.timestamp_millis_opt(st).unwrap(),
-        Utc.timestamp_millis_opt(et).unwrap(),
-    )
-}
-
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-where
-    C: ReducerCreator + Send + Sync + 'static,
+    where
+        C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
         &self,
         request: Request<tonic::Streaming<proto::ReduceRequest>>,
     ) -> Result<Response<Self::ReduceFnStream>, Status> {
-        // get gRPC window from metadata
-        let (start_win, end_win) = get_window_details(request.metadata());
-        let md = Arc::new(Metadata::new(IntervalWindow::new(start_win, end_win)));
 
-        // Create a new TaskManager
+        // Clone the creator and response_stream since we need to move them into the spawned task
+        let creator = Arc::clone(&self.creator);
         let (response_tx, response_rx) = channel::<Result<proto::ReduceResponse, Status>>(1);
-        let mut task_manager = TaskManager::new(self.creator.clone(), md, response_tx);
 
-        let mut stream = request.into_inner();
+        // Spawn a new task to handle the incoming ReduceRequests from the client
+        tokio::spawn(async move {
+            // Create a new TaskManager to manage the reduce tasks.
+            let mut task_manager = TaskManager::new(creator, response_tx.clone());
 
-        while let Some(rr) = stream.message().await.unwrap() {
-            let keys = rr.keys.clone();
-            let task_name = keys.join(KEY_JOIN_DELIMITER);
+            let mut stream = request.into_inner();
+            while let Some(rr) = stream.message().await.unwrap() {
+                let keys = rr.payload.as_ref().unwrap().keys.clone();
+                let task_name = keys.join(KEY_JOIN_DELIMITER);
 
-            if task_manager.tasks.contains_key(&task_name) {
-                task_manager.append_task(keys, rr.into()).await;
-            } else {
-                task_manager.create_task(keys, rr.into()).await;
+                if task_manager.tasks.contains_key(&task_name) {
+                    task_manager.append_task(keys, rr).await.expect("append task failed");
+                } else {
+                    task_manager.create_task(keys, rr).await.expect("create task failed");
+                }
             }
-        }
+
+            task_manager.close_all_tasks().await;
+        });
 
         // return the rx as the streaming endpoint
         Ok(Response::new(ReceiverStream::new(response_rx)))
@@ -277,101 +241,186 @@ where
     }
 }
 
+/// The `Task` struct represents a task in the task manager.
+/// It contains a sender for sending `ReduceRequest`s to the task,
+/// and a handle for the task's future that is used to await the task.
 struct Task {
-    tx: Sender<ReduceRequest>,
-    join_handle: tokio::task::JoinHandle<()>,
+    tx: Option<Sender<ReduceRequest>>,
+    handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Task {
+    /// Creates a new `Task` with the given reducer, keys, metadata, and response sender.
+    /// It starts the reducer in a new task and returns a `Task` struct that can be used to send `ReduceRequest`s to the reducer.
     async fn new<R: Reducer + Send + Sync + 'static>(
-        reducer_handle: R,
+        reducer: R,
         keys: Vec<String>,
         md: Arc<Metadata>,
         response_tx: Sender<Result<proto::ReduceResponse, Status>>,
     ) -> Self {
         let (tx, rx) = channel::<ReduceRequest>(1);
 
-        let join_handle = tokio::spawn(async move {
-            let messages = reducer_handle.reduce(keys, rx, md.as_ref()).await;
-            let mut datum_responses = vec![];
+        let handle = tokio::spawn(async move {
+            let messages = reducer.reduce(keys, rx, md.as_ref()).await;
             for message in messages {
-                datum_responses.push(proto::reduce_response::Result {
-                    keys: message.keys,
-                    value: message.value,
-                    tags: message.tags,
-                });
-            }
-
-            // Send the result to the response channel
-            response_tx
-                .send(Ok(proto::ReduceResponse {
-                    results: datum_responses,
-                }))
-                .await
-                .unwrap();
+                response_tx.send(Ok(proto::ReduceResponse {
+                    result: Some(proto::reduce_response::Result {
+                        keys: message.keys,
+                        value: message.value,
+                        tags: message.tags,
+                    }),
+                    window: Some(proto::Window {
+                        start: prost_timestamp_from_utc(md.interval_window.start_time),
+                        end: prost_timestamp_from_utc(md.interval_window.end_time),
+                        slot: "slot-0".to_string(),
+                    }),
+                    eof: false,
+                })).await.unwrap();
+            };
         });
 
-        Self { tx, join_handle }
+        Self {
+            tx: Some(tx),
+            handle: Some(handle),
+        }
     }
 
+    /// Sends a `ReduceRequest` to the task.
     async fn send(&self, rr: ReduceRequest) {
-        self.tx.send(rr).await.unwrap();
+        if let Some(ref tx) = self.tx {
+            tx.send(rr).await.unwrap();
+        }
     }
 }
 
+/// The `TaskManager` struct manages tasks in the reduce service.
+/// It contains a map of tasks, a sender for sending `ReduceResponse`s to the client,
+/// and a `ReducerCreator` for creating new reducers.
 struct TaskManager<C> {
     tasks: HashMap<String, Task>,
     response_stream: Sender<Result<proto::ReduceResponse, Status>>,
     creator: Arc<C>,
-    md: Arc<Metadata>,
+    window: Option<IntervalWindow>,
 }
 
-impl<C> TaskManager<C> {
+impl<C> TaskManager<C>
+    where
+        C: ReducerCreator + Send + Sync + 'static,
+{
+    /// Creates a new `TaskManager` with the given `ReducerCreator` and response sender.
     fn new(
         creator: Arc<C>,
-        md: Arc<Metadata>,
         response_stream: Sender<Result<proto::ReduceResponse, Status>>,
     ) -> Self {
         Self {
             tasks: HashMap::new(),
             response_stream,
             creator,
-            md,
+            window: None,
         }
     }
 
-    async fn create_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
-    where
-        C: ReducerCreator + Send + Sync + 'static,
-    {
+    /// Creates a new task with the given keys and `ReduceRequest`.
+    /// It creates a new reducer, starts it in a new task, and adds the task to the task manager.
+    async fn create_task(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) -> Result<(), Box<dyn std::error::Error>> {
+        // Create a new reducer
         let reducer = self.creator.create();
+
+        // Extract the payload and window information from the ReduceRequest
+        let (payload, windows) = (rr.payload.unwrap(), rr.operation.unwrap().windows);
+
+        // Check if there is exactly one window in the ReduceRequest
+        if windows.len() != 1 {
+            return Err(Box::new(Error::new(ErrorKind::InvalidData, "Expected exactly one window")));
+        }
+
+        // Extract the start and end time from the window
+        let window = &windows[0];
+        let (start_time, end_time) = (
+            shared::utc_from_timestamp(window.start.clone()),
+            shared::utc_from_timestamp(window.end.clone()),
+        );
+
+        // set the window in the TaskManager, which will be used to send
+        // the EOF message to the response stream when all tasks are closed
+        self.window = Some(IntervalWindow::new(start_time, end_time));
+
+        // Create Metadata with the extracted start and end time
+        let md = Arc::new(Metadata::new(IntervalWindow::new(start_time, end_time)));
+
+        // Create a new Task and add it to the TaskManager
         let task = Task::new(
             reducer,
             keys.clone(),
-            Arc::clone(&self.md),
+            md.clone(),
             self.response_stream.clone(),
-        )
-        .await;
+        ).await;
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
 
         // Send the first message to the task
         self.tasks
             .get_mut(&keys.join(KEY_JOIN_DELIMITER))
             .unwrap()
-            .send(rr)
+            .send(ReduceRequest {
+                keys,
+                value: payload.value,
+                watermark: shared::utc_from_timestamp(payload.watermark),
+                eventtime: shared::utc_from_timestamp(payload.event_time),
+            })
             .await;
+
+        Ok(())
     }
 
-    async fn append_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
-    where
-        C: ReducerCreator + Send + Sync + 'static,
-    {
+    /// Appends a `ReduceRequest` to an existing task with the given keys.
+    async fn append_task(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) -> Result<(), Box<dyn std::error::Error>> {
+        // Extract the payload and window information from the ReduceRequest
+        let (payload, windows) = (rr.payload.unwrap(), rr.operation.unwrap().windows);
+
+        // Check if there is exactly one window in the ReduceRequest
+        if windows.len() != 1 {
+            return Err(Box::new(Error::new(ErrorKind::InvalidData, "Expected exactly one window")));
+        }
+
+        // Get the task name from the keys
         let task_name = keys.join(KEY_JOIN_DELIMITER);
+
+        // If the task exists, send the ReduceRequest to the task
         if let Some(task) = self.tasks.get(&task_name) {
-            task.send(rr).await;
+            task.send(ReduceRequest {
+                keys,
+                value: payload.value,
+                watermark: shared::utc_from_timestamp(payload.watermark),
+                eventtime: shared::utc_from_timestamp(payload.event_time),
+            }).await;
         } else {
-            // If a task for the given keys doesn't exist yet, create a new one
-            self.create_task(keys, rr).await;
+            return Err(Box::new(Error::new(ErrorKind::NotFound, "Task not found")));
+        }
+
+        Ok(())
+    }
+
+    /// Closes all tasks in the task manager and sends an EOF message to the response stream.
+    async fn close_all_tasks(&mut self) {
+        for task in self.tasks.values_mut() {
+            // drop the sender to close the task and wait for the task to finish
+            drop(task.tx.take());
+            if let Some(handle) = task.handle.take() {
+                handle.await.unwrap();
+            }
+        }
+
+        // after all the tasks have been closed, send an EOF message to the response stream
+        if let Some(window) = &self.window {
+            self.response_stream.send(Ok(proto::ReduceResponse {
+                result: None,
+                window: Some(proto::Window {
+                    start: prost_timestamp_from_utc(window.start_time),
+                    end: prost_timestamp_from_utc(window.end_time),
+                    slot: "slot-0".to_string(),
+                }),
+                eof: true,
+            })).await.unwrap();
         }
     }
 }
@@ -435,9 +484,9 @@ impl<C> Server<C> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        F: Future<Output = ()>,
-        C: ReducerCreator + Send + Sync + 'static,
+        where
+            F: Future<Output=()>,
+            C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
@@ -457,9 +506,184 @@ impl<C> Server<C> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+        where
+            C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{error::Error, time::Duration};
+
+    use prost_types::Timestamp;
+    use tempfile::TempDir;
+    use tokio::sync::oneshot;
+    use tokio_stream::wrappers::ReceiverStream;
+    use tonic::transport::Uri;
+    use tower::service_fn;
+
+    use crate::reduce;
+    use crate::reduce::proto::reduce_client::ReduceClient;
+
+    #[tokio::test]
+    async fn reduce_server() -> Result<(), Box<dyn Error>> {
+        struct Sum;
+        #[tonic::async_trait]
+        impl reduce::Reducer for Sum {
+            async fn reduce(
+                &self,
+                keys: Vec<String>,
+                mut input: tokio::sync::mpsc::Receiver<reduce::ReduceRequest>,
+                _md: &reduce::Metadata,
+            ) -> Vec<reduce::Message> {
+                let mut sum = 0;
+                while let Some(rr) = input.recv().await {
+                    sum += std::str::from_utf8(&rr.value).unwrap().parse::<i32>().unwrap();
+                }
+                vec![reduce::Message {
+                    keys: keys.clone(),
+                    value: sum.to_string().into_bytes(),
+                    tags: vec![],
+                }]
+            }
+        }
+
+        struct SumCreator;
+        impl reduce::ReducerCreator for SumCreator {
+            type R = Sum;
+            fn create(&self) -> Sum {
+                Sum {}
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("reduce.sock");
+        let server_info_file = tmp_dir.path().join("reducer-server-info");
+
+        let mut server = reduce::Server::new(SumCreator)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let shutdown = async {
+            shutdown_rx.await.unwrap();
+        };
+
+        let task = tokio::spawn(async move {
+            server.start_with_shutdown(shutdown).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // Connect to a Uds socket
+                let sock_file = sock_file.clone();
+                tokio::net::UnixStream::connect(sock_file)
+            }))
+            .await?;
+
+        let mut client = ReduceClient::new(channel);
+
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+
+        // Spawn a task to send ReduceRequests to the channel
+        tokio::spawn(async move {
+            let data = vec![
+                ("key1".to_string(), 1..=10),
+                ("key2".to_string(), 1..=9),
+            ];
+
+            for (key, range) in data {
+                for i in range {
+                    let rr = reduce::proto::ReduceRequest {
+                        payload: Some(reduce::proto::reduce_request::Payload {
+                            keys: vec![key.clone()],
+                            value: i.to_string().as_bytes().to_vec(),
+                            watermark: None,
+                            event_time: None,
+                            headers: Default::default(),
+                        }),
+                        operation: Some(reduce::proto::reduce_request::WindowOperation {
+                            event: 0,
+                            windows: vec![reduce::proto::Window {
+                                start: Some(Timestamp {
+                                    seconds: 60000,
+                                    nanos: 0,
+                                }),
+                                end: Some(Timestamp {
+                                    seconds: 120000,
+                                    nanos: 0,
+                                }),
+                                slot: "slot-0".to_string(),
+                            }],
+                        }),
+                    };
+
+                    tx.send(rr).await.unwrap();
+                }
+            }
+        });
+
+        // Convert the receiver end of the channel into a stream
+        let stream = ReceiverStream::new(rx);
+
+        // Create a tonic::Request from the stream
+        let request = tonic::Request::new(stream);
+
+        // Send the request to the server
+        let resp = client.reduce_fn(request).await?;
+
+        let mut response_stream = resp.into_inner();
+        let mut responses = Vec::new();
+
+        while let Some(response) = response_stream.message().await? {
+            responses.push(response);
+        }
+
+        // since we are sending two different keys, we should get two responses + 1 EOF
+        assert_eq!(responses.len(), 3);
+
+        for (i, response) in responses.iter().enumerate() {
+            if let Some(window) = response.window.as_ref() {
+                if let Some(start) = window.start.as_ref() {
+                    assert_eq!(start.seconds, 60000);
+                }
+                if let Some(end) = window.end.as_ref() {
+                    assert_eq!(end.seconds, 120000);
+                }
+            }
+
+            if let Some(result) = response.result.as_ref() {
+                if result.keys == vec!["key1".to_string()] {
+                    assert_eq!(result.value, 55.to_string().into_bytes());
+                } else if result.keys == vec!["key2".to_string()] {
+                    assert_eq!(result.value, 45.to_string().into_bytes());
+                }
+            }
+
+            // Check if this is the last message in the stream
+            if i == responses.len() - 1 {
+                assert_eq!(response.eof, true);
+            } else {
+                assert_eq!(response.eof, false);
+            }
+        }
+
+        shutdown_tx
+            .send(())
+            .expect("Sending shutdown signal to gRPC server");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+
+        Ok(())
     }
 }

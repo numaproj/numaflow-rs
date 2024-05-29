@@ -1,6 +1,8 @@
 use std::future::Future;
 use std::path::PathBuf;
+
 use tonic::{async_trait, Request, Response, Status};
+
 use crate::shared;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -81,8 +83,8 @@ pub trait SideInputer {
 
 #[async_trait]
 impl<T> proto::side_input_server::SideInput for SideInputService<T>
-where
-    T: SideInputer + Send + Sync + 'static,
+    where
+        T: SideInputer + Send + Sync + 'static,
 {
     async fn retrieve_side_input(
         &self,
@@ -169,7 +171,7 @@ impl<T> Server<T> {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         where
             T: SideInputer + Send + Sync + 'static,
-            F: Future<Output = ()>,
+            F: Future<Output=()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();

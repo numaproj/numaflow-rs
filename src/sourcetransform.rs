@@ -114,8 +114,8 @@ impl From<proto::SourceTransformRequest> for SourceTransformRequest {
 
 #[async_trait]
 impl<T> proto::source_transform_server::SourceTransform for SourceTransformerService<T>
-where
-    T: SourceTransformer + Send + Sync + 'static,
+    where
+        T: SourceTransformer + Send + Sync + 'static,
 {
     async fn source_transform_fn(
         &self,
@@ -196,9 +196,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: SourceTransformer + Send + Sync + 'static,
-        F: Future<Output = ()>,
+        where
+            T: SourceTransformer + Send + Sync + 'static,
+            F: Future<Output=()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -217,8 +217,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: SourceTransformer + Send + Sync + 'static,
+        where
+            T: SourceTransformer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -227,13 +227,14 @@ impl<T> Server<T> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
+
+    use tempfile::TempDir;
+    use tokio::sync::oneshot;
+    use tonic::transport::Uri;
     use tower::service_fn;
 
     use crate::sourcetransform;
     use crate::sourcetransform::proto::source_transform_client::SourceTransformClient;
-    use tempfile::TempDir;
-    use tokio::sync::oneshot;
-    use tonic::transport::Uri;
 
     #[tokio::test]
     async fn sourcetransformer_server() -> Result<(), Box<dyn Error>> {

@@ -5,11 +5,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::{self, prost_timestamp_from_utc};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
+
+use crate::shared::{self, prost_timestamp_from_utc};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -72,8 +73,8 @@ pub struct Offset {
 
 #[async_trait]
 impl<T> proto::source_server::Source for SourceService<T>
-where
-    T: Sourcer + Send + Sync + 'static,
+    where
+        T: Sourcer + Send + Sync + 'static,
 {
     type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
@@ -102,8 +103,8 @@ where
                         keys: resp.keys,
                     }),
                 }))
-                .await
-                .expect("receiver dropped");
+                    .await
+                    .expect("receiver dropped");
             }
         });
 
@@ -254,9 +255,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Sourcer + Send + Sync + 'static,
-        F: Future<Output = ()>,
+        where
+            T: Sourcer + Send + Sync + 'static,
+            F: Future<Output=()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -277,8 +278,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Sourcer + Send + Sync + 'static,
+        where
+            T: Sourcer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -286,19 +287,21 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::proto;
-    use chrono::Utc;
+    use std::{error::Error, time::Duration};
     use std::collections::HashSet;
     use std::vec;
-    use std::{error::Error, time::Duration};
-    use tokio_stream::StreamExt;
-    use tower::service_fn;
 
-    use crate::source::{self, Message, Offset, SourceReadRequest};
+    use chrono::Utc;
     use tempfile::TempDir;
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
+    use tokio_stream::StreamExt;
     use tonic::transport::Uri;
+    use tower::service_fn;
+
+    use crate::source::{self, Message, Offset, SourceReadRequest};
+
+    use super::proto;
 
     // A source that repeats the `num` for the requested count
     struct Repeater {

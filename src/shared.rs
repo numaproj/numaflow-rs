@@ -1,15 +1,15 @@
+use std::{collections::HashMap, io};
 use std::fs;
 use std::path::Path;
-use std::{collections::HashMap, io};
 
-use chrono::{DateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Timelike, TimeZone, Utc};
 use prost_types::Timestamp;
 use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
-#[tracing::instrument(fields(path = ?path.as_ref()))]
+#[tracing::instrument(fields(path = ? path.as_ref()))]
 fn write_info_file(path: impl AsRef<Path>) -> io::Result<()> {
     let parent = path.as_ref().parent().unwrap();
     std::fs::create_dir_all(parent)?;
@@ -43,11 +43,9 @@ pub(crate) fn create_listener_stream(
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
-    if let Some(ref t) = t {
-        Utc.timestamp_nanos(t.seconds * (t.nanos as i64))
-    } else {
-        Utc.timestamp_nanos(-1)
-    }
+    t.map_or(Utc.timestamp_nanos(-1), |t| {
+        DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
+    })
 }
 
 pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
