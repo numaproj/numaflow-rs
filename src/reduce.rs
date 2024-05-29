@@ -241,9 +241,8 @@ impl<C> proto::reduce_server::Reduce for ReduceService<C>
     }
 }
 
-/// The `Task` struct represents a task in the task manager.
-/// It contains a sender for sending `ReduceRequest`s to the task,
-/// and a handle for the task's future that is used to await the task.
+/// The `Task` struct represents a task in the reduce service.
+/// It is responsible for invoking the user's reducer and sending the response back to the client.
 struct Task {
     tx: Option<Sender<ReduceRequest>>,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -294,8 +293,8 @@ impl Task {
 }
 
 /// The `TaskManager` struct manages tasks in the reduce service.
-/// It contains a map of tasks, a sender for sending `ReduceResponse`s to the client,
-/// and a `ReducerCreator` for creating new reducers.
+/// It stores a map of keys to tasks, and is responsible for creating, appending, and closing tasks.
+/// It also sends an EOF message to the response stream when all tasks are closed.
 struct TaskManager<C> {
     tasks: HashMap<String, Task>,
     response_stream: Sender<Result<proto::ReduceResponse, Status>>,
@@ -307,7 +306,7 @@ impl<C> TaskManager<C>
     where
         C: ReducerCreator + Send + Sync + 'static,
 {
-    /// Creates a new `TaskManager` with the given `ReducerCreator` and response sender.
+    /// Creates a new `TaskManager` with the given `ReducerCreator` and response stream.
     fn new(
         creator: Arc<C>,
         response_stream: Sender<Result<proto::ReduceResponse, Status>>,
@@ -352,12 +351,12 @@ impl<C> TaskManager<C>
         let task = Task::new(
             reducer,
             keys.clone(),
-            md.clone(),
+            md,
             self.response_stream.clone(),
         ).await;
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
 
-        // Send the first message to the task
+        // send the request inside the proto payload to the task
         self.tasks
             .get_mut(&keys.join(KEY_JOIN_DELIMITER))
             .unwrap()
@@ -543,7 +542,7 @@ mod tests {
                     sum += std::str::from_utf8(&rr.value).unwrap().parse::<i32>().unwrap();
                 }
                 vec![reduce::Message {
-                    keys: keys.clone(),
+                    keys,
                     value: sum.to_string().into_bytes(),
                     tags: vec![],
                 }]
@@ -671,6 +670,7 @@ mod tests {
             }
 
             // Check if this is the last message in the stream
+            // The last message should have eof set to true
             if i == responses.len() - 1 {
                 assert_eq!(response.eof, true);
             } else {
