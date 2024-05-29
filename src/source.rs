@@ -303,6 +303,7 @@ mod tests {
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
+    use uuid::Uuid;
 
     // A source that repeats the `num` for the requested count
     struct Repeater {
@@ -325,7 +326,7 @@ mod tests {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
             let mut headers=HashMap::new();
-            headers.insert(String::from("key"),String::from("key"));
+            headers.insert(String::from( Uuid::new_v4()),String::from( Uuid::new_v4()));
             let shared_headers = Arc::new(headers);
             for i in 0..request.count {
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
