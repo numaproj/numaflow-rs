@@ -51,7 +51,7 @@ pub trait SourceTransformer {
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
     ///     use numaflow::sourcetransform::Message;
-    /// let message=Message::new(input.value).keys(input.keys).tags(vec![]).event_time(chrono::offset::Utc::now()).build();
+    /// let message=Message::new(input.value).keys(input.keys).tags(vec![]).event_time(chrono::offset::Utc::now());
     ///         vec![message]
     ///     }
     /// }
@@ -85,7 +85,10 @@ impl Message {
        }
     }
     pub fn message_to_drop(mut self) -> Self {
-        self.tags.push(DROP.parse().unwrap());
+        if self.tags.is_none(){
+            self.tags=Some(Vec::new())
+        }
+        self.tags.as_mut().unwrap().push(DROP.parse().unwrap());
         self
     }
     pub fn keys(mut self, keys: Vec<String>) -> Self {

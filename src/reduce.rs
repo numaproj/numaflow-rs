@@ -132,7 +132,7 @@ pub trait Reducer {
     ///             while (input.recv().await).is_some() {
     ///                 counter += 1;
     ///             }
-    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone()).build();
+    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
     ///             vec![message]
     ///         }
     ///     }
