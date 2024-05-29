@@ -21,17 +21,9 @@ impl sink::Sinker for Logger {
                 Ok(v) => {
                     println!("{}", v);
                     // record the response
-                    Response {
-                        id: datum.id,
-                        success: true,
-                        err: "".to_string(),
-                    }
+                    Response::ok(datum.id)
                 }
-                Err(e) => Response {
-                    id: datum.id,
-                    success: true, // there is no point setting success to false as retrying is not going to help
-                    err: format!("Invalid UTF-8 sequence: {}", e),
-                },
+                Err(e) => Response::failure(datum.id, format!("Invalid UTF-8 sequence: {}", e)),
             };
 
             // return the responses

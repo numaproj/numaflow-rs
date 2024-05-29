@@ -7,8 +7,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{async_trait, Request, Response, Status};
 use tonic::metadata::MetadataMap;
+use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
@@ -158,7 +158,10 @@ pub struct IntervalWindow {
 
 impl IntervalWindow {
     fn new(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Self {
-        Self { start_time, end_time }
+        Self {
+            start_time,
+            end_time,
+        }
     }
 }
 
@@ -236,8 +239,8 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
 
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+where
+    C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
@@ -300,15 +303,15 @@ impl Task {
             }
 
             // Send the result to the response channel
-            response_tx.send(Ok(proto::ReduceResponse {
-                results: datum_responses,
-            })).await.unwrap();
+            response_tx
+                .send(Ok(proto::ReduceResponse {
+                    results: datum_responses,
+                }))
+                .await
+                .unwrap();
         });
 
-        Self {
-            tx,
-            join_handle,
-        }
+        Self { tx, join_handle }
     }
 
     async fn send(&self, rr: ReduceRequest) {
@@ -324,7 +327,11 @@ struct TaskManager<C> {
 }
 
 impl<C> TaskManager<C> {
-    fn new(creator: Arc<C>, md: Arc<Metadata>, response_stream: Sender<Result<proto::ReduceResponse, Status>>) -> Self {
+    fn new(
+        creator: Arc<C>,
+        md: Arc<Metadata>,
+        response_stream: Sender<Result<proto::ReduceResponse, Status>>,
+    ) -> Self {
         Self {
             tasks: HashMap::new(),
             response_stream,
@@ -334,18 +341,30 @@ impl<C> TaskManager<C> {
     }
 
     async fn create_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
-        where C: ReducerCreator + Send + Sync + 'static
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let reducer = self.creator.create();
-        let task = Task::new(reducer, keys.clone(), Arc::clone(&self.md), self.response_stream.clone()).await;
+        let task = Task::new(
+            reducer,
+            keys.clone(),
+            Arc::clone(&self.md),
+            self.response_stream.clone(),
+        )
+        .await;
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
 
         // Send the first message to the task
-        self.tasks.get_mut(&keys.join(KEY_JOIN_DELIMITER)).unwrap().send(rr).await;
+        self.tasks
+            .get_mut(&keys.join(KEY_JOIN_DELIMITER))
+            .unwrap()
+            .send(rr)
+            .await;
     }
 
     async fn append_task(&mut self, keys: Vec<String>, rr: ReduceRequest)
-        where C: ReducerCreator + Send + Sync + 'static
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let task_name = keys.join(KEY_JOIN_DELIMITER);
         if let Some(task) = self.tasks.get(&task_name) {
@@ -356,7 +375,6 @@ impl<C> TaskManager<C> {
         }
     }
 }
-
 
 /// gRPC server to start a reduce service
 #[derive(Debug)]
@@ -417,13 +435,15 @@ impl<C> Server<C> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            F: Future<Output=()>,
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        F: Future<Output = ()>,
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
-        let reduce_svc = ReduceService { creator: Arc::new(creator) };
+        let reduce_svc = ReduceService {
+            creator: Arc::new(creator),
+        };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
@@ -437,8 +457,8 @@ impl<C> Server<C> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
