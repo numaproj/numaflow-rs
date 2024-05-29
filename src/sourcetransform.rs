@@ -74,8 +74,22 @@ pub struct Message {
     tags: Option<Vec<String>>,
 }
 
-
+/// Represents a message that can be modified and forwarded.
 impl Message {
+    /// Creates a new message with the specified value.
+    ///
+    /// This constructor initializes the message with no keys, tags, or specific event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// let message = Message::new(vec![1, 2, 3, 4]);
+    /// ```
     pub fn new(value:Vec<u8>) -> Self {
        Self{
            value,
@@ -84,6 +98,16 @@ impl Message {
            tags:None
        }
     }
+    /// Marks the message to be dropped by adding a special "DROP" tag.
+    ///
+    /// This method guarantees that the tags vector is initialized if it was previously `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// let dropped_message = Message::new(vec![1, 2, 3]).message_to_drop();
+    /// ```
     pub fn message_to_drop(mut self) -> Self {
         if self.tags.is_none(){
             self.tags=Some(Vec::new())
@@ -91,20 +115,72 @@ impl Message {
         self.tags.as_mut().unwrap().push(DROP.parse().unwrap());
         self
     }
+
+    /// Sets or replaces the keys associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::sourcetransform::Message;
+    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// ```
     pub fn keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
+    /// Sets or replaces the tags associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - A vector of strings representing the tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::sourcetransform::Message;
+    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// ```
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self
     }
 
-    pub fn values(mut self, value: Vec<u8>) -> Self {
+    /// Replaces the value of the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A new vector of bytes that replaces the current message value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// ```
+    pub fn value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
     }
+
+    /// Sets the event time for the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let message = Message::new(vec![1, 2, 3]).event_time(now);
+    /// ```
 
     pub fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
         self.event_time = Some(event_time);
