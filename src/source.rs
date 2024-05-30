@@ -170,10 +170,12 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = self.handler.partitions().await.unwrap_or_else(|| vec![std::env::var("NUMAFLOW_REPLICA")
-            .unwrap_or_default()
-            .parse::<i32>()
-            .unwrap_or_default()]);
+        let partitions = self.handler.partitions().await.unwrap_or_else(|| {
+            vec![std::env::var("NUMAFLOW_REPLICA")
+                .unwrap_or_default()
+                .parse::<i32>()
+                .unwrap_or_default()]
+        });
         Ok(Response::new(proto::PartitionsResponse {
             result: Some(proto::partitions_response::Result { partitions }),
         }))
@@ -195,7 +197,7 @@ pub struct Message {
     /// Keys of the message.
     pub keys: Vec<String>,
 
-    pub headers:Arc<HashMap<String, String>>,
+    pub headers: Arc<HashMap<String, String>>,
 }
 
 /// gRPC server for starting a [`Sourcer`] service
@@ -292,9 +294,9 @@ mod tests {
     use super::proto;
     use chrono::Utc;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
     use std::vec;
     use std::{error::Error, time::Duration};
-    use std::sync::Arc;
     use tokio_stream::StreamExt;
     use tower::service_fn;
 
@@ -325,8 +327,8 @@ mod tests {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
-            let mut headers=HashMap::new();
-            headers.insert(String::from( Uuid::new_v4()),String::from( Uuid::new_v4()));
+            let mut headers = HashMap::new();
+            headers.insert(String::from(Uuid::new_v4()), "numaflow");
             let shared_headers = Arc::new(headers);
             for i in 0..request.count {
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
@@ -340,7 +342,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
-                        headers:Arc::clone(&shared_headers), // Cloning the Arc, not the HashMap,
+                        headers: Arc::clone(&shared_headers),
                     })
                     .await
                     .unwrap();

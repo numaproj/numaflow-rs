@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{async_trait, Request, Response, Status};
 use tonic::metadata::MetadataMap;
+use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
@@ -159,7 +159,10 @@ pub struct IntervalWindow {
 
 impl IntervalWindow {
     fn new(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Self {
-        Self { start_time, end_time }
+        Self {
+            start_time,
+            end_time,
+        }
     }
 }
 
@@ -240,8 +243,8 @@ fn get_window_details(request: &MetadataMap) -> (DateTime<Utc>, DateTime<Utc>) {
 
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+where
+    C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
@@ -308,8 +311,8 @@ impl<C> proto::reduce_server::Reduce for ReduceService<C>
                 tx.send(Ok(proto::ReduceResponse {
                     results: datum_responses,
                 }))
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             }
         });
 
@@ -381,9 +384,9 @@ impl<C> Server<C> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            F: Future<Output=()>,
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        F: Future<Output = ()>,
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
@@ -400,9 +403,9 @@ impl<C> Server<C> {
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
-        where
-            C: ReducerCreator + Send + Sync + 'static,
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }

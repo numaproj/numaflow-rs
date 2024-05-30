@@ -111,7 +111,7 @@ impl From<proto::SourceTransformRequest> for SourceTransformRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
-            headers:value.headers
+            headers: value.headers,
         }
     }
 }
@@ -293,7 +293,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
-            headers:Default::default()
+            headers: Default::default(),
         });
 
         let resp = client.source_transform_fn(request).await?;

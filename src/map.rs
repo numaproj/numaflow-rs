@@ -7,7 +7,6 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 
-
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
@@ -88,7 +87,6 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Vec<String>,
-
 }
 
 impl From<Message> for proto::map_response::Result {
@@ -113,7 +111,6 @@ pub struct MapRequest {
     pub eventtime: DateTime<Utc>,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
-
 }
 
 impl From<proto::MapRequest> for MapRequest {
@@ -123,7 +120,7 @@ impl From<proto::MapRequest> for MapRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
-            headers: value.headers
+            headers: value.headers,
         }
     }
 }
@@ -274,7 +271,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
-            headers:Default::default()
+            headers: Default::default(),
         });
 
         let resp = client.map_fn(request).await?;
