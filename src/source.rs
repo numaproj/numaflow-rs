@@ -297,7 +297,6 @@ mod tests {
     use std::sync::Arc;
     use std::vec;
     use std::{error::Error, time::Duration};
-    use serde_json::Value::String;
     use tokio_stream::StreamExt;
     use tower::service_fn;
 
@@ -329,7 +328,7 @@ mod tests {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
             let mut headers = HashMap::new();
-            let header_key=String::from(Uuid::new_v4())
+            let header_key=String::from(Uuid::new_v4());
             let header_value = String::from("numaflow");
             headers.insert(header_key, header_value);
             let shared_headers = Arc::new(headers);
