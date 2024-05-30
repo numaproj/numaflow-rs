@@ -341,8 +341,8 @@ where
 /// The `Task` struct represents a task in the reduce service.
 /// It is responsible for invoking the user's reducer and sending the response back to the client.
 struct Task {
-    tx: Option<Sender<ReduceRequest>>,
-    handle: Option<tokio::task::JoinHandle<()>>,
+    tx: Sender<ReduceRequest>,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl Task {
@@ -351,13 +351,13 @@ impl Task {
     async fn new<R: Reducer + Send + Sync + 'static>(
         reducer: R,
         keys: Vec<String>,
-        md: Arc<Metadata>,
+        md: Metadata,
         response_tx: Sender<Result<proto::ReduceResponse, Status>>,
     ) -> Self {
         let (tx, rx) = channel::<ReduceRequest>(1);
 
         let handle = tokio::spawn(async move {
-            let messages = reducer.reduce(keys, rx, md.as_ref()).await;
+            let messages = reducer.reduce(keys, rx, &md).await;
             for message in messages {
                 response_tx
                     .send(Ok(proto::ReduceResponse {
@@ -379,25 +379,25 @@ impl Task {
         });
 
         Self {
-            tx: Some(tx),
-            handle: Some(handle),
+            tx: tx,
+            handle: handle,
         }
     }
 
     /// Sends a `ReduceRequest` to the task.
     async fn send(&self, rr: ReduceRequest) {
-        if let Some(ref tx) = self.tx {
-            tx.send(rr).await.expect("send failed, receiver dropped")
-        }
+        self.tx
+            .send(rr)
+            .await
+            .expect("send failed, receiver dropped")
     }
 
     /// Closes the task and waits for it to finish.
-    async fn close(&mut self) {
+    async fn close(self) {
         // drop the sender to close the task and wait for the task to finish
-        drop(self.tx.take());
-        if let Some(handle) = self.handle.take() {
-            handle.await.unwrap();
-        }
+        drop(self.tx);
+
+        self.handle.await.unwrap();
     }
 }
 
@@ -461,7 +461,7 @@ where
         self.window = Some(IntervalWindow::new(start_time, end_time));
 
         // Create Metadata with the extracted start and end time
-        let md = Arc::new(Metadata::new(IntervalWindow::new(start_time, end_time)));
+        let md = Metadata::new(IntervalWindow::new(start_time, end_time));
 
         // Create a new Task and add it to the TaskManager
         let task = Task::new(reducer, keys.clone(), md, self.response_stream.clone()).await;
@@ -521,7 +521,7 @@ where
     /// Closes all tasks in the task manager and sends an EOF message to the response stream.
     // Method to close all tasks
     async fn close_all_tasks(&mut self) {
-        for task in self.tasks.values_mut() {
+        for task in self.tasks..values_mut() {
             task.close().await;
         }
 
