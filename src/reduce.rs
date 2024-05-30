@@ -20,6 +20,7 @@ const WIN_END_TIME: &str = "x-numaflow-win-end-time";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
+const DROP: &str = "U+005C__DROP__";
 
 /// Numaflow Reduce Proto definitions.
 pub mod proto {
@@ -108,7 +109,7 @@ pub trait Reducer {
     ///    impl numaflow::reduce::ReducerCreator for CounterCreator {
     ///        type R = Counter;
     ///
-    ///        fn create(&self) -> Counter {
+    ///        fn create(&self) -> Self::R {
     ///           Counter::new()
     ///       }
     ///     }
@@ -131,11 +132,8 @@ pub trait Reducer {
     ///             while (input.recv().await).is_some() {
     ///                 counter += 1;
     ///             }
-    ///             vec![Message {
-    ///                 keys: keys.clone(),
-    ///                 value: counter.to_string().into_bytes(),
-    ///                 tags: vec![],
-    ///             }]
+    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
+    ///             vec![message]
     ///         }
     ///     }
     /// }
@@ -178,14 +176,109 @@ pub struct Metadata {
 }
 
 /// Message is the response from the user's [`Reducer::reduce`].
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
-    pub keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags: Vec<String>,
+    pub tags:Option<Vec<String>>,
+}
+
+/// Represents a message that can be modified and forwarded.
+impl Message {
+    /// Creates a new message with the specified value.
+    ///
+    /// This constructor initializes the message with no keys, tags, or specific event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3, 4]);
+    /// ```
+    pub fn new(value :Vec<u8>) -> Self {
+       Self{
+           value,
+           keys:None,
+           tags:None
+
+       }
+    }
+    /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let dropped_message = Message::message_to_drop();
+    /// ```
+    pub fn message_to_drop() -> crate::map::Message {
+        crate::map::Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![DROP.to_string()]),
+        }
+    }
+
+    /// Sets or replaces the keys associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// ```
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// Sets or replaces the tags associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - A vector of strings representing the tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// ```
+
+
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
+    /// Replaces the value of the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A new vector of bytes that replaces the current message value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// ```
+    pub fn value(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
+        self
+    }
 }
 
 /// Incoming request into the reducer handler of [`Reducer`].
@@ -302,9 +395,9 @@ where
                 let mut datum_responses = vec![];
                 for message in messages {
                     datum_responses.push(proto::reduce_response::Result {
-                        keys: message.keys,
+                        keys: message.keys.unwrap_or_default(),
                         value: message.value,
-                        tags: message.tags,
+                        tags: message.tags.unwrap_or_default(),
                     });
                 }
                 // stream it out to the client
