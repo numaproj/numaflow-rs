@@ -55,7 +55,9 @@ pub(crate) mod simple_source {
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
                 let offset = self.read_idx.load(Ordering::Relaxed);
                 let mut headers = HashMap::new();
-                headers.insert(String::from(Uuid::new_v4()), "numaflow");
+                let header_key=String::from(Uuid::new_v4());
+                let header_value= String::from("numaflow");
+                headers.insert(header_key, header_value);
                 let shared_headers = Arc::new(headers);
                 // send the message to the transmitter
                 transmitter
