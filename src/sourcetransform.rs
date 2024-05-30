@@ -51,7 +51,7 @@ pub trait SourceTransformer {
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
     ///     use numaflow::sourcetransform::Message;
-    /// let message=Message::new(input.value).keys(input.keys).tags(vec![]).event_time(chrono::offset::Utc::now());
+    /// let message=Message::new(input.value, chrono::offset::Utc::now()).keys(input.keys).tags(vec![]);
     ///         vec![message]
     ///     }
     /// }
@@ -69,52 +69,60 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`Datum`].
-    pub event_time: Option<DateTime<Utc>>,
+    pub event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
 }
 
 /// Represents a message that can be modified and forwarded.
 impl Message {
-    /// Creates a new message with the specified value.
+    /// Creates a new message with the specified value and event time.
     ///
-    /// This constructor initializes the message with no keys, tags, or specific event time.
+    /// This constructor initializes the message with no keys, tags.
     ///
     /// # Arguments
     ///
     /// * `value` - A vector of bytes representing the message's payload.
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred.
     ///
     /// # Examples
     ///
     /// ```
     /// use numaflow::sourcetransform::Message;
-    /// let message = Message::new(vec![1, 2, 3, 4]);
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let message = Message::new(vec![1, 2, 3, 4], now);
     /// ```
-    pub fn new(value:Vec<u8>) -> Self {
-       Self{
-           value,
-           event_time:None,
-           keys:None,
-           tags:None
-       }
-    }
-    /// Marks the message to be dropped by adding a special "DROP" tag.
-    ///
-    /// This function guarantees that the tags vector is initialized if it was previously `None`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::sourcetransform::Message;
-    /// let mut message = Message::new(vec![1, 2, 3]);
-    /// let dropped_message = Message::message_to_drop(message);
-    /// ```
-    pub fn message_to_drop(mut message:Message) -> Message {
-        if message.tags.is_none() {
-            message.tags = Some(Vec::new());
+    pub fn new(value: Vec<u8>, event_time: DateTime<Utc>) -> Self {
+        Self {
+            value,
+            event_time,
+            keys: None,
+            tags: None,
         }
-        message.tags.as_mut().unwrap().push(DROP.parse().unwrap());
-        message
+    }
+    /// Marks the message to be dropped by creating a new `Message` with an empty value, a special "DROP" tag, and the specified event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is dropped,
+    ///  it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let dropped_message = Message::message_to_drop(now);
+    /// ```
+    pub fn message_to_drop(event_time: DateTime<Utc>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            event_time,
+            tags: Some(vec![DROP.to_string()]),
+        }
     }
 
 
@@ -127,8 +135,10 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    ///  use numaflow::sourcetransform::Message;
-    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let message = Message::new(vec![1, 2, 3], now).keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
     pub fn keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
@@ -143,8 +153,10 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    ///  use numaflow::sourcetransform::Message;
-    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let message = Message::new(vec![1, 2, 3], now).tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
@@ -162,33 +174,14 @@ impl Message {
     ///
     /// ```
     /// use numaflow::sourcetransform::Message;
-    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let message = Message::new(vec![1, 2, 3], now).value(vec![4, 5, 6]);
     /// ```
     pub fn value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
     }
-
-    /// Sets the event time for the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::sourcetransform::Message;
-    /// use chrono::Utc;
-    /// let now = Utc::now();
-    /// let message = Message::new(vec![1, 2, 3]).event_time(now);
-    /// ```
-
-    pub fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
-        self.event_time = Some(event_time);
-        self
-    }
-
 }
 
 /// Incoming request to the Source Transformer.
@@ -211,7 +204,7 @@ impl From<Message> for proto::source_transform_response::Result {
         proto::source_transform_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
-            event_time: prost_timestamp_from_utc(value.event_time.unwrap_or_default()),
+            event_time: prost_timestamp_from_utc(value.event_time),
             tags: value.tags.unwrap_or_default(),
         }
     }
@@ -364,7 +357,7 @@ mod tests {
                     keys: Some(input.keys),
                     value: input.value,
                     tags: Some(vec![]),
-                    event_time: Some(chrono::offset::Utc::now()),
+                    event_time: chrono::offset::Utc::now(),
                 }]
             }
         }
