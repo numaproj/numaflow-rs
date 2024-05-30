@@ -48,11 +48,10 @@ mod counter {
                 md.start_time(),
                 md.end_time()
             );
-            vec![Message {
-                keys: keys.clone(),
-                value: counter.to_string().into_bytes(),
-                tags: vec![],
-            }]
+            let message = reduce::Message::new(counter.to_string().into_bytes())
+                .keys(keys.clone())
+                .tags(vec![]);
+            vec![message]
         }
     }
 }
