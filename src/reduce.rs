@@ -7,6 +7,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
+use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, Request, Response, Status};
 
@@ -309,24 +310,32 @@ where
             let mut task_manager = TaskManager::new(creator, response_tx.clone());
 
             let mut stream = request.into_inner();
-            while let Some(rr) = stream.message().await.unwrap() {
-                let keys = rr.payload.as_ref().unwrap().keys.clone();
-                let task_name = keys.join(KEY_JOIN_DELIMITER);
+            while let Some(rr) = stream.next().await {
+                match rr {
+                    Ok(rr) => {
+                        let keys = rr.payload.as_ref().unwrap().keys.clone();
+                        let task_name = keys.join(KEY_JOIN_DELIMITER);
 
-                if task_manager.tasks.contains_key(&task_name) {
-                    task_manager
-                        .append_task(keys, rr)
-                        .await
-                        .expect("append task failed");
-                } else {
-                    task_manager
-                        .create_task(keys, rr)
-                        .await
-                        .expect("create task failed");
+                        if task_manager.tasks.contains_key(&task_name) {
+                            task_manager
+                                .append_task(keys, rr)
+                                .await
+                                .map_err(|e| Status::internal(format!("Internal error: {}", e)))?;
+                        } else {
+                            task_manager
+                                .create_task(keys, rr)
+                                .await
+                                .map_err(|e| Status::internal(format!("Internal error: {}", e)))?;
+                        }
+                    }
+                    Err(e) => {
+                        return Err(Status::internal(format!("Stream error: {}", e)));
+                    }
                 }
             }
 
             task_manager.close_all_tasks().await;
+            Ok(())
         });
 
         // return the rx as the streaming endpoint
