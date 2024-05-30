@@ -327,12 +327,12 @@ mod tests {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
-            let mut headers = HashMap::new();
-            let header_key=String::from(Uuid::new_v4());
-            let header_value = String::from("numaflow");
-            headers.insert(header_key, header_value);
-            let shared_headers = Arc::new(headers);
+
+
             for i in 0..request.count {
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
+                let shared_headers = Arc::new(headers);
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
