@@ -100,21 +100,23 @@ impl Message {
     }
     /// Marks the message to be dropped by adding a special "DROP" tag.
     ///
-    /// This method guarantees that the tags vector is initialized if it was previously `None`.
+    /// This function guarantees that the tags vector is initialized if it was previously `None`.
     ///
     /// # Examples
     ///
     /// ```
     /// use numaflow::sourcetransform::Message;
-    /// let dropped_message = Message::new(vec![1, 2, 3]).message_to_drop();
+    /// let mut message = Message::new(vec![1, 2, 3]);
+    /// let dropped_message = Message::message_to_drop(message);
     /// ```
-    pub fn message_to_drop(mut self) -> Self {
-        if self.tags.is_none(){
-            self.tags=Some(Vec::new())
+    pub fn message_to_drop(mut message:Message) -> Message {
+        if message.tags.is_none() {
+            message.tags = Some(Vec::new());
         }
-        self.tags.as_mut().unwrap().push(DROP.parse().unwrap());
-        self
+        message.tags.as_mut().unwrap().push(DROP.parse().unwrap());
+        message
     }
+
 
     /// Sets or replaces the keys associated with this message.
     ///
