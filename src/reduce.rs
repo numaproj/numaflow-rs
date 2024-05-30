@@ -529,14 +529,11 @@ where
 
     /// Closes all tasks in the task manager and sends an EOF message to the response stream.
     async fn close_all_tasks(&mut self) {
-        let task_keys: Vec<_> = self.tasks.keys().cloned().collect();
-        for task_key in task_keys {
-            if let Some(task) = self.tasks.remove(&task_key) {
-                // drop the sender to close the task
-                drop(task.tx);
-                // wait for the task to finish
-                task.handle.await.unwrap();
-            }
+        for (_, task) in self.tasks.drain() {
+            // drop the sender to close the task
+            drop(task.tx);
+            // wait for the task to finish
+            task.handle.await.unwrap();
         }
 
         // after all the tasks have been closed, send an EOF message to the response stream
