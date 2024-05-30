@@ -1,5 +1,4 @@
 use numaflow::sink::{self, Response, SinkRequest};
-use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {

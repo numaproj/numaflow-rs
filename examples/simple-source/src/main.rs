@@ -13,7 +13,7 @@ pub(crate) mod simple_source {
         sync::RwLock,
     };
 
-    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use numaflow::source::{Message, Offset, Sourcer, SourceReadRequest};
     use tokio::{sync::mpsc::Sender, time::Instant};
     use tonic::async_trait;
 

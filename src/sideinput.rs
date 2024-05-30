@@ -83,8 +83,8 @@ pub trait SideInputer {
 
 #[async_trait]
 impl<T> proto::side_input_server::SideInput for SideInputService<T>
-    where
-        T: SideInputer + Send + Sync + 'static,
+where
+    T: SideInputer + Send + Sync + 'static,
 {
     async fn retrieve_side_input(
         &self,
@@ -169,9 +169,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: SideInputer + Send + Sync + 'static,
-            F: Future<Output=()>,
+    where
+        T: SideInputer + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -189,8 +189,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: SideInputer + Send + Sync + 'static,
+    where
+        T: SideInputer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }

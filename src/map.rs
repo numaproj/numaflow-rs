@@ -9,6 +9,7 @@ use crate::shared;
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+const DROP: &str = "U+005C__DROP__";
 
 /// Numaflow Map Proto definitions.
 pub mod proto {
@@ -44,11 +45,9 @@ pub trait Mapper {
     /// #[tonic::async_trait]
     /// impl map::Mapper for Cat {
     ///     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-    ///         vec![map::Message {
-    ///             keys: input.keys,
-    ///             value: input.value,
-    ///             tags: vec![],
-    ///         }]
+    ///       use numaflow::map::Message;
+    ///       let message=Message::new(input.value).keys(input.keys).tags(vec![]);
+    ///         vec![message]
     ///     }
     /// }
     /// ```
@@ -57,8 +56,8 @@ pub trait Mapper {
 
 #[async_trait]
 impl<T> proto::map_server::Map for MapService<T>
-    where
-        T: Mapper + Send + Sync + 'static,
+where
+    T: Mapper + Send + Sync + 'static,
 {
     async fn map_fn(
         &self,
@@ -78,22 +77,114 @@ impl<T> proto::map_server::Map for MapService<T>
 }
 
 /// Message is the response struct from the [`Mapper::map`] .
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    pub keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags: Vec<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Represents a message that can be modified and forwarded.
+impl Message {
+    /// Creates a new message with the specified value.
+    ///
+    /// This constructor initializes the message with no keys, tags, or specific event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let message = Message::new(vec![1, 2, 3, 4]);
+    /// ```
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
+            value,
+            keys: None,
+            tags: None,
+        }
+    }
+    /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let dropped_message = Message::message_to_drop();
+    /// ```
+    pub fn message_to_drop() -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![DROP.to_string()]),
+        }
+    }
+
+    /// Sets or replaces the keys associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::map::Message;
+    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// ```
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// Sets or replaces the tags associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - A vector of strings representing the tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// ```
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
+    /// Replaces the value of the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A new vector of bytes that replaces the current message value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// ```
+    pub fn value(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
+        self
+    }
 }
 
 impl From<Message> for proto::map_response::Result {
     fn from(value: Message) -> Self {
         proto::map_response::Result {
-            keys: value.keys,
+            keys: value.keys.unwrap_or_default(),
             value: value.value,
-            tags: value.tags,
+            tags: value.tags.unwrap_or_default(),
         }
     }
 }
@@ -179,9 +270,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Mapper + Send + Sync + 'static,
-            F: Future<Output=()>,
+    where
+        T: Mapper + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -199,8 +290,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Mapper + Send + Sync + 'static,
+    where
+        T: Mapper + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -225,9 +316,9 @@ mod tests {
         impl map::Mapper for Cat {
             async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
                 vec![map::Message {
-                    keys: input.keys,
+                    keys: Some(input.keys),
                     value: input.value,
-                    tags: vec![],
+                    tags: Some(vec![]),
                 }]
             }
         }

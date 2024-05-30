@@ -17,6 +17,7 @@ const KEY_JOIN_DELIMITER: &str = ":";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
+const DROP: &str = "U+005C__DROP__";
 
 /// Numaflow Reduce Proto definitions.
 pub mod proto {
@@ -105,7 +106,7 @@ pub trait Reducer {
     ///    impl numaflow::reduce::ReducerCreator for CounterCreator {
     ///        type R = Counter;
     ///
-    ///        fn create(&self) -> Counter {
+    ///        fn create(&self) -> Self::R {
     ///           Counter::new()
     ///       }
     ///     }
@@ -125,14 +126,11 @@ pub trait Reducer {
     ///         ) -> Vec<Message> {
     ///             let mut counter = 0;
     ///             // the loop exits when input is closed which will happen only on close of book.
-    ///             while (input.recv().await).is_some() {
+    ///             while input.recv().await.is_some() {
     ///                 counter += 1;
     ///             }
-    ///             vec![Message {
-    ///                 keys: keys.clone(),
-    ///                 value: counter.to_string().into_bytes(),
-    ///                 tags: vec![],
-    ///             }]
+    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
+    ///             vec![message]
     ///         }
     ///     }
     /// }
@@ -175,14 +173,107 @@ pub struct Metadata {
 }
 
 /// Message is the response from the user's [`Reducer::reduce`].
+#[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
-    pub keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags: Vec<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Represents a message that can be modified and forwarded.
+impl Message {
+    /// Creates a new message with the specified value.
+    ///
+    /// This constructor initializes the message with no keys, tags, or specific event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3, 4]);
+    /// ```
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
+            value,
+            keys: None,
+            tags: None,
+        }
+    }
+    /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let dropped_message = Message::message_to_drop();
+    /// ```
+    pub fn message_to_drop() -> crate::map::Message {
+        crate::map::Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![DROP.to_string()]),
+        }
+    }
+
+    /// Sets or replaces the keys associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// ```
+    pub fn keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// Sets or replaces the tags associated with this message.
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - A vector of strings representing the tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///  use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// ```
+
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
+    /// Replaces the value of the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A new vector of bytes that replaces the current message value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::reduce::Message;
+    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// ```
+    pub fn value(mut self, value: Vec<u8>) -> Self {
+        self.value = value;
+        self
+    }
 }
 
 /// Incoming request into the reducer handler of [`Reducer`].
@@ -200,15 +291,14 @@ pub struct ReduceRequest {
 // TODO: improve error handling, avoid panics and make sure the errors are propagated to the client.
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+where
+    C: ReducerCreator + Send + Sync + 'static,
 {
     type ReduceFnStream = ReceiverStream<Result<proto::ReduceResponse, Status>>;
     async fn reduce_fn(
         &self,
         request: Request<tonic::Streaming<proto::ReduceRequest>>,
     ) -> Result<Response<Self::ReduceFnStream>, Status> {
-
         // Clone the creator and response_stream since we need to move them into the spawned task
         let creator = Arc::clone(&self.creator);
         let (response_tx, response_rx) = channel::<Result<proto::ReduceResponse, Status>>(1);
@@ -224,9 +314,15 @@ impl<C> proto::reduce_server::Reduce for ReduceService<C>
                 let task_name = keys.join(KEY_JOIN_DELIMITER);
 
                 if task_manager.tasks.contains_key(&task_name) {
-                    task_manager.append_task(keys, rr).await.expect("append task failed");
+                    task_manager
+                        .append_task(keys, rr)
+                        .await
+                        .expect("append task failed");
                 } else {
-                    task_manager.create_task(keys, rr).await.expect("create task failed");
+                    task_manager
+                        .create_task(keys, rr)
+                        .await
+                        .expect("create task failed");
                 }
             }
 
@@ -263,20 +359,23 @@ impl Task {
         let handle = tokio::spawn(async move {
             let messages = reducer.reduce(keys, rx, md.as_ref()).await;
             for message in messages {
-                response_tx.send(Ok(proto::ReduceResponse {
-                    result: Some(proto::reduce_response::Result {
-                        keys: message.keys,
-                        value: message.value,
-                        tags: message.tags,
-                    }),
-                    window: Some(proto::Window {
-                        start: prost_timestamp_from_utc(md.interval_window.start_time),
-                        end: prost_timestamp_from_utc(md.interval_window.end_time),
-                        slot: "slot-0".to_string(),
-                    }),
-                    eof: false,
-                })).await.unwrap();
-            };
+                response_tx
+                    .send(Ok(proto::ReduceResponse {
+                        result: Some(proto::reduce_response::Result {
+                            keys: message.keys.unwrap_or_default(),
+                            value: message.value,
+                            tags: message.tags.unwrap_or_default(),
+                        }),
+                        window: Some(proto::Window {
+                            start: prost_timestamp_from_utc(md.interval_window.start_time),
+                            end: prost_timestamp_from_utc(md.interval_window.end_time),
+                            slot: "slot-0".to_string(),
+                        }),
+                        eof: false,
+                    }))
+                    .await
+                    .unwrap();
+            }
         });
 
         Self {
@@ -313,8 +412,8 @@ struct TaskManager<C> {
 }
 
 impl<C> TaskManager<C>
-    where
-        C: ReducerCreator + Send + Sync + 'static,
+where
+    C: ReducerCreator + Send + Sync + 'static,
 {
     /// Creates a new `TaskManager` with the given `ReducerCreator` and response stream.
     fn new(
@@ -331,7 +430,11 @@ impl<C> TaskManager<C>
 
     /// Creates a new task with the given keys and `ReduceRequest`.
     /// It creates a new reducer, starts it in a new task, and adds the task to the task manager.
-    async fn create_task(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) -> Result<(), Box<dyn std::error::Error>> {
+    async fn create_task(
+        &mut self,
+        keys: Vec<String>,
+        rr: proto::ReduceRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Create a new reducer
         let reducer = self.creator.create();
 
@@ -340,7 +443,10 @@ impl<C> TaskManager<C>
 
         // Check if there is exactly one window in the ReduceRequest
         if windows.len() != 1 {
-            return Err(Box::new(Error::new(ErrorKind::InvalidData, "Expected exactly one window")));
+            return Err(Box::new(Error::new(
+                ErrorKind::InvalidData,
+                "Expected exactly one window",
+            )));
         }
 
         // Extract the start and end time from the window
@@ -358,12 +464,7 @@ impl<C> TaskManager<C>
         let md = Arc::new(Metadata::new(IntervalWindow::new(start_time, end_time)));
 
         // Create a new Task and add it to the TaskManager
-        let task = Task::new(
-            reducer,
-            keys.clone(),
-            md,
-            self.response_stream.clone(),
-        ).await;
+        let task = Task::new(reducer, keys.clone(), md, self.response_stream.clone()).await;
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
 
         // send the request inside the proto payload to the task
@@ -382,13 +483,20 @@ impl<C> TaskManager<C>
     }
 
     /// Appends a `ReduceRequest` to an existing task with the given keys.
-    async fn append_task(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) -> Result<(), Box<dyn std::error::Error>> {
+    async fn append_task(
+        &mut self,
+        keys: Vec<String>,
+        rr: proto::ReduceRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Extract the payload and window information from the ReduceRequest
         let (payload, windows) = (rr.payload.unwrap(), rr.operation.unwrap().windows);
 
         // Check if there is exactly one window in the ReduceRequest
         if windows.len() != 1 {
-            return Err(Box::new(Error::new(ErrorKind::InvalidData, "Expected exactly one window")));
+            return Err(Box::new(Error::new(
+                ErrorKind::InvalidData,
+                "Expected exactly one window",
+            )));
         }
 
         // Get the task name from the keys
@@ -401,7 +509,8 @@ impl<C> TaskManager<C>
                 value: payload.value,
                 watermark: shared::utc_from_timestamp(payload.watermark),
                 eventtime: shared::utc_from_timestamp(payload.event_time),
-            }).await;
+            })
+            .await;
         } else {
             return Err(Box::new(Error::new(ErrorKind::NotFound, "Task not found")));
         }
@@ -418,15 +527,18 @@ impl<C> TaskManager<C>
 
         // after all the tasks have been closed, send an EOF message to the response stream
         if let Some(window) = &self.window {
-            self.response_stream.send(Ok(proto::ReduceResponse {
-                result: None,
-                window: Some(proto::Window {
-                    start: prost_timestamp_from_utc(window.start_time),
-                    end: prost_timestamp_from_utc(window.end_time),
-                    slot: "slot-0".to_string(),
-                }),
-                eof: true,
-            })).await.unwrap();
+            self.response_stream
+                .send(Ok(proto::ReduceResponse {
+                    result: None,
+                    window: Some(proto::Window {
+                        start: prost_timestamp_from_utc(window.start_time),
+                        end: prost_timestamp_from_utc(window.end_time),
+                        slot: "slot-0".to_string(),
+                    }),
+                    eof: true,
+                }))
+                .await
+                .unwrap();
         }
     }
 }
@@ -490,9 +602,9 @@ impl<C> Server<C> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            F: Future<Output=()>,
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        F: Future<Output = ()>,
+        C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
@@ -512,8 +624,8 @@ impl<C> Server<C> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            C: ReducerCreator + Send + Sync + 'static,
+    where
+        C: ReducerCreator + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -540,19 +652,18 @@ mod tests {
         impl reduce::Reducer for Sum {
             async fn reduce(
                 &self,
-                keys: Vec<String>,
+                _keys: Vec<String>,
                 mut input: tokio::sync::mpsc::Receiver<reduce::ReduceRequest>,
                 _md: &reduce::Metadata,
             ) -> Vec<reduce::Message> {
                 let mut sum = 0;
                 while let Some(rr) = input.recv().await {
-                    sum += std::str::from_utf8(&rr.value).unwrap().parse::<i32>().unwrap();
+                    sum += std::str::from_utf8(&rr.value)
+                        .unwrap()
+                        .parse::<i32>()
+                        .unwrap();
                 }
-                vec![reduce::Message {
-                    keys,
-                    value: sum.to_string().into_bytes(),
-                    tags: vec![],
-                }]
+                vec![reduce::Message::new(sum.to_string().into_bytes())]
             }
         }
 
@@ -582,16 +693,14 @@ mod tests {
             shutdown_rx.await.unwrap();
         };
 
-        let task = tokio::spawn(async move {
-            server.start_with_shutdown(shutdown).await
-        });
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
-                // Connect to a Uds socket
+                // Connect to an Uds socket
                 let sock_file = sock_file.clone();
                 tokio::net::UnixStream::connect(sock_file)
             }))
@@ -603,10 +712,7 @@ mod tests {
 
         // Spawn a task to send ReduceRequests to the channel
         tokio::spawn(async move {
-            let data = vec![
-                ("key1".to_string(), 1..=10),
-                ("key2".to_string(), 1..=9),
-            ];
+            let data = vec![("key1".to_string(), 1..=10), ("key2".to_string(), 1..=9)];
 
             for (key, range) in data {
                 for i in range {

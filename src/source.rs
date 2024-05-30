@@ -73,8 +73,8 @@ pub struct Offset {
 
 #[async_trait]
 impl<T> proto::source_server::Source for SourceService<T>
-    where
-        T: Sourcer + Send + Sync + 'static,
+where
+    T: Sourcer + Send + Sync + 'static,
 {
     type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
@@ -103,8 +103,8 @@ impl<T> proto::source_server::Source for SourceService<T>
                         keys: resp.keys,
                     }),
                 }))
-                    .await
-                    .expect("receiver dropped");
+                .await
+                .expect("receiver dropped");
             }
         });
 
@@ -170,10 +170,12 @@ impl<T> proto::source_server::Source for SourceService<T>
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = self.handler.partitions().await.unwrap_or_else(|| vec![std::env::var("NUMAFLOW_REPLICA")
-            .unwrap_or_default()
-            .parse::<i32>()
-            .unwrap_or_default()]);
+        let partitions = self.handler.partitions().await.unwrap_or_else(|| {
+            vec![std::env::var("NUMAFLOW_REPLICA")
+                .unwrap_or_default()
+                .parse::<i32>()
+                .unwrap_or_default()]
+        });
         Ok(Response::new(proto::PartitionsResponse {
             result: Some(proto::partitions_response::Result { partitions }),
         }))
@@ -255,9 +257,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Sourcer + Send + Sync + 'static,
-            F: Future<Output=()>,
+    where
+        T: Sourcer + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -278,8 +280,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Sourcer + Send + Sync + 'static,
+    where
+        T: Sourcer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
