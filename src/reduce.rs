@@ -7,8 +7,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
@@ -146,6 +146,7 @@ pub trait Reducer {
 }
 
 /// IntervalWindow is the start and end boundary of the window.
+#[derive(Default)]
 pub struct IntervalWindow {
     // start time of the window
     pub start_time: DateTime<Utc>,
@@ -387,10 +388,7 @@ impl Task {
             }
         });
 
-        Self {
-            tx: tx,
-            handle: handle,
-        }
+        Self { tx, handle }
     }
 
     /// Sends a `ReduceRequest` to the task.
@@ -417,7 +415,7 @@ struct TaskManager<C> {
     tasks: HashMap<String, Task>,
     response_stream: Sender<Result<proto::ReduceResponse, Status>>,
     creator: Arc<C>,
-    window: Option<IntervalWindow>,
+    window: IntervalWindow,
 }
 
 impl<C> TaskManager<C>
@@ -433,7 +431,7 @@ where
             tasks: HashMap::new(),
             response_stream,
             creator,
-            window: None,
+            window: IntervalWindow::default(),
         }
     }
 
@@ -448,7 +446,16 @@ where
         let reducer = self.creator.create();
 
         // Extract the payload and window information from the ReduceRequest
-        let (payload, windows) = (rr.payload.unwrap(), rr.operation.unwrap().windows);
+        let (payload, windows) = (
+            rr.payload
+                .ok_or(Error::new(ErrorKind::InvalidData, "Payload cannot be None"))?,
+            rr.operation
+                .ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Operation cannot be None",
+                ))?
+                .windows,
+        );
 
         // Check if there is exactly one window in the ReduceRequest
         if windows.len() != 1 {
@@ -467,7 +474,7 @@ where
 
         // set the window in the TaskManager, which will be used to send
         // the EOF message to the response stream when all tasks are closed
-        self.window = Some(IntervalWindow::new(start_time, end_time));
+        self.window = IntervalWindow::new(start_time, end_time);
 
         // Create Metadata with the extracted start and end time
         let md = Metadata::new(IntervalWindow::new(start_time, end_time));
@@ -479,7 +486,10 @@ where
         // send the request inside the proto payload to the task
         self.tasks
             .get_mut(&keys.join(KEY_JOIN_DELIMITER))
-            .unwrap()
+            .ok_or(Error::new(
+                ErrorKind::InvalidData,
+                "Key Join Delimiter is missing",
+            ))?
             .send(ReduceRequest {
                 keys,
                 value: payload.value,
@@ -537,20 +547,19 @@ where
         }
 
         // after all the tasks have been closed, send an EOF message to the response stream
-        if let Some(window) = &self.window {
-            self.response_stream
-                .send(Ok(proto::ReduceResponse {
-                    result: None,
-                    window: Some(proto::Window {
-                        start: prost_timestamp_from_utc(window.start_time),
-                        end: prost_timestamp_from_utc(window.end_time),
-                        slot: "slot-0".to_string(),
-                    }),
-                    eof: true,
-                }))
-                .await
-                .unwrap();
-        }
+
+        self.response_stream
+            .send(Ok(proto::ReduceResponse {
+                result: None,
+                window: Some(proto::Window {
+                    start: prost_timestamp_from_utc(self.window.start_time),
+                    end: prost_timestamp_from_utc(self.window.end_time),
+                    slot: "slot-0".to_string(),
+                }),
+                eof: true,
+            }))
+            .await
+            .unwrap();
     }
 }
 
