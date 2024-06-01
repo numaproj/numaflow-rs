@@ -30,3 +30,6 @@ pub mod sink;
 
 /// building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/)
 pub mod sideinput;
+
+/// error module
+pub mod error;
