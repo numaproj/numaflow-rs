@@ -2,6 +2,7 @@ use std::fmt;
 
 use tonic::Status;
 
+#[derive(Clone)]
 // ErrorKind is an enum that represents the kind of error that can occur.
 pub enum ErrorKind {
     // UserDefinedError represents an error that is caused by the user function.
@@ -10,6 +11,7 @@ pub enum ErrorKind {
     InternalError(String),
 }
 
+#[derive(Clone)]
 // Error is an enum that represents the error that can occur in the SDK.
 pub enum Error {
     // MapError represents an error that can occur in the Map function.
