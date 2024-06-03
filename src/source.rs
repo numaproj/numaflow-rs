@@ -289,9 +289,9 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, time::Duration};
     use std::collections::HashSet;
     use std::vec;
+    use std::{error::Error, time::Duration};
 
     use chrono::Utc;
     use tempfile::TempDir;
