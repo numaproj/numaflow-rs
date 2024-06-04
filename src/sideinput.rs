@@ -1,7 +1,7 @@
+use crate::shared;
 use std::future::Future;
 use std::path::PathBuf;
 use tonic::{async_trait, Request, Response, Status};
-use crate::shared;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
@@ -167,9 +167,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: SideInputer + Send + Sync + 'static,
-            F: Future<Output = ()>,
+    where
+        T: SideInputer + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -187,8 +187,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: SideInputer + Send + Sync + 'static,
+    where
+        T: SideInputer + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }

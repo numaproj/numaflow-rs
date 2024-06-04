@@ -18,7 +18,6 @@ const DEFAULT_FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-in
 const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
 
-
 /// Numaflow Sink Proto definitions.
 pub mod proto {
     tonic::include_proto!("sink.v1");
@@ -172,8 +171,8 @@ impl From<Response> for proto::sink_response::Result {
 
 #[tonic::async_trait]
 impl<T> proto::sink_server::Sink for SinkService<T>
-    where
-        T: Sinker + Send + Sync + 'static,
+where
+    T: Sinker + Send + Sync + 'static,
 {
     async fn sink_fn(
         &self,
@@ -230,7 +229,10 @@ impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
         let container_type = env::var(ENV_UD_CONTAINER_TYPE).unwrap_or_default();
         let (sock_addr, server_info_file) = if container_type == UD_CONTAINER_FB_SINK {
-            (DEFAULT_FB_SOCK_ADDR.into(), DEFAULT_FB_SERVER_INFO_FILE.into())
+            (
+                DEFAULT_FB_SOCK_ADDR.into(),
+                DEFAULT_FB_SERVER_INFO_FILE.into(),
+            )
         } else {
             (DEFAULT_SOCK_ADDR.into(), DEFAULT_SERVER_INFO_FILE.into())
         };
@@ -282,9 +284,9 @@ impl<T> Server<T> {
         &mut self,
         shutdown: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Sinker + Send + Sync + 'static,
-            F: Future<Output=()>,
+    where
+        T: Sinker + Send + Sync + 'static,
+        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
@@ -302,8 +304,8 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-        where
-            T: Sinker + Send + Sync + 'static,
+    where
+        T: Sinker + Send + Sync + 'static,
     {
         self.start_with_shutdown(shared::shutdown_signal()).await
     }
@@ -342,7 +344,10 @@ mod tests {
                             // record the response
                             sink::Response::ok(datum.id)
                         }
-                        Err(e) => sink::Response::failure(datum.id, format!("Invalid UTF-8 sequence: {}", e)),
+                        Err(e) => sink::Response::failure(
+                            datum.id,
+                            format!("Invalid UTF-8 sequence: {}", e),
+                        ),
                     };
 
                     // return the responses
