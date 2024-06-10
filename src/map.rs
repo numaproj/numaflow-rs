@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -200,6 +201,8 @@ pub struct MapRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 impl From<proto::MapRequest> for MapRequest {
@@ -209,6 +212,7 @@ impl From<proto::MapRequest> for MapRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
+            headers: value.headers,
         }
     }
 }
@@ -359,6 +363,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
         });
 
         let resp = client.map_fn(request).await?;
