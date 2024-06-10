@@ -24,4 +24,3 @@ COPY --from=build /examples/target/release/server .
 # set the startup command to run your binary
 CMD ["./server"]
 
-#docker buildx build --platform linux/amd64,linux/arm64 -t quay.io/numaio/numaflow-rust/source-transformer:stable --push .
