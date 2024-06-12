@@ -7,19 +7,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub(crate) mod simple_source {
+    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use std::{
         collections::HashSet,
         collections::HashMap,
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
     };
-
-    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use tokio::{sync::mpsc::Sender, time::Instant};
     use tonic::async_trait;
     use uuid::Uuid;
     use std::sync::Arc;
-
 
     /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
     /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK
@@ -60,7 +60,9 @@ pub(crate) mod simple_source {
                 self.read_idx
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
                 let offset = self.read_idx.load(Ordering::Relaxed);
-
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
+                let shared_headers = Arc::new(headers);
                 // send the message to the transmitter
                 transmitter
                     .send(Message {

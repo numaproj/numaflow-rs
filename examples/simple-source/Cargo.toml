@@ -13,3 +13,4 @@ tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 numaflow = { git = "https://github.com/numaproj/numaflow-rs.git", branch = "main" }
 chrono = "0.4.30"
 uuid = "1.8.0"
+
