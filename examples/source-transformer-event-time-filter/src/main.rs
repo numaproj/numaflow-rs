@@ -34,3 +34,59 @@ mod filter_impl {
     }
 
 }
+
+#[cfg(test)]
+mod tests{
+    use crate::filter_impl::filter_event_time;
+    use chrono::{TimeZone, Utc};
+    use numaflow::sourcetransform::{Message, SourceTransformRequest};
+    #[test]
+    fn test_filter_event_time_should_return_after_year_2022(){
+        let time = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
+
+        let source_request =SourceTransformRequest{
+            keys: vec![],
+            value: vec![],
+            watermark: Default::default(),
+            eventtime: time,
+            headers: Default::default(),
+        };
+        let messages=filter_event_time(source_request);
+        assert_eq!((&messages).len(),1);
+
+        assert_eq!((&messages)[0].tags.as_ref().unwrap()[0],"within_year_2022")
+    }
+
+    #[test]
+    fn test_filter_event_time_should_return_within_year_2022(){
+        let time = Utc.with_ymd_and_hms(2023, 7, 2, 2, 0, 0).unwrap();
+
+        let source_request =SourceTransformRequest{
+            keys: vec![],
+            value: vec![],
+            watermark: Default::default(),
+            eventtime: time,
+            headers: Default::default(),
+        };
+        let messages=filter_event_time(source_request);
+        assert_eq!((&messages).len(),1);
+
+        assert_eq!((&messages)[0].tags.as_ref().unwrap()[0],"after_year_2022")
+    }
+
+    #[test]
+    fn test_filter_event_time_should_drop(){
+        let time = Utc.with_ymd_and_hms(2021, 7, 2, 2, 0, 0).unwrap();
+
+        let source_request =SourceTransformRequest{
+            keys: vec![],
+            value: vec![],
+            watermark: Default::default(),
+            eventtime: time,
+            headers: Default::default(),
+        };
+        let messages=filter_event_time(source_request);
+        assert_eq!((&messages).len(),1);
+        assert_eq!((&messages)[0].tags.as_ref().unwrap()[0],"U+005C__DROP__")
+    }
+}

@@ -12,6 +12,11 @@ spec:
           container:
             image: quay.io/numaio/numaflow-rs/simple-source:v1
             imagePullPolicy: Always
+        transformer:
+          container:
+            # Filter messages based on event time, see https://github.com/numaproj/numaflow-go/tree/main/pkg/sourcetransformer/examples/event_time_filter
+            image: quay.io/numaio/numaflow-rust/source-transformer:stable
+            imagePullPolicy: Always
     - name: out
       scale:
         min: 1

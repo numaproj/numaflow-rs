@@ -9,6 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 pub(crate) mod simple_source {
     use std::{
         collections::HashSet,
+        collections::HashMap,
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
     };
@@ -16,6 +17,8 @@ pub(crate) mod simple_source {
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use tokio::{sync::mpsc::Sender, time::Instant};
     use tonic::async_trait;
+    use uuid::Uuid;
+    use std::sync::Arc;
 
 
     /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
@@ -49,6 +52,10 @@ pub(crate) mod simple_source {
                     return;
                 }
 
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
+                let shared_headers = Arc::new(headers);
+
                 // increment the read_idx which is used as the offset
                 self.read_idx
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
@@ -64,6 +71,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
+                        headers: Arc::clone(&shared_headers),
                     })
                     .await
                     .unwrap();
