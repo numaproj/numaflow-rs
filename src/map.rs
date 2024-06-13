@@ -104,11 +104,11 @@ impl Message {
     /// use numaflow::map::Message;
     /// let message = Message::new(vec![1, 2, 3, 4]);
     /// ```
-    pub fn new(value:Vec<u8>) -> Self {
-        Self{
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
             value,
-            keys:None,
-            tags:None
+            keys: None,
+            tags: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
@@ -126,7 +126,6 @@ impl Message {
             tags: Some(vec![DROP.to_string()]),
         }
     }
-
 
     /// Sets or replaces the keys associated with this message.
     ///
@@ -178,7 +177,6 @@ impl Message {
         self.value = value;
         self
     }
-
 }
 
 impl From<Message> for proto::map_response::Result {
@@ -306,7 +304,7 @@ impl<T> Server<T> {
 mod tests {
     use crate::map;
     use crate::map::proto::map_client::MapClient;
-    use crate::map::{Message};
+    use crate::map::Message;
     use std::{error::Error, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::oneshot;
@@ -380,6 +378,4 @@ mod tests {
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
-
-
 }

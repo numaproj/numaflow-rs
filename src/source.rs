@@ -328,7 +328,6 @@ mod tests {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
 
-
             for i in 0..request.count {
                 let mut headers = HashMap::new();
                 headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
