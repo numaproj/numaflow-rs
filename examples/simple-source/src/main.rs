@@ -60,9 +60,6 @@ pub(crate) mod simple_source {
                 self.read_idx
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
                 let offset = self.read_idx.load(Ordering::Relaxed);
-                let mut headers = HashMap::new();
-                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
-                let shared_headers = Arc::new(headers);
                 // send the message to the transmitter
                 transmitter
                     .send(Message {
