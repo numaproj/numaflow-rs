@@ -973,7 +973,7 @@ mod tests {
     async fn invalid_input() -> Result<(), Box<dyn Error>> {
         let (mut server, sock_file, _) = setup_server(SumCreator).await?;
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
@@ -1075,7 +1075,7 @@ mod tests {
     async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
         let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
@@ -1142,7 +1142,6 @@ mod tests {
         let mut response_stream = resp.into_inner();
 
         while let Err(e) = response_stream.message().await {
-            println!("first client - {:?}", e);
             assert_eq!(e.code(), tonic::Code::Unknown);
             done_tx.send(()).await.unwrap();
         }
