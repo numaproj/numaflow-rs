@@ -1,6 +1,6 @@
-use std::future::Future;
 use std::path::PathBuf;
 
+use tokio::sync::{mpsc, oneshot};
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
@@ -15,6 +15,7 @@ mod proto {
 
 struct SideInputService<T> {
     handler: T,
+    _shutdown_tx: mpsc::Sender<()>,
 }
 
 /// The `SideInputer` trait defines a method for retrieving side input data.
@@ -165,17 +166,21 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        shutdown_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: SideInputer + Send + Sync + 'static,
-        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
-        let sideinput_svc = SideInputService { handler };
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, shutdown_rx);
+        let sideinput_svc = SideInputService {
+            handler,
+            _shutdown_tx: internal_shutdown_tx,
+        };
         let sideinput_svc = proto::side_input_server::SideInputServer::new(sideinput_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
@@ -192,6 +197,6 @@ impl<T> Server<T> {
     where
         T: SideInputer + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        self.start_with_shutdown(None).await
     }
 }

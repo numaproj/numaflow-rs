@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -29,6 +28,7 @@ pub mod proto {
 
 struct ReduceService<C> {
     creator: Arc<C>,
+    shutdown_tx: Sender<()>,
 }
 
 /// `ReducerCreator` is a trait for creating a new instance of a `Reducer`.
@@ -311,16 +311,16 @@ where
         let (error_tx, mut error_rx) = channel::<Error>(1);
         let mut task_set = TaskSet::new(creator, response_tx.clone(), error_tx.clone());
 
+        let shutdown_tx = self.shutdown_tx.clone();
         // Error handling logic: We have an error channel to which any user defined errors or internal
-        // errors are sent, we have a separate task that listens to this error channel and sends the error back to the client
-        // and panics. This is to ensure that the panics inside the tasks are caught and the error is sent back to the client.
+        // errors are sent, we have a separate task that listens to this error channel and sends the error back to the client.
         tokio::spawn(async move {
             if let Some(error) = error_rx.recv().await {
                 response_tx
                     .send(Err(error.clone().into()))
                     .await
                     .expect("send to response channel failed");
-                panic!("Error while performing reduce operation: {:?}", error);
+                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
             }
         });
 
@@ -346,17 +346,19 @@ where
                         if task_set.tasks.contains_key(&keys.join(KEY_JOIN_DELIMITER)) {
                             task_set.write_to_task(keys, rr).await;
                         } else {
-                            task_set.create(keys, rr).await;
+                            task_set.create_and_write(keys, rr).await;
                         }
                     }
                     Err(e) => {
-                        return Err(Status::internal(format!("Stream error: {}", e)));
+                        error_tx
+                            .send(ReduceError(InternalError(format!("{}", e))))
+                            .await
+                            .expect("error_tx send failed");
                     }
                 }
             }
 
             task_set.close().await;
-            Ok(())
         });
 
         // return the rx as the streaming endpoint
@@ -372,7 +374,9 @@ where
 /// It is responsible for invoking the user's reducer and sending the response back to the client.
 struct Task {
     tx: Sender<ReduceRequest>,
+    error_tx: Sender<Error>,
     finished_rx: oneshot::Receiver<()>,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl Task {
@@ -389,7 +393,7 @@ impl Task {
         let (finished_tx, finished_rx) = oneshot::channel();
 
         let error_tx_clone = error_tx.clone();
-
+        let udf_error_tx_clone = error_tx.clone();
         let handle = tokio::spawn(async move {
             let messages = reducer.reduce(keys, rx, &md).await;
             for message in messages {
@@ -410,7 +414,7 @@ impl Task {
                     .await;
 
                 if let Err(e) = send_result {
-                    let _ = error_tx
+                    let _ = udf_error_tx_clone
                         .send(ReduceError(InternalError(format!(
                             "Failed to send response back: {}",
                             e
@@ -424,7 +428,7 @@ impl Task {
         // Spawn a separate task that listens to the join handle and writes to the error channel in case of errors
         // we need a separate handle to do this because, we cannot wait until the window is closed to propagate the
         // error back the client.
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             if let Err(e) = handle.await {
                 let _ = error_tx_clone
                     .send(ReduceError(UserDefinedError(format!(" {}", e))))
@@ -435,15 +439,25 @@ impl Task {
             let _ = finished_tx.send(());
         });
 
-        Self { tx, finished_rx }
+        Self {
+            tx,
+            error_tx,
+            finished_rx,
+            handle: task_handle,
+        }
     }
 
     /// Sends a `ReduceRequest` to the task.
     async fn send(&self, rr: ReduceRequest) {
-        self.tx
-            .send(rr)
-            .await
-            .expect("send failed, receiver dropped")
+        if let Err(e) = self.tx.send(rr).await {
+            self.error_tx
+                .send(ReduceError(InternalError(format!(
+                    "Failed to send message to task: {}",
+                    e
+                ))))
+                .await
+                .expect("failed to send message to error channel");
+        }
     }
 
     /// Closes the task and waits for it to finish.
@@ -453,6 +467,11 @@ impl Task {
 
         // Wait for the task to finish
         let _ = self.finished_rx.await;
+    }
+
+    /// Aborts the task.
+    async fn abort(self) {
+        self.handle.abort();
     }
 }
 
@@ -488,7 +507,7 @@ where
 
     /// Creates a new task with the given keys and `ReduceRequest`.
     /// It creates a new reducer, starts it in a new task, and adds the task to the task set.
-    async fn create(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) {
+    async fn create_and_write(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) {
         let (reduce_request, interval_window) = match self.validate_and_extract(rr).await {
             Some(value) => value,
             None => return,
@@ -623,6 +642,13 @@ where
         }
     }
 
+    // Aborts all tasks in the task set.
+    async fn abort(&mut self) {
+        for (_, task) in self.tasks.drain() {
+            task.abort().await;
+        }
+    }
+
     // Sends an error to the error stream.
     async fn handle_error(&self, error: Error) {
         self.error_stream
@@ -687,22 +713,25 @@ impl<C> Server<C> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        user_shutdown_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
-        F: Future<Output = ()>,
         C: ReducerCreator + Send + Sync + 'static,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
+        let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let reduce_svc = ReduceService {
             creator: Arc::new(creator),
+            shutdown_tx: internal_shutdown_tx,
         };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
+
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, user_shutdown_rx);
 
         tonic::transport::Server::builder()
             .add_service(reduce_svc)
@@ -716,7 +745,7 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        self.start_with_shutdown(None).await
     }
 }
 
@@ -805,11 +834,8 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -821,15 +847,14 @@ mod tests {
             .send(())
             .expect("Sending shutdown signal to gRPC server");
 
-        // Check if the server has stopped within 1 second
-        for _ in 0..100 {
+        // Check if the server has stopped within 100 ms
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
             if task.is_finished() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
-
-        assert!(task.is_finished(), "gRPC server should have stopped");
+        assert!(task.is_finished(), "gRPC server is still running");
 
         Ok(())
     }
@@ -839,11 +864,8 @@ mod tests {
         let (mut server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -935,7 +957,13 @@ mod tests {
         shutdown_tx
             .send(())
             .expect("Sending shutdown signal to gRPC server");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
 
         Ok(())
@@ -946,11 +974,8 @@ mod tests {
         let (mut server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -1015,12 +1040,13 @@ mod tests {
             assert!(e.to_string().contains("Exactly one window is required"));
         }
 
-        shutdown_tx
-            .send(())
-            .expect("Sending shutdown signal to gRPC server");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
-
         Ok(())
     }
 
@@ -1050,17 +1076,17 @@ mod tests {
         let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut client = setup_client(sock_file).await?;
+        let mut client = setup_client(sock_file.clone()).await?;
 
         let (tx, rx) = mpsc::channel(1);
+
+        // create an oneshot to signal the generator to stop when we get an error
+        let (done_tx, mut done_rx) = mpsc::channel(1);
 
         // Spawn a task to send ReduceRequests to the channel
         tokio::spawn(async move {
@@ -1088,7 +1114,20 @@ mod tests {
                 }),
             };
 
-            tx.send(rr).await.unwrap();
+            loop {
+                tx.send(rr.clone()).await.unwrap();
+
+                tokio::select! {
+                    _ = done_rx.recv() => {
+                        // If a message is received on the done_rx channel, break the loop
+                        return;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                        // If the sleep future is ready, send another message
+                        tx.send(rr.clone()).await.unwrap();
+                    }
+                }
+            }
         });
 
         // Convert the receiver end of the channel into a stream
@@ -1102,14 +1141,18 @@ mod tests {
 
         let mut response_stream = resp.into_inner();
 
-        if let Err(e) = response_stream.message().await {
+        while let Err(e) = response_stream.message().await {
+            println!("first client - {:?}", e);
             assert_eq!(e.code(), tonic::Code::Unknown);
+            done_tx.send(()).await.unwrap();
         }
 
-        shutdown_tx
-            .send(())
-            .expect("Sending shutdown signal to gRPC server");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
 
         Ok(())

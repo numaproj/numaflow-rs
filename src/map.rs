@@ -1,10 +1,11 @@
-use std::future::Future;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
+use tokio::sync::{mpsc, oneshot};
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
+use crate::shared::shutdown_signal;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
@@ -18,6 +19,7 @@ pub mod proto {
 
 struct MapService<T> {
     handler: T,
+    _shutdown_tx: mpsc::Sender<()>,
 }
 
 /// Mapper trait for implementing Map handler.
@@ -266,24 +268,33 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        shutdown_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Mapper + Send + Sync + 'static,
-        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
-        let map_svc = MapService { handler };
+
+        // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let map_svc = MapService {
+            handler,
+            _shutdown_tx: internal_shutdown_tx,
+        };
+
         let map_svc = proto::map_server::MapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
         tonic::transport::Server::builder()
             .add_service(map_svc)
-            .serve_with_incoming_shutdown(listener, shutdown)
+            .serve_with_incoming_shutdown(
+                listener,
+                shutdown_signal(internal_shutdown_rx, shutdown_rx),
+            )
             .await
             .map_err(Into::into)
     }
@@ -293,7 +304,7 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        self.start_with_shutdown(None).await
     }
 }
 
@@ -337,10 +348,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

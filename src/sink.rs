@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::env;
-use std::future::Future;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Status, Streaming};
 
 use crate::shared;
@@ -24,7 +23,8 @@ pub mod proto {
 }
 
 struct SinkService<T: Sinker> {
-    pub handler: T,
+    handler: T,
+    _shutdown_tx: mpsc::Sender<()>,
 }
 
 /// Sinker trait for implementing user defined sinks.
@@ -280,17 +280,21 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        shutdown_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sinker + Send + Sync + 'static,
-        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
-        let svc = SinkService { handler };
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, shutdown_rx);
+        let svc = SinkService {
+            handler,
+            _shutdown_tx: internal_shutdown_tx,
+        };
         let svc = proto::sink_server::SinkServer::new(svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
@@ -307,7 +311,7 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        self.start_with_shutdown(None).await
     }
 }
 
@@ -372,10 +376,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

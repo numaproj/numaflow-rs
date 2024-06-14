@@ -5,6 +5,7 @@ use std::{collections::HashMap, io};
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use tokio::signal;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
@@ -36,10 +37,10 @@ pub(crate) fn create_listener_stream(
     write_info_file(server_info_file).map_err(|e| format!("writing info file: {e:?}"))?;
 
     let parent = socket_file.as_ref().parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
+    fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
 
     let uds = tokio::net::UnixListener::bind(socket_file)?;
-    Ok(tokio_stream::wrappers::UnixListenerStream::new(uds))
+    Ok(UnixListenerStream::new(uds))
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
@@ -55,7 +56,10 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     })
 }
 
-pub(crate) async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal(
+    mut internal_rx: mpsc::Receiver<()>,
+    user_rx: Option<oneshot::Receiver<()>>,
+) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -64,12 +68,25 @@ pub(crate) async fn shutdown_signal() {
 
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SITERM handler")
+            .expect("failed to install SIGTERM handler")
             .recv()
             .await;
     };
+
+    let custom1 = async {
+        internal_rx.recv().await;
+    };
+
+    let custom2 = async {
+        if let Some(rx) = user_rx {
+            rx.await.ok();
+        }
+    };
+
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+        _ = custom1 => {},
+        _ = custom2 => {},
     }
 }
