@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -197,6 +198,8 @@ pub struct SourceTransformRequest {
     pub watermark: DateTime<Utc>,
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 impl From<Message> for proto::source_transform_response::Result {
@@ -217,6 +220,7 @@ impl From<proto::SourceTransformRequest> for SourceTransformRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
+            headers: value.headers,
         }
     }
 }
@@ -398,6 +402,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
         });
 
         let resp = client.source_transform_fn(request).await?;

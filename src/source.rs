@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -169,10 +170,12 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = self.handler.partitions().await.unwrap_or_else(|| vec![std::env::var("NUMAFLOW_REPLICA")
-            .unwrap_or_default()
-            .parse::<i32>()
-            .unwrap_or_default()]);
+        let partitions = self.handler.partitions().await.unwrap_or_else(|| {
+            vec![std::env::var("NUMAFLOW_REPLICA")
+                .unwrap_or_default()
+                .parse::<i32>()
+                .unwrap_or_default()]
+        });
         Ok(Response::new(proto::PartitionsResponse {
             result: Some(proto::partitions_response::Result { partitions }),
         }))
@@ -193,6 +196,8 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Keys of the message.
     pub keys: Vec<String>,
+
+    pub headers: Arc<HashMap<String, String>>,
 }
 
 /// gRPC server for starting a [`Sourcer`] service
@@ -288,7 +293,8 @@ impl<T> Server<T> {
 mod tests {
     use super::proto;
     use chrono::Utc;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
     use std::vec;
     use std::{error::Error, time::Duration};
     use tokio_stream::StreamExt;
@@ -299,6 +305,7 @@ mod tests {
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
+    use uuid::Uuid;
 
     // A source that repeats the `num` for the requested count
     struct Repeater {
@@ -320,7 +327,12 @@ mod tests {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
+
+
             for i in 0..request.count {
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
+                let shared_headers = Arc::new(headers);
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
@@ -332,6 +344,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
+                        headers: Arc::clone(&shared_headers),
                     })
                     .await
                     .unwrap();
