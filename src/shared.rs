@@ -43,11 +43,11 @@ pub(crate) fn create_listener_stream(
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
-    if let Some(ref t) = t {
-        Utc.timestamp_nanos(t.seconds * 1_000_000_000 + (t.nanos as i64))
-    } else {
-        Utc.timestamp_nanos(-1)
-    }
+    t.map_or(Utc.timestamp_nanos(-1), |t| {
+
+        DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
+
+    })
 }
 
 pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
