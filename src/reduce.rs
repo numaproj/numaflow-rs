@@ -290,6 +290,8 @@ pub struct ReduceRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 // TODO: improve error handling, avoid panics and make sure the errors are propagated to the client.
@@ -532,7 +534,7 @@ where
             self.response_stream.clone(),
             self.error_stream.clone(),
         )
-            .await;
+        .await;
 
         // track the task in the task set
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
@@ -579,7 +581,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                    .await;
+                .await;
                 return None;
             }
         };
@@ -589,7 +591,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-                .await;
+            .await;
             return None;
         }
 
@@ -609,6 +611,7 @@ where
             value: payload.value,
             watermark: shared::utc_from_timestamp(payload.watermark),
             eventtime: shared::utc_from_timestamp(payload.event_time),
+            headers: Default::default(),
         };
 
         Some((reduce_request, interval_window))
@@ -641,7 +644,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-                .await;
+            .await;
         }
     }
 
@@ -1036,23 +1039,22 @@ mod tests {
         });
 
         // Send the request to the server
-        let resp = client.reduce_fn(Request::new(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-        ))
+        let resp = client
+            .reduce_fn(Request::new(
+                tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+            ))
             .await;
 
         let mut response_stream = resp.unwrap().into_inner();
 
         loop {
             match response_stream.message().await {
-                Ok(response) => {
-                    match response {
-                        Some(_) => {}
-                        None => {
-                            break;
-                        }
+                Ok(response) => match response {
+                    Some(_) => {}
+                    None => {
+                        break;
                     }
-                }
+                },
                 Err(e) => {
                     println!("Client Error: {:?}", e);
                 }

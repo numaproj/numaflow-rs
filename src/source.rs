@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -197,6 +198,8 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Keys of the message.
     pub keys: Vec<String>,
+    /// Headers of the message.
+    pub headers: HashMap<String, String>,
 }
 
 /// gRPC server for starting a [`Sourcer`] service
@@ -292,21 +295,20 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use super::{proto, Message, Offset, SourceReadRequest};
+    use chrono::Utc;
+    use std::collections::{HashMap, HashSet};
     use std::vec;
     use std::{error::Error, time::Duration};
 
-    use chrono::Utc;
+    use crate::source;
     use tempfile::TempDir;
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
     use tokio_stream::StreamExt;
     use tonic::transport::Uri;
     use tower::service_fn;
-
-    use crate::source::{self, Message, Offset, SourceReadRequest};
-
-    use super::proto;
+    use uuid::Uuid;
 
     // A source that repeats the `num` for the requested count
     struct Repeater {
@@ -328,7 +330,10 @@ mod tests {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
+
             for i in 0..request.count {
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
@@ -340,6 +345,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
+                        headers,
                     })
                     .await
                     .unwrap();

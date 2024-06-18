@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -201,6 +202,8 @@ pub struct MapRequest {
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub eventtime: DateTime<Utc>,
+    /// Headers for the message.
+    pub headers: HashMap<String, String>,
 }
 
 impl From<proto::MapRequest> for MapRequest {
@@ -210,6 +213,7 @@ impl From<proto::MapRequest> for MapRequest {
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
+            headers: value.headers,
         }
     }
 }
@@ -310,6 +314,9 @@ impl<T> Server<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::map;
+    use crate::map::proto::map_client::MapClient;
+    use crate::map::Message;
     use std::{error::Error, time::Duration};
 
     use tempfile::TempDir;
@@ -367,6 +374,7 @@ mod tests {
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
         });
 
         let resp = client.map_fn(request).await?;
