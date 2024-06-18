@@ -54,7 +54,7 @@ pub(crate) mod simple_source {
 
                 let mut headers = HashMap::new();
                 headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
-                let shared_headers = Arc::new(headers);
+
 
                 // increment the read_idx which is used as the offset
                 self.read_idx
@@ -70,7 +70,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
-                        headers: Arc::clone(&shared_headers),
+                        headers,
                     })
                     .await
                     .unwrap();
