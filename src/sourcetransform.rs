@@ -126,7 +126,6 @@ impl Message {
         }
     }
 
-
     /// Sets or replaces the keys associated with this message.
     ///
     /// # Arguments

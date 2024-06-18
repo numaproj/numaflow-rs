@@ -184,7 +184,7 @@ pub struct Message {
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    pub tags:Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -203,13 +203,12 @@ impl Message {
     /// use numaflow::reduce::Message;
     /// let message = Message::new(vec![1, 2, 3, 4]);
     /// ```
-    pub fn new(value :Vec<u8>) -> Self {
-       Self{
-           value,
-           keys:None,
-           tags:None
-
-       }
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
+            value,
+            keys: None,
+            tags: None,
+        }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
     ///
@@ -256,7 +255,6 @@ impl Message {
     ///  use numaflow::reduce::Message;
     /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-
 
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);

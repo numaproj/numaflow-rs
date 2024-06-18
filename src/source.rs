@@ -197,7 +197,7 @@ pub struct Message {
     /// Keys of the message.
     pub keys: Vec<String>,
 
-    pub headers: Arc<HashMap<String, String>>,
+    pub headers: HashMap<String, String>,
 }
 
 /// gRPC server for starting a [`Sourcer`] service
@@ -328,11 +328,9 @@ mod tests {
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
 
-
             for i in 0..request.count {
                 let mut headers = HashMap::new();
                 headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
-                let shared_headers = Arc::new(headers);
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
@@ -344,7 +342,7 @@ mod tests {
                             partition_id: 0,
                         },
                         keys: vec![],
-                        headers: Arc::clone(&shared_headers),
+                        headers,
                     })
                     .await
                     .unwrap();
