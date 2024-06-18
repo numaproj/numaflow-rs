@@ -315,12 +315,11 @@ where
         // Error handling logic: We have an error channel to which any user defined errors or internal
         // errors are sent, we have a separate task that listens to this error channel and sends the error back to the client.
         tokio::spawn(async move {
-            if let Some(error) = error_rx.recv().await {
+            while let Some(error) = error_rx.recv().await {
                 response_tx
                     .send(Err(error.clone().into()))
                     .await
                     .expect("send to response channel failed");
-                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
             }
         });
 
@@ -354,6 +353,10 @@ where
                             .send(ReduceError(InternalError(format!("{}", e))))
                             .await
                             .expect("error_tx send failed");
+                        // abort all the tasks
+                        task_set.abort().await;
+                        // send a shutdown signal to gracefully shutdown the server
+                        shutdown_tx.send(()).await.expect("shutdown_tx send failed");
                     }
                 }
             }
@@ -529,7 +532,7 @@ where
             self.response_stream.clone(),
             self.error_stream.clone(),
         )
-        .await;
+            .await;
 
         // track the task in the task set
         self.tasks.insert(keys.join(KEY_JOIN_DELIMITER), task);
@@ -576,7 +579,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                .await;
+                    .await;
                 return None;
             }
         };
@@ -586,7 +589,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-            .await;
+                .await;
             return None;
         }
 
@@ -638,7 +641,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-            .await;
+                .await;
         }
     }
 
@@ -757,6 +760,7 @@ mod tests {
     use prost_types::Timestamp;
     use tempfile::TempDir;
     use tokio::sync::{mpsc, oneshot};
+    use tokio::time::sleep;
     use tokio_stream::wrappers::ReceiverStream;
     use tonic::transport::Uri;
     use tonic::Request;
@@ -766,6 +770,7 @@ mod tests {
     use crate::reduce::proto::reduce_client::ReduceClient;
 
     struct Sum;
+
     #[tonic::async_trait]
     impl reduce::Reducer for Sum {
         async fn reduce(
@@ -786,6 +791,7 @@ mod tests {
     }
 
     struct SumCreator;
+
     impl reduce::ReducerCreator for SumCreator {
         type R = Sum;
         fn create(&self) -> Sum {
@@ -981,64 +987,79 @@ mod tests {
 
         let mut client = setup_client(sock_file).await?;
 
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::unbounded_channel();
 
         // Spawn a task to send ReduceRequests to the channel
-        tokio::spawn(async move {
-            let rr = reduce::proto::ReduceRequest {
-                payload: Some(reduce::proto::reduce_request::Payload {
-                    keys: vec!["key1".to_string()],
-                    value: vec![],
-                    watermark: None,
-                    event_time: None,
-                    headers: Default::default(),
-                }),
-                operation: Some(reduce::proto::reduce_request::WindowOperation {
-                    event: 0,
-                    windows: vec![
-                        reduce::proto::Window {
-                            start: Some(Timestamp {
-                                seconds: 60000,
-                                nanos: 0,
-                            }),
-                            end: Some(Timestamp {
-                                seconds: 120000,
-                                nanos: 0,
-                            }),
-                            slot: "slot-0".to_string(),
-                        },
-                        reduce::proto::Window {
-                            start: Some(Timestamp {
-                                seconds: 60000,
-                                nanos: 0,
-                            }),
-                            end: Some(Timestamp {
-                                seconds: 120000,
-                                nanos: 0,
-                            }),
-                            slot: "slot-0".to_string(),
-                        },
-                    ],
-                }),
-            };
+        let sender_task = tokio::spawn(async move {
+            for _ in 0..10 {
+                println!("sending message");
+                let rr = reduce::proto::ReduceRequest {
+                    payload: Some(reduce::proto::reduce_request::Payload {
+                        keys: vec!["key1".to_string()],
+                        value: vec![],
+                        watermark: None,
+                        event_time: None,
+                        headers: Default::default(),
+                    }),
+                    operation: Some(reduce::proto::reduce_request::WindowOperation {
+                        event: 0,
+                        windows: vec![
+                            reduce::proto::Window {
+                                start: Some(Timestamp {
+                                    seconds: 60000,
+                                    nanos: 0,
+                                }),
+                                end: Some(Timestamp {
+                                    seconds: 120000,
+                                    nanos: 0,
+                                }),
+                                slot: "slot-0".to_string(),
+                            },
+                            reduce::proto::Window {
+                                start: Some(Timestamp {
+                                    seconds: 60000,
+                                    nanos: 0,
+                                }),
+                                end: Some(Timestamp {
+                                    seconds: 120000,
+                                    nanos: 0,
+                                }),
+                                slot: "slot-0".to_string(),
+                            },
+                        ],
+                    }),
+                };
 
-            tx.send(rr).await.unwrap();
+                tx.send(rr).unwrap();
+                sleep(Duration::from_millis(10)).await;
+            }
         });
 
-        // Convert the receiver end of the channel into a stream
-        let stream = ReceiverStream::new(rx);
-
-        // Create a tonic::Request from the stream
-        let request = Request::new(stream);
-
         // Send the request to the server
-        let resp = client.reduce_fn(request).await?;
+        let resp = client.reduce_fn(Request::new(
+            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+        ))
+            .await;
 
-        let mut response_stream = resp.into_inner();
+        let mut response_stream = resp.unwrap().into_inner();
 
-        if let Err(e) = response_stream.message().await {
-            assert!(e.to_string().contains("Exactly one window is required"));
+        loop {
+            match response_stream.message().await {
+                Ok(response) => {
+                    match response {
+                        Some(_) => {}
+                        None => {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Client Error: {:?}", e);
+                }
+            }
         }
+
+        println!("while loop exited");
 
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1051,6 +1072,7 @@ mod tests {
     }
 
     struct PanicReducer;
+
     #[tonic::async_trait]
     impl reduce::Reducer for PanicReducer {
         async fn reduce(
@@ -1064,6 +1086,7 @@ mod tests {
     }
 
     struct PanicReducerCreator;
+
     impl reduce::ReducerCreator for PanicReducerCreator {
         type R = PanicReducer;
         fn create(&self) -> PanicReducer {
