@@ -8,7 +8,7 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
-numaflow = { path = "../../" }
+numaflow = { git = "https://github.com/numaproj/numaflow-rs.git", branch="main" }
 tokio = "1.38.0"
 chrono = "0.4.38"
 tonic = "0.11.0"
