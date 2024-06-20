@@ -90,9 +90,14 @@ pub(crate) async fn shutdown_signal(
         _ = custom2 => {},
     }
 }
+
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use std::io::Read;
+    use tempfile::NamedTempFile;
     use super::*;
+
     #[test]
     fn test_utc_from_timestamp() {
         let specific_date = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
@@ -105,6 +110,7 @@ mod tests {
         let utc_ts = utc_from_timestamp(Some(timestamp));
         assert_eq!(utc_ts, specific_date)
     }
+
     #[test]
     fn test_utc_from_timestamp_epoch_0() {
         let specific_date = Utc.timestamp_nanos(-1);
@@ -112,6 +118,7 @@ mod tests {
         let utc_ts = utc_from_timestamp(None);
         assert_eq!(utc_ts, specific_date)
     }
+
     #[test]
     fn test_prost_timestamp_from_utc() {
         let specific_date = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
@@ -125,12 +132,57 @@ mod tests {
 
     #[test]
     fn test_prost_timestamp_from_utc_epoch_0() {
-        let specific_date = Utc.timestamp(0, 0);
+        let specific_date = Utc.timestamp_nanos(0);
         let timestamp = Timestamp {
             seconds: 0,
             nanos: 0,
         };
         let prost_ts = prost_timestamp_from_utc(specific_date);
         assert_eq!(prost_ts, Some(timestamp));
+    }
+
+    #[tokio::test]
+    async fn test_write_info_file() -> io::Result<()> {
+        // Create a temporary file
+        let temp_file = NamedTempFile::new()?;
+
+        // Call write_info_file with the path of the temporary file
+        write_info_file(temp_file.path())?;
+
+        // Open the file and read its contents
+        let mut file = File::open(temp_file.path())?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        println!("contents: {}", contents);
+
+        // Check if the contents of the file are as expected
+        assert!(contents.contains("\"protocol\":\"uds\""));
+        assert!(contents.contains("\"language\":\"rust\""));
+        assert!(contents.contains("\"version\":\"0.0.1\""));
+        assert!(contents.contains("\"metadata\":{}"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_signal() {
+        // Create a channel to send shutdown signal
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let (_user_shutdown_tx, user_shutdown_rx) = oneshot::channel();
+
+        // Spawn a new task to call shutdown_signal
+        let shutdown_signal_task = tokio::spawn(async move {
+            shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx)).await;
+        });
+
+        // Send a shutdown signal
+        internal_shutdown_tx.send(()).await.unwrap();
+
+        // Wait for the shutdown_signal function to finish
+        let result = shutdown_signal_task.await;
+
+        // If we reach this point, it means that the shutdown_signal function has correctly handled the shutdown signal
+        assert!(result.is_ok());
     }
 }

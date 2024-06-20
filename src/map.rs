@@ -316,7 +316,6 @@ impl<T> Server<T> {
 mod tests {
     use crate::map;
     use crate::map::proto::map_client::MapClient;
-    use crate::map::Message;
     use std::{error::Error, time::Duration};
 
     use tempfile::TempDir;
@@ -324,8 +323,6 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::map;
-    use crate::map::proto::map_client::MapClient;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {
