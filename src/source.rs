@@ -105,8 +105,8 @@ where
                         keys: resp.keys,
                     }),
                 }))
-                .await
-                .expect("receiver dropped");
+                    .await
+                    .expect("receiver dropped");
             }
         });
 
@@ -259,7 +259,7 @@ impl<T> Server<T> {
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
         &mut self,
-        shutdowm_rx: Option<oneshot::Receiver<()>>,
+        shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sourcer + Send + Sync + 'static,
@@ -267,7 +267,7 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, shutdowm_rx);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
         let source_service = SourceService {
             handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
@@ -289,7 +289,8 @@ impl<T> Server<T> {
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        self.start_with_shutdown(None).await
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.start_with_shutdown(shutdown_rx).await
     }
 }
 
@@ -391,7 +392,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

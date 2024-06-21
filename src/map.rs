@@ -274,7 +274,7 @@ impl<T> Server<T> {
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
         &mut self,
-        shutdown_rx: Option<oneshot::Receiver<()>>,
+        shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Mapper + Send + Sync + 'static,
@@ -297,7 +297,7 @@ impl<T> Server<T> {
             .add_service(map_svc)
             .serve_with_incoming_shutdown(
                 listener,
-                shutdown_signal(internal_shutdown_rx, shutdown_rx),
+                shutdown_signal(internal_shutdown_rx, Some(shutdown_rx)),
             )
             .await
             .map_err(Into::into)
@@ -308,7 +308,8 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        self.start_with_shutdown(None).await
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.start_with_shutdown(shutdown_rx).await
     }
 }
 
@@ -322,7 +323,6 @@ mod tests {
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
     use tower::service_fn;
-
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(Some(shutdown_rx)).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

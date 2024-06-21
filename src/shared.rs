@@ -93,10 +93,10 @@ pub(crate) async fn shutdown_signal(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs::File;
     use std::io::Read;
     use tempfile::NamedTempFile;
-    use super::*;
 
     #[test]
     fn test_utc_from_timestamp() {
