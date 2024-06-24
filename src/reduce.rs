@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::{channel, Sender};
-use tokio_stream::StreamExt;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::error::Error;
@@ -29,6 +30,7 @@ pub mod proto {
 struct ReduceService<C> {
     creator: Arc<C>,
     shutdown_tx: Sender<()>,
+    cancellation_token: CancellationToken, // used to cancel all the tasks
 }
 
 /// `ReducerCreator` is a trait for creating a new instance of a `Reducer`.
@@ -319,64 +321,82 @@ where
         //
         // NOTE: we are using a separate channel instead of the grpc_response_tx because in case of errors,
         // we have to do graceful shutdown.
-        let (response_tx, mut response_rx) =
-            channel::<Result<proto::ReduceResponse, Error>>(1);
+        let (response_tx, mut response_rx) = channel::<Result<proto::ReduceResponse, Error>>(1);
 
         // Start a task executor to handle the incoming ReduceRequests from the client, returns a tx to send
-        // commands to the task executor.
-        let task_tx = TaskSet::start_task_executor(creator, response_tx.clone());
+        // commands to the task executor and an oneshot tx to abort all the tasks.
+        let (task_tx, abort_tx) = TaskSet::start_task_executor(creator, response_tx.clone());
 
         // Spawn a new task to listen to the response channel and send the response back to the grpc client.
-        // In case of error, it propagates the error back to the client in grpc status format and aborts all
-        // the active tasks and sends a shutdown signal to the grpc server.
-        let task_tx_clone = task_tx.clone();
+        // In case of error, it propagates the error back to the client in grpc status format and sends a shutdown
+        // signal to the grpc server. It also listens to the cancellation signal and aborts all the tasks.
+        let response_task_token = self.cancellation_token.clone();
         tokio::spawn(async move {
-            while let Some(result) = response_rx.recv().await {
-                match result {
-                    Ok(response) => {
-                        let eof = response.eof;
-                        grpc_response_tx
-                            .send(Ok(response))
-                            .await
-                            .expect("send to grpc response channel failed");
-                        if eof {
-                            break;
+            loop {
+                tokio::select! {
+                    result = response_rx.recv() => {
+                        match result {
+                            Some(Ok(response)) => {
+                                let eof = response.eof;
+                                grpc_response_tx
+                                    .send(Ok(response))
+                                    .await
+                                    .expect("send to grpc response channel failed");
+                                if eof {
+                                    break;
+                                }
+                            }
+                            Some(Err(error)) => {
+                                grpc_response_tx
+                                    .send(Err(Status::internal(error.to_string())))
+                                    .await
+                                    .expect("send to grpc response channel failed");
+                                // Send a shutdown signal to the grpc server.
+                                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+                            }
+                            None => {
+                                // response_rx is closed, break the loop
+                                break;
+                            }
                         }
                     }
-                    Err(error) => {
-                        grpc_response_tx
-                            .send(Err(Status::internal(error.to_string())))
-                            .await
-                            .expect("send to grpc response channel failed");
-                        task_tx_clone
-                            .send(TaskCommand::Abort)
-                            .await
-                            .expect("task_tx send failed");
-                        shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+                    _ = response_task_token.cancelled() => {
+                        // Send an abort signal to the task executor to abort all the tasks.
+                        abort_tx.send(()).expect("task_tx send failed");
+                        break;
                     }
                 }
             }
         });
 
+        let request_cancel_token = self.cancellation_token.clone();
         // Spawn a new task to handle the incoming ReduceRequests from the client
         tokio::spawn(async move {
             let mut stream = request.into_inner();
-            while let Some(reduce_request) = stream.next().await {
-                match reduce_request {
-                    Ok(rr) => {
-                        task_tx
-                            .send(TaskCommand::HandleReduceRequest(rr))
-                            .await
-                            .expect("task_tx send failed");
+            loop {
+                tokio::select! {
+                    reduce_request = stream.next() => {
+                        match reduce_request {
+                            Some(Ok(rr)) => {
+                                task_tx
+                                    .send(TaskCommand::HandleReduceRequest(rr))
+                                    .await
+                                    .expect("task_tx send failed");
+                            }
+                            Some(Err(e)) => {
+                                response_tx
+                                    .send(Err(ReduceError(InternalError(format!(
+                                        "Failed to receive request: {}",
+                                        e
+                                    )))))
+                                    .await
+                                    .expect("error_tx send failed");
+                            }
+                            None => break,
+                        }
                     }
-                    Err(e) => {
-                        response_tx
-                            .send(Err(ReduceError(InternalError(format!(
-                                "Failed to receive request: {}",
-                                e
-                            )))))
-                            .await
-                            .expect("error_tx send failed");
+                    _ = request_cancel_token.cancelled() => {
+                        break;
                     }
                 }
             }
@@ -512,7 +532,6 @@ struct TaskSet<C> {
 enum TaskCommand {
     HandleReduceRequest(proto::ReduceRequest),
     Close,
-    Abort,
 }
 
 impl<C> TaskSet<C>
@@ -520,55 +539,63 @@ where
     C: ReducerCreator + Send + Sync + 'static,
 {
     // Starts a new task executor which listens to incoming commands and executes them.
-    // returns a tx to send commands to the task executor.
+    // returns a tx to send commands to the task executor and oneshot tx to abort all
+    // the tasks to gracefully shut down the task executor.
     fn start_task_executor(
         creator: Arc<C>,
         response_tx: Sender<Result<proto::ReduceResponse, Error>>,
-    ) -> Sender<TaskCommand> {
+    ) -> (Sender<TaskCommand>, oneshot::Sender<()>) {
         let (task_tx, mut task_rx) = channel::<TaskCommand>(1);
+        let (abort_tx, mut abort_rx) = oneshot::channel();
 
+        let mut task_set = TaskSet {
+            tasks: HashMap::new(),
+            response_tx,
+            creator,
+            window: IntervalWindow::default(),
+        };
+
+        // Start a new task to listen to incoming commands and execute them, it will also listen to the abort signal.
         tokio::spawn(async move {
-            let mut task_set = TaskSet {
-                tasks: HashMap::new(),
-                response_tx,
-                creator,
-                window: IntervalWindow::default(),
-            };
-            while let Some(command) = task_rx.recv().await {
-                match command {
-                    TaskCommand::HandleReduceRequest(rr) => {
-                        // Extract the keys from the ReduceRequest.
-                        let keys = match rr.payload.as_ref() {
-                            Some(payload) => payload.keys.clone(),
-                            None => {
-                                task_set
-                                    .handle_error(ReduceError(InternalError(
-                                        "Invalid ReduceRequest".to_string(),
-                                    )))
-                                    .await;
-                                continue;
-                            }
-                        };
+            loop {
+                tokio::select! {
+                    cmd = task_rx.recv() => {
+                        match cmd {
+                            Some(TaskCommand::HandleReduceRequest(rr)) => {
+                               // Extract the keys from the ReduceRequest.
+                                let keys = match rr.payload.as_ref() {
+                                    Some(payload) => payload.keys.clone(),
+                                    None => {
+                                        task_set
+                                            .handle_error(ReduceError(InternalError(
+                                                "Invalid ReduceRequest".to_string(),
+                                            )))
+                                            .await;
+                                        continue;
+                                    }
+                                };
 
-                        // Check if the task already exists, if it does, write the ReduceRequest to the task,
-                        // otherwise create a new task and write the ReduceRequest to the task.
-                        if task_set.tasks.contains_key(&keys.join(KEY_JOIN_DELIMITER)) {
-                            task_set.write_to_task(keys, rr).await;
-                        } else {
-                            task_set.create_and_write(keys, rr).await;
+                                // Check if the task already exists, if it does, write the ReduceRequest to the task,
+                                // otherwise create a new task and write the ReduceRequest to the task.
+                                if task_set.tasks.contains_key(&keys.join(KEY_JOIN_DELIMITER)) {
+                                    task_set.write_to_task(keys, rr).await;
+                                } else {
+                                    task_set.create_and_write(keys, rr).await;
+                                }
+                            }
+                            Some(TaskCommand::Close) => task_set.close().await,
+                            None => break,
                         }
                     }
-                    TaskCommand::Close => {
-                        task_set.close().await;
-                    }
-                    TaskCommand::Abort => {
+                    _ = &mut abort_rx => {
                         task_set.abort().await;
+                        break;
                     }
                 }
             }
         });
 
-        task_tx
+        (task_tx, abort_tx)
     }
 
     // Creates a new task with the given keys and `ReduceRequest`.
@@ -635,7 +662,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                    .await;
+                .await;
                 return None;
             }
         };
@@ -645,7 +672,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-                .await;
+            .await;
             return None;
         }
 
@@ -696,7 +723,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-                .await;
+            .await;
         }
     }
 
@@ -781,21 +808,25 @@ impl<C> Server<C> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
+        let cln_token = CancellationToken::new();
         let reduce_svc = ReduceService {
             creator: Arc::new(creator),
             shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
+        let shutdown =
+            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(reduce_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
-            .await
-            .map_err(Into::into)
+            .await?;
+
+        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
@@ -810,17 +841,16 @@ impl<C> Server<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, time::Duration};
     use std::path::PathBuf;
+    use std::{error::Error, time::Duration};
 
     use prost_types::Timestamp;
     use tempfile::TempDir;
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::sleep;
-    use tokio_stream::StreamExt;
     use tokio_stream::wrappers::ReceiverStream;
-    use tonic::Request;
     use tonic::transport::Uri;
+    use tonic::Request;
     use tower::service_fn;
 
     use crate::reduce;
@@ -1051,7 +1081,6 @@ mod tests {
         // Spawn a task to send ReduceRequests to the channel
         let _sender_task = tokio::spawn(async move {
             for _ in 0..10 {
-                println!("sending message");
                 let rr = reduce::proto::ReduceRequest {
                     payload: Some(reduce::proto::reduce_request::Payload {
                         keys: vec!["key1".to_string()],
@@ -1103,22 +1132,9 @@ mod tests {
 
         let mut response_stream = resp.unwrap().into_inner();
 
-        loop {
-            match response_stream.next().await {
-                Some(response) => match response {
-                    Ok(_) => {}
-                    Err(e) => {
-                        println!("Client Error: {:?}", e);
-                    }
-                },
-                None => {
-                    println!("EOF received");
-                    break;
-                }
-            }
+        if let Err(e) = response_stream.message().await {
+            assert_eq!(e.code(), tonic::Code::Internal);
         }
-
-        println!("while loop exited");
 
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1126,6 +1142,7 @@ mod tests {
                 break;
             }
         }
+
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
@@ -1168,9 +1185,6 @@ mod tests {
 
         let (tx, rx) = mpsc::channel(1);
 
-        // create an oneshot to signal the generator to stop when we get an error
-        let (done_tx, mut done_rx) = mpsc::channel(1);
-
         // Spawn a task to send ReduceRequests to the channel
         tokio::spawn(async move {
             let rr = reduce::proto::ReduceRequest {
@@ -1199,17 +1213,7 @@ mod tests {
 
             loop {
                 tx.send(rr.clone()).await.unwrap();
-
-                tokio::select! {
-                    _ = done_rx.recv() => {
-                        // If a message is received on the done_rx channel, break the loop
-                        return;
-                    }
-                    _ = tokio::time::sleep(Duration::from_millis(10)) => {
-                        // If the sleep future is ready, send another message
-                        tx.send(rr.clone()).await.unwrap();
-                    }
-                }
+                sleep(Duration::from_millis(10)).await;
             }
         });
 
@@ -1225,8 +1229,7 @@ mod tests {
         let mut response_stream = resp.into_inner();
 
         while let Err(e) = response_stream.message().await {
-            assert_eq!(e.code(), tonic::Code::Unknown);
-            done_tx.send(()).await.unwrap();
+            assert_eq!(e.code(), tonic::Code::Internal);
         }
 
         for _ in 0..10 {

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
@@ -176,7 +177,11 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+        let shutdown = shared::shutdown_signal(
+            internal_shutdown_rx,
+            Some(shutdown_rx),
+            CancellationToken::new(),
+        );
         let sideinput_svc = SideInputService {
             handler,
             _shutdown_tx: internal_shutdown_tx,

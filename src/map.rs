@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
@@ -297,7 +298,11 @@ impl<T> Server<T> {
             .add_service(map_svc)
             .serve_with_incoming_shutdown(
                 listener,
-                shutdown_signal(internal_shutdown_rx, Some(shutdown_rx)),
+                shutdown_signal(
+                    internal_shutdown_rx,
+                    Some(shutdown_rx),
+                    CancellationToken::new(),
+                ),
             )
             .await
             .map_err(Into::into)

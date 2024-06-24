@@ -7,6 +7,7 @@ use prost_types::Timestamp;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
@@ -59,6 +60,7 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 pub(crate) async fn shutdown_signal(
     mut internal_rx: mpsc::Receiver<()>,
     user_rx: Option<oneshot::Receiver<()>>,
+    cancel_token: CancellationToken,
 ) {
     let ctrl_c = async {
         signal::ctrl_c()
@@ -89,6 +91,7 @@ pub(crate) async fn shutdown_signal(
         _ = custom1 => {},
         _ = custom2 => {},
     }
+    cancel_token.cancel();
 }
 
 #[cfg(test)]
@@ -173,7 +176,12 @@ mod tests {
 
         // Spawn a new task to call shutdown_signal
         let shutdown_signal_task = tokio::spawn(async move {
-            shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx)).await;
+            shutdown_signal(
+                internal_shutdown_rx,
+                Some(user_shutdown_rx),
+                CancellationToken::new(),
+            )
+            .await;
         });
 
         // Send a shutdown signal

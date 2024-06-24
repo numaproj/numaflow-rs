@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared::{self, prost_timestamp_from_utc};
@@ -105,8 +106,8 @@ where
                         keys: resp.keys,
                     }),
                 }))
-                    .await
-                    .expect("receiver dropped");
+                .await
+                .expect("receiver dropped");
             }
         });
 
@@ -267,7 +268,11 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+        let shutdown = shared::shutdown_signal(
+            internal_shutdown_rx,
+            Some(shutdown_rx),
+            CancellationToken::new(),
+        );
         let source_service = SourceService {
             handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
