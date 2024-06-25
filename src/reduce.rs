@@ -150,7 +150,7 @@ pub trait Reducer {
 }
 
 /// IntervalWindow is the start and end boundary of the window.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct IntervalWindow {
     // start time of the window
     pub start_time: DateTime<Utc>,
@@ -173,6 +173,7 @@ impl Metadata {
     }
 }
 
+#[derive(Debug)]
 /// Metadata are additional information passed into the [`Reducer::reduce`].
 pub struct Metadata {
     pub interval_window: IntervalWindow,
@@ -1062,8 +1063,6 @@ mod tests {
         Ok(())
     }
 
-    // ignore the test
-    #[ignore]
     #[tokio::test]
     async fn invalid_input() -> Result<(), Box<dyn Error>> {
         let (mut server, sock_file, _) = setup_server(SumCreator).await?;
@@ -1170,7 +1169,6 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[tokio::test]
     async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
         let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;

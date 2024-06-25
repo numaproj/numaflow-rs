@@ -58,10 +58,14 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 }
 
 pub(crate) async fn shutdown_signal(
-    mut internal_rx: mpsc::Receiver<()>,
+    mut abort_request: mpsc::Receiver<()>,
     user_rx: Option<oneshot::Receiver<()>>,
     cancel_token: CancellationToken,
 ) {
+    // will call cancel_token.cancel() when the function exits
+    // because of abort request, ctrl-c, or SIGTERM signal
+    let _drop_guard = cancel_token.drop_guard();
+
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -75,11 +79,11 @@ pub(crate) async fn shutdown_signal(
             .await;
     };
 
-    let custom1 = async {
-        internal_rx.recv().await;
+    let abort_req_future = async {
+        abort_request.recv().await;
     };
 
-    let custom2 = async {
+    let user_req_future = async {
         if let Some(rx) = user_rx {
             rx.await.ok();
         }
@@ -88,10 +92,9 @@ pub(crate) async fn shutdown_signal(
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
-        _ = custom1 => {},
-        _ = custom2 => {},
+        _ = abort_req_future => {},
+        _ = user_req_future => {},
     }
-    cancel_token.cancel();
 }
 
 #[cfg(test)]
@@ -157,13 +160,11 @@ mod tests {
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
 
-        println!("contents: {}", contents);
-
         // Check if the contents of the file are as expected
-        assert!(contents.contains("\"protocol\":\"uds\""));
-        assert!(contents.contains("\"language\":\"rust\""));
-        assert!(contents.contains("\"version\":\"0.0.1\""));
-        assert!(contents.contains("\"metadata\":{}"));
+        assert!(contents.contains(r#""protocol":"uds""#));
+        assert!(contents.contains(r#""language":"rust""#));
+        assert!(contents.contains(r#""version":"0.0.1""#));
+        assert!(contents.contains(r#""metadata":{}"#));
 
         Ok(())
     }
