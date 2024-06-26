@@ -57,9 +57,14 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     })
 }
 
+/// shuts downs the gRPC server. This happens in 2 cases
+/// 1. there has been an internal error (one of the tasks failed) and we need to shutdown
+/// 2. user is explictly asking us to shutdown
+/// Once the request for shutdown has be invoked, server will broadcast shutdown to all tasks
+/// through the cancellation-token.
 pub(crate) async fn shutdown_signal(
-    mut abort_request: mpsc::Receiver<()>,
-    user_rx: Option<oneshot::Receiver<()>>,
+    mut shutdown_on_err: mpsc::Receiver<()>,
+    shutdown_from_user: Option<oneshot::Receiver<()>>,
     cancel_token: CancellationToken,
 ) {
     // will call cancel_token.cancel() when the function exits
@@ -79,12 +84,12 @@ pub(crate) async fn shutdown_signal(
             .await;
     };
 
-    let abort_req_future = async {
-        abort_request.recv().await;
+    let shutdown_on_err_future = async {
+        shutdown_on_err.recv().await;
     };
 
-    let user_req_future = async {
-        if let Some(rx) = user_rx {
+    let shutdown_from_user_future = async {
+        if let Some(rx) = shutdown_from_user {
             rx.await.ok();
         }
     };
@@ -92,8 +97,8 @@ pub(crate) async fn shutdown_signal(
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
-        _ = abort_req_future => {},
-        _ = user_req_future => {},
+        _ = shutdown_on_err_future => {},
+        _ = shutdown_from_user_future => {},
     }
 }
 
