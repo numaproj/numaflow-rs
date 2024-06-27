@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -294,18 +295,18 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
+        let shutdown =
+            shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), CancellationToken::new());
+
         tonic::transport::Server::builder()
             .add_service(map_svc)
-            .serve_with_incoming_shutdown(
-                listener,
-                shutdown_signal(
-                    internal_shutdown_rx,
-                    Some(shutdown_rx),
-                    CancellationToken::new(),
-                ),
-            )
-            .await
-            .map_err(Into::into)
+            .serve_with_incoming_shutdown(listener, shutdown)
+            .await?;
+
+        // cleanup the socket file after the server is shutdown
+        // UnixListener doesn't implement Drop trait, so we have to manually remove the socket file
+        let _ = fs::remove_file(&self.sock_addr);
+        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.

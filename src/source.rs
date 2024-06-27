@@ -1,6 +1,7 @@
 #![warn(missing_docs)]
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,8 +107,8 @@ where
                         keys: resp.keys,
                     }),
                 }))
-                .await
-                .expect("receiver dropped");
+                    .await
+                    .expect("receiver dropped");
             }
         });
 
@@ -268,11 +269,7 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let shutdown = shared::shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+
         let source_service = SourceService {
             handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
@@ -282,11 +279,21 @@ impl<T> Server<T> {
             .max_decoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
+        let shutdown = shared::shutdown_signal(
+            internal_shutdown_rx,
+            Some(shutdown_rx),
+            CancellationToken::new(),
+        );
+
         tonic::transport::Server::builder()
             .add_service(source_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
-            .await
-            .map_err(Into::into)
+            .await?;
+
+        // cleanup the socket file after the server is shutdown
+        // UnixListener doesn't implement Drop trait, so we have to manually remove the socket file
+        let _ = fs::remove_file(&self.sock_addr);
+        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.

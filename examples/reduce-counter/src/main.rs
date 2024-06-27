@@ -40,12 +40,10 @@ mod counter {
             md: &Metadata,
         ) -> Vec<Message> {
             let mut counter = 0;
-            println!("Started counter reducer with metadata {:?}", md);
             // the loop exits when input is closed which will happen only on close of book.
             while input.recv().await.is_some() {
                 counter += 1;
             }
-            println!("Counter reducer received {} messages", counter);
             let message = Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
             vec![message]
         }
