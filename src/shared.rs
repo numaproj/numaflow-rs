@@ -4,6 +4,7 @@ use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
@@ -37,11 +38,8 @@ pub(crate) fn create_listener_stream(
 ) -> Result<UnixListenerStream, Box<dyn std::error::Error + Send + Sync>> {
     write_info_file(server_info_file).map_err(|e| format!("writing info file: {e:?}"))?;
 
-    let parent = socket_file.as_ref().parent().unwrap();
-    fs::create_dir_all(parent).map_err(|e| format!("creating directory {parent:?}: {e:?}"))?;
-
-    let uds = tokio::net::UnixListener::bind(socket_file)?;
-    Ok(UnixListenerStream::new(uds))
+    let uds_stream = UnixListener::bind(socket_file)?;
+    Ok(UnixListenerStream::new(uds_stream))
 }
 
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
@@ -187,7 +185,7 @@ mod tests {
                 Some(user_shutdown_rx),
                 CancellationToken::new(),
             )
-            .await;
+                .await;
         });
 
         // Send a shutdown signal
