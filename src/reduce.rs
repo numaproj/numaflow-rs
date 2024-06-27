@@ -338,6 +338,7 @@ where
                     result = response_rx.recv() => {
                         match result {
                             Some(Ok(response)) => {
+                                println!("Sending response: {:?}", response);
                                 let eof = response.eof;
                                 grpc_response_tx
                                     .send(Ok(response))
@@ -663,7 +664,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                .await;
+                    .await;
                 return None;
             }
         };
@@ -673,7 +674,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-            .await;
+                .await;
             return None;
         }
 
@@ -724,7 +725,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-            .await;
+                .await;
         }
     }
 
@@ -1133,6 +1134,7 @@ mod tests {
 
         if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("Exactly one window is required"));
         }
 
         for _ in 0..10 {
@@ -1209,7 +1211,7 @@ mod tests {
                 }),
             };
 
-            loop {
+            for _ in 0..10 {
                 tx.send(rr.clone()).await.unwrap();
                 sleep(Duration::from_millis(10)).await;
             }
@@ -1226,8 +1228,9 @@ mod tests {
 
         let mut response_stream = resp.into_inner();
 
-        while let Err(e) = response_stream.message().await {
+        if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"))
         }
 
         for _ in 0..10 {
