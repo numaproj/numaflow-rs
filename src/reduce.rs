@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -338,7 +339,6 @@ where
                     result = response_rx.recv() => {
                         match result {
                             Some(Ok(response)) => {
-                                println!("Sending response: {:?}", response);
                                 let eof = response.eof;
                                 grpc_response_tx
                                     .send(Ok(response))
@@ -828,6 +828,9 @@ impl<C> Server<C> {
             .serve_with_incoming_shutdown(listener, shutdown)
             .await?;
 
+        // cleanup the socket file after the server is shutdown
+        // UnixListener doesn't implement Drop trait, so we have to manually remove the socket file
+        let _ = fs::remove_file(&self.sock_addr);
         Ok(())
     }
 
