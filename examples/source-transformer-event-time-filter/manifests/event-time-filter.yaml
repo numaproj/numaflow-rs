@@ -1,0 +1,25 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: source-transformer-filtering
+spec:
+  vertices:
+    - name: in
+      scale:
+        min: 1
+      source:
+        generator:
+          rpu: 5
+          duration: 1s
+        transformer:
+          container:
+            image: quay.io/numaio/numaflow-rust/mapt-event-time-filter:stable
+            imagePullPolicy: Always
+    - name: out
+      scale:
+        min: 1
+      sink:
+        log: {}
+  edges:
+    - from: in
+      to: out

@@ -1,5 +1,5 @@
 [package]
-name = "source-transformer-now"
+name = "source-transformer-event-time-filter"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +8,7 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
-tonic = "0.11.0"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 numaflow = { path = "../../" }
-chrono = "0.4.30"
+tokio = "1.38.0"
+chrono = "0.4.38"
+tonic = "0.11.0"
