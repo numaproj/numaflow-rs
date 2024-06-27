@@ -107,8 +107,8 @@ where
                         keys: resp.keys,
                     }),
                 }))
-                    .await
-                    .expect("receiver dropped");
+                .await
+                .expect("receiver dropped");
             }
         });
 

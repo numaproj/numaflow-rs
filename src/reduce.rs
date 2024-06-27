@@ -664,7 +664,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                    .await;
+                .await;
                 return None;
             }
         };
@@ -674,7 +674,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-                .await;
+            .await;
             return None;
         }
 
@@ -725,7 +725,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-                .await;
+            .await;
         }
     }
 

@@ -185,7 +185,7 @@ mod tests {
                 Some(user_shutdown_rx),
                 CancellationToken::new(),
             )
-                .await;
+            .await;
         });
 
         // Send a shutdown signal
