@@ -828,19 +828,25 @@ impl<C> Server<C> {
             .serve_with_incoming_shutdown(listener, shutdown)
             .await?;
 
-        // cleanup the socket file after the server is shutdown
-        // UnixListener doesn't implement Drop trait, so we have to manually remove the socket file
-        let _ = fs::remove_file(&self.sock_addr);
         Ok(())
     }
 
-    /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
+    /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates
+    /// graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
+    }
+}
+
+impl<C> Drop for Server<C> {
+    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
+    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
     }
 }
 
