@@ -49,16 +49,23 @@ pub mod sideinput;
 //                   |                     |
 //                   |                     |
 // (gRPC Service) ---+---> (service_fn) ---+---> (task)
-//                   |                     |
-//                   |                     |
-//                   |                     +---> (task)
-//                   |
-//                   |
-//                   +---> (service_fn) ->
+//      ^            |                     |
+//      |            |                     |
+//      |            |                     +---> (task)
+//      |            |
+//  (shutdown)       |
+//      |            +---> (service_fn) ->
+//      |
+//      |
+//   (user)
 //
-// If a task at level-3 has an error, then that error will be propagated to level-2 (service_fn) via an mpsc::channel (cannot be oneshot).
-// Once level-2 (service_fn) recieves the error, it will shutdown all the level-3 tasks it created. service_fn (level-2) also raises and
-// error back to level-1 (gRPC server) which will terminate all the level-2 service_fns using the CancellationToken.
+// If a task at level-3 has an error, then that error will be propagated to level-2 (service_fn) via an mpsc::channel using the response channel.
+// The Response channel passes a Result type and by returning Err() in response channel, it notifies top service_fn that the task wants to abort itself.
+// service_fn (level-2) will now use another mpsc::channel to tell the gRPC service to cancel all the service_fns. gRPC service will
+// will ask all the level-2 service_fns to abort using the CancellationToken. service_fn will call abort on all the tasks it created
+// when CancellationToken has been dropped/cancelled.
+//
+// User can directly send shutdown request to the gRPC server which inturn cancels the CancellationToken.
 //
 // The above 3 level task ordering is only for complex cases like reduce, but for simpler endpoints like `map`, it only has 2 levels but
 // the error propagation is handled the same way.

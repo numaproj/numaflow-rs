@@ -22,6 +22,8 @@ pub mod proto {
 
 struct MapService<T> {
     handler: T,
+    // not used ATM
+    // PLEASE WRITE WHY
     _shutdown_tx: mpsc::Sender<()>,
 }
 
