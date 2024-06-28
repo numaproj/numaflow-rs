@@ -298,7 +298,6 @@ pub struct ReduceRequest {
     pub headers: HashMap<String, String>,
 }
 
-// TODO: improve error handling, avoid panics and make sure the errors are propagated to the client.
 #[async_trait]
 impl<C> proto::reduce_server::Reduce for ReduceService<C>
 where
@@ -344,6 +343,7 @@ where
                                     .send(Ok(response))
                                     .await
                                     .expect("send to grpc response channel failed");
+                                 // all the tasks are done (COB has happened and we have closed the tx for the tasks)
                                 if eof {
                                     break;
                                 }
@@ -357,8 +357,8 @@ where
                                 shutdown_tx.send(()).await.expect("shutdown_tx send failed");
                             }
                             None => {
-                                // response_rx is closed, break the loop
-                                break;
+                                // we break at eof, None should not happen
+                                unreachable!()
                             }
                         }
                     }
@@ -372,6 +372,7 @@ where
         });
 
         let request_cancel_token = self.cancellation_token.clone();
+
         // Spawn a new task to handle the incoming ReduceRequests from the client
         tokio::spawn(async move {
             let mut stream = request.into_inner();
@@ -394,10 +395,12 @@ where
                                     .await
                                     .expect("error_tx send failed");
                             }
+                            // COB
                             None => break,
                         }
                     }
                     _ = request_cancel_token.cancelled() => {
+                        // stop reading because server is shutting down
                         break;
                     }
                 }
@@ -427,6 +430,9 @@ struct Task {
     handle: tokio::task::JoinHandle<()>,
 }
 
+// we only have one slot
+const SLOT_0: &str = "slot-0";
+
 impl Task {
     // Creates a new task with the given reducer, keys, metadata, and response channel.
     async fn new<R: Reducer + Send + Sync + 'static>(
@@ -439,8 +445,11 @@ impl Task {
         let (done_tx, done_rx) = oneshot::channel();
 
         let udf_response_tx = response_tx.clone();
-        let task_handle = tokio::spawn(async move {
+        let task_join_handler = tokio::spawn(async move {
+            // execute user code
             let messages = reducer.reduce(keys, udf_rx, &md).await;
+
+            // forward the responses
             for message in messages {
                 let send_result = udf_response_tx
                     .send(Ok(proto::ReduceResponse {
@@ -452,7 +461,7 @@ impl Task {
                         window: Some(proto::Window {
                             start: prost_timestamp_from_utc(md.interval_window.start_time),
                             end: prost_timestamp_from_utc(md.interval_window.end_time),
-                            slot: "slot-0".to_string(),
+                            slot: SLOT_0.to_string(),
                         }),
                         eof: false,
                     }))
@@ -470,11 +479,11 @@ impl Task {
             }
         });
 
-        // We spawn a separate task to await the handle so that in case of any unhandled errors in the user-defined
+        // We spawn a separate task to await the join handler so that in case of any unhandled errors in the user-defined
         // code will immediately be propagated to the client.
         let handler_tx = response_tx.clone();
         let handle = tokio::spawn(async move {
-            if let Err(e) = task_handle.await {
+            if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
                     .send(Err(ReduceError(UserDefinedError(format!(" {}", e)))))
                     .await;
@@ -484,12 +493,12 @@ impl Task {
             let _ = done_tx.send(());
         });
 
-        // We store the task handle so that we can abort the task if needed, we only need the second task handle because
-        // if the second task is aborted, the first task's handle will be dropped and the task will be aborted.
         Self {
             udf_tx,
             response_tx,
             done_rx,
+            // We store the task join handle so that we can abort the task if needed, we only need the second task handle because
+            // if the second task is aborted, the first task's handle will be dropped and the task will be aborted.
             handle,
         }
     }
@@ -516,7 +525,7 @@ impl Task {
         let _ = self.done_rx.await;
     }
 
-    // Aborts the task.
+    // Aborts the task by calling abort on join handler.
     async fn abort(self) {
         self.handle.abort();
     }
@@ -586,6 +595,7 @@ where
                                 }
                             }
                             Some(TaskCommand::Close) => task_set.close().await,
+                            // COB
                             None => break,
                         }
                     }
@@ -603,6 +613,7 @@ where
     // Creates a new task with the given keys and `ReduceRequest`.
     // It creates a new reducer and assigns it to the task to execute the user defined function.
     async fn create_and_write(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) {
+        // validate
         let (reduce_request, interval_window) = match self.validate_and_extract(rr).await {
             Some(value) => value,
             None => return,
@@ -634,6 +645,7 @@ where
 
     // Writes the ReduceRequest to the task with the given keys.
     async fn write_to_task(&mut self, keys: Vec<String>, rr: proto::ReduceRequest) {
+        // validate the request
         let (reduce_request, _) = match self.validate_and_extract(rr).await {
             Some(value) => value,
             None => return,
@@ -694,7 +706,7 @@ where
             value: payload.value,
             watermark: shared::utc_from_timestamp(payload.watermark),
             eventtime: shared::utc_from_timestamp(payload.event_time),
-            headers: Default::default(),
+            headers: payload.headers,
         };
 
         Some((reduce_request, interval_window))

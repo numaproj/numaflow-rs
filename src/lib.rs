@@ -62,8 +62,8 @@ pub mod sideinput;
 // If a task at level-3 has an error, then that error will be propagated to level-2 (service_fn) via an mpsc::channel using the response channel.
 // The Response channel passes a Result type and by returning Err() in response channel, it notifies top service_fn that the task wants to abort itself.
 // service_fn (level-2) will now use another mpsc::channel to tell the gRPC service to cancel all the service_fns. gRPC service will
-// will ask all the level-2 service_fns to abort using the CancellationToken. service_fn will call abort on all the tasks it created
-// when CancellationToken has been dropped/cancelled.
+// will ask all the level-2 service_fns to abort using the CancellationToken. service_fn will call abort on all the tasks it created using internal
+// mpsc::channel when CancellationToken has been dropped/cancelled.
 //
 // User can directly send shutdown request to the gRPC server which inturn cancels the CancellationToken.
 //
