@@ -199,9 +199,6 @@ impl<T> Server<T> {
             .serve_with_incoming_shutdown(listener, shutdown)
             .await?;
 
-        // cleanup the socket file after the server is shutdown
-        // UnixListener doesn't implement Drop trait, so we have to manually remove the socket file
-        let _ = fs::remove_file(&self.sock_addr);
         Ok(())
     }
 
@@ -212,5 +209,13 @@ impl<T> Server<T> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
+    }
+}
+
+impl<C> Drop for Server<C> {
+    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
+    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
     }
 }
