@@ -1,16 +1,17 @@
-#![warn(missing_docs)]
-
 use std::collections::HashMap;
-use std::future::Future;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::{self, prost_timestamp_from_utc};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
+
+use crate::shared::{self, prost_timestamp_from_utc};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -23,6 +24,7 @@ pub mod proto {
 
 struct SourceService<T> {
     handler: Arc<T>,
+    _shutdown_tx: Sender<()>,
 }
 
 #[async_trait]
@@ -196,7 +198,7 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Keys of the message.
     pub keys: Vec<String>,
-
+    /// Headers of the message.
     pub headers: HashMap<String, String>,
 }
 
@@ -255,29 +257,38 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sourcer + Send + Sync + 'static,
-        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+
         let source_service = SourceService {
             handler: Arc::new(handler),
+            _shutdown_tx: internal_shutdown_tx,
         };
 
         let source_svc = proto::source_server::SourceServer::new(source_service)
             .max_decoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
+        let shutdown = shared::shutdown_signal(
+            internal_shutdown_rx,
+            Some(shutdown_rx),
+            CancellationToken::new(),
+        );
+
         tonic::transport::Server::builder()
             .add_service(source_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
-            .await
-            .map_err(Into::into)
+            .await?;
+
+        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
@@ -285,26 +296,34 @@ impl<T> Server<T> {
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.start_with_shutdown(shutdown_rx).await
+    }
+}
+
+impl<C> Drop for Server<C> {
+    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
+    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::proto;
+    use super::{proto, Message, Offset, SourceReadRequest};
     use chrono::Utc;
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
     use std::vec;
     use std::{error::Error, time::Duration};
-    use tokio_stream::StreamExt;
-    use tower::service_fn;
 
-    use crate::source::{self, Message, Offset, SourceReadRequest};
+    use crate::source;
     use tempfile::TempDir;
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
+    use tokio_stream::StreamExt;
     use tonic::transport::Uri;
+    use tower::service_fn;
     use uuid::Uuid;
 
     // A source that repeats the `num` for the requested count
@@ -388,10 +407,7 @@ mod tests {
         assert_eq!(server.socket_file(), sock_file);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown = async {
-            shutdown_rx.await.unwrap();
-        };
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown).await });
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 

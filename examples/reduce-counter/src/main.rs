@@ -1,21 +1,29 @@
-use numaflow::reduce::start_uds_server;
+use numaflow::reduce;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let reduce_handler = counter::Counter::new();
-
-    start_uds_server(reduce_handler).await?;
-
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let handler_creator = counter::CounterCreator {};
+    reduce::Server::new(handler_creator).start().await?;
     Ok(())
 }
 
 mod counter {
-    use numaflow::reduce::{Datum, Message};
-    use numaflow::reduce::{Metadata, Reducer};
+    use numaflow::reduce::{Message, ReduceRequest};
+    use numaflow::reduce::{Reducer, Metadata};
     use tokio::sync::mpsc::Receiver;
     use tonic::async_trait;
 
     pub(crate) struct Counter {}
+
+    pub(crate) struct CounterCreator {}
+
+    impl numaflow::reduce::ReducerCreator for CounterCreator {
+        type R = Counter;
+
+        fn create(&self) -> Self::R {
+            Counter::new()
+        }
+    }
 
     impl Counter {
         pub(crate) fn new() -> Self {
@@ -25,32 +33,18 @@ mod counter {
 
     #[async_trait]
     impl Reducer for Counter {
-        async fn reduce<T: Datum + Send + Sync + 'static, U: Metadata + Send + Sync + 'static>(
+        async fn reduce(
             &self,
             keys: Vec<String>,
-            mut input: Receiver<T>,
-            md: &U,
+            mut input: Receiver<ReduceRequest>,
+            md: &Metadata,
         ) -> Vec<Message> {
-            println!(
-                "Entering into UDF {:?} {:?}",
-                md.start_time(),
-                md.end_time()
-            );
-
             let mut counter = 0;
             // the loop exits when input is closed which will happen only on close of book.
-            while (input.recv().await).is_some() {
+            while input.recv().await.is_some() {
                 counter += 1;
             }
-
-            println!(
-                "Returning from UDF {:?} {:?}",
-                md.start_time(),
-                md.end_time()
-            );
-            let message = reduce::Message::new(counter.to_string().into_bytes())
-                .keys(keys.clone())
-                .tags(vec![]);
+            let message = Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
             vec![message]
         }
     }

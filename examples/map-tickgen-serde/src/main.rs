@@ -1,13 +1,12 @@
+use chrono::{SecondsFormat, TimeZone, Utc};
 use numaflow::map;
 use numaflow::map::Message;
+use serde::Serialize;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     map::Server::new(TickGen).start().await
 }
-
-use chrono::{SecondsFormat, TimeZone, Utc};
-use serde::Serialize;
 
 struct TickGen;
 
