@@ -20,7 +20,7 @@ spec:
       udf:
         container:
           # count element
-          image: quay.io/numaio/numaflow-rs/reduce-counter:v1
+          image: quay.io/numaio/numaflow-rs/reduce-counter:stable
         groupBy:
           window:
             fixed:

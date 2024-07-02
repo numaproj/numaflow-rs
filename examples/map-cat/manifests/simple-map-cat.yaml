@@ -17,7 +17,7 @@ spec:
         min: 1
       udf:
         container:
-          image: quay.io/numaio/numaflow-rs/map-cat:v1
+          image: quay.io/numaio/numaflow-rs/map-cat:stable
     - name: out
       sink:
         # A simple log printing sink
