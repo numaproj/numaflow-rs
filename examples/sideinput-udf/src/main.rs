@@ -1,6 +1,7 @@
-use notify::{RecursiveMode, Result, Watcher};
-use numaflow::map::{MapRequest, Mapper, Message, Server};
 use std::path::Path;
+
+use notify::{RecursiveMode, Result, Watcher};
+use numaflow::map::{Mapper, MapRequest, Message, Server};
 use tokio::spawn;
 use tonic::async_trait;
 

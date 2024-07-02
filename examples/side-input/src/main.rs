@@ -1,10 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use numaflow::sideinput::start_uds_server;
-use numaflow::sideinput::SideInputer;
-use tonic::{async_trait};
 use std::sync::Mutex;
 
-
+use numaflow::sideinput::SideInputer;
+use numaflow::sideinput::start_uds_server;
+use tonic::async_trait;
 
 struct SideInputHandler {
     counter: Mutex<u32>,
@@ -20,8 +18,7 @@ impl SideInputHandler {
 
 #[async_trait]
 impl SideInputer for SideInputHandler {
-
-    async fn retrieve_sideinput(& self) -> Option<Vec<u8>> {
+    async fn retrieve_sideinput(&self) -> Option<Vec<u8>> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");

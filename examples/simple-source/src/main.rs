@@ -10,7 +10,9 @@ pub(crate) mod simple_source {
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::Arc;
     use std::{
+        collections::HashMap,
         collections::HashSet,
         sync::atomic::{AtomicUsize, Ordering},
         sync::RwLock,
@@ -50,13 +52,13 @@ pub(crate) mod simple_source {
                     return;
                 }
 
+                let mut headers = HashMap::new();
+                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
+
                 // increment the read_idx which is used as the offset
                 self.read_idx
                     .store(self.read_idx.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
                 let offset = self.read_idx.load(Ordering::Relaxed);
-                let mut headers = HashMap::new();
-                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
-                let shared_headers = Arc::new(headers);
                 // send the message to the transmitter
                 transmitter
                     .send(Message {
@@ -67,7 +69,7 @@ pub(crate) mod simple_source {
                         },
                         event_time: chrono::offset::Utc::now(),
                         keys: vec![],
-                        headers: Arc::clone(&shared_headers),
+                        headers,
                     })
                     .await
                     .unwrap();

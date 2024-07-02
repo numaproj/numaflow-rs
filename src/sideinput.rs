@@ -1,7 +1,12 @@
-use crate::shared;
-use std::future::Future;
+use std::fs;
 use std::path::PathBuf;
+
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
+
+use crate::shared;
+use crate::shared::shutdown_signal;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
@@ -13,6 +18,7 @@ mod proto {
 
 struct SideInputService<T> {
     handler: T,
+    _shutdown_tx: mpsc::Sender<()>,
 }
 
 /// The `SideInputer` trait defines a method for retrieving side input data.
@@ -163,26 +169,37 @@ impl<T> Server<T> {
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown(
         &mut self,
-        shutdown: F,
+        shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: SideInputer + Send + Sync + 'static,
-        F: Future<Output = ()>,
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
-        let sideinput_svc = SideInputService { handler };
+        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+
+        let sideinput_svc = SideInputService {
+            handler,
+            _shutdown_tx: internal_shutdown_tx,
+        };
         let sideinput_svc = proto::side_input_server::SideInputServer::new(sideinput_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
+        let shutdown = shutdown_signal(
+            internal_shutdown_rx,
+            Some(shutdown_rx),
+            CancellationToken::new(),
+        );
+
         tonic::transport::Server::builder()
             .add_service(sideinput_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
-            .await
-            .map_err(Into::into)
+            .await?;
+
+        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
@@ -190,6 +207,15 @@ impl<T> Server<T> {
     where
         T: SideInputer + Send + Sync + 'static,
     {
-        self.start_with_shutdown(shared::shutdown_signal()).await
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.start_with_shutdown(shutdown_rx).await
+    }
+}
+
+impl<C> Drop for Server<C> {
+    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
+    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
     }
 }
