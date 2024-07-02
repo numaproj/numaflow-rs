@@ -1,7 +1,7 @@
 TAG ?= stable
 PUSH ?= false
-REPO = quay.io/numaio/numaflow-rs/source-transformer-event-time-filter:${TAG}
-DOCKER_FILE_PATH = examples/source-transformer-event-time-filter/Dockerfile
+REPO = quay.io/numaio/numaflow-rs/mapt-event-time-filter:${TAG}
+DOCKER_FILE_PATH = examples/mapt-event-time-filter/Dockerfile
 
 .PHONY: update
 update:
