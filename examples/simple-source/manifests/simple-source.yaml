@@ -10,7 +10,7 @@ spec:
       source:
         udsource:
           container:
-            image: quay.io/numaio/numaflow-rs/simple-source:v1
+            image: quay.io/numaio/numaflow-rs/simple-source:stable
             imagePullPolicy: Always
     - name: out
       scale:

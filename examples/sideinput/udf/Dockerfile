@@ -9,16 +9,18 @@ WORKDIR /numaflow-rs
 # Copy the whole application code into the Docker image
 COPY ./ ./
 
-WORKDIR /numaflow-rs/examples/source-transformer-event-time-filter
+WORKDIR /numaflow-rs/examples/sideinput/udf
 
 # build for release
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm
+FROM debian:bookworm AS sideinput-udf
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/source-transformer-event-time-filter/target/release/server .
+COPY --from=build /numaflow-rs/examples/sideinput/udf/target/release/server .
+
+RUN mkdir -p /var/numaflow/sideinputs
 
 # set the startup command to run your binary
 CMD ["./server"]

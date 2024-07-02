@@ -16,7 +16,7 @@ spec:
       sink:
         udsink:
           container:
-            image: quay.io/numaio/numaflow-rs/sink-log:v1
+            image: quay.io/numaio/numaflow-rs/sink-log:stable
   edges:
     - from: in
       to: out

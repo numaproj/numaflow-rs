@@ -1,7 +1,7 @@
 TAG ?= stable
 PUSH ?= false
-REPO = quay.io/numaio/numaflow-rs/map-cat:${TAG}
-DOCKER_FILE_PATH = examples/map-cat/Dockerfile
+REPO = quay.io/numaio/numaflow-rs/simple-source:${TAG}
+DOCKER_FILE_PATH = examples/simple-source/Dockerfile
 
 .PHONY: update
 update:

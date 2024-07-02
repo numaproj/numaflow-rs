@@ -8,9 +8,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 pub(crate) mod simple_source {
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::sync::Arc;
     use std::{
         collections::HashMap,
         collections::HashSet,

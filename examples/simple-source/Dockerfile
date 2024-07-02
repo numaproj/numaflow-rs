@@ -4,13 +4,12 @@ RUN apt-get update
 RUN apt-get install protobuf-compiler -y
 
 # create a new empty shell project
-WORKDIR /examples
+WORKDIR /numaflow-rs
 
-# copy your source tree
-COPY src ./src
+# Copy the whole application code into the Docker image
+COPY ./ ./
 
-COPY ./Cargo.toml ./Cargo.toml
-COPY ./Cargo.lock ./Cargo.lock
+WORKDIR /numaflow-rs/examples/simple-source
 
 # build for release
 RUN cargo build --release
@@ -19,7 +18,7 @@ RUN cargo build --release
 FROM debian:bookworm
 
 # copy the build artifact from the build stage
-COPY --from=build /examples/target/release/server .
+COPY --from=build /numaflow-rs/examples/simple-source/target/release/server .
 
 # set the startup command to run your binary
 CMD ["./server"]

@@ -1,27 +1,24 @@
-FROM rust:1.75-bookworm as build
+FROM rust:1.70 as build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
 
 # create a new empty shell project
-WORKDIR /examples
+WORKDIR /numaflow-rs
 
-# copy your source tree
-COPY src ./src
+# Copy the whole application code into the Docker image
+COPY ./ ./
 
-COPY ./Cargo.toml ./Cargo.toml
-COPY ./Cargo.lock ./Cargo.lock
+WORKDIR /numaflow-rs/examples/sideinput
 
 # build for release
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm
+FROM rust AS sideinput
 
 # copy the build artifact from the build stage
-COPY --from=build /examples/target/release/server .
-
-RUN mkdir -p /var/numaflow/side-inputs
+COPY --from=build /numaflow-rs/examples/sideinput/target/release/server .
 
 # set the startup command to run your binary
 CMD ["./server"]
