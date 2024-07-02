@@ -3,12 +3,8 @@ FROM rust:1.75-bookworm AS build
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
 
-# create a new empty shell project
 WORKDIR /numaflow-rs
-
-# copy your source tree
 COPY ./ ./
-
 WORKDIR /numaflow-rs/examples/map-tickgen-serde
 
 # build for release

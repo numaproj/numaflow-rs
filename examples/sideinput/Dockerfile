@@ -1,14 +1,10 @@
-FROM rust:1.70 as build
+FROM rust:1.70 AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
 
-# create a new empty shell project
 WORKDIR /numaflow-rs
-
-# Copy the whole application code into the Docker image
 COPY ./ ./
-
 WORKDIR /numaflow-rs/examples/sideinput
 
 # build for release
