@@ -1,7 +1,7 @@
 use numaflow::map;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     map::Server::new(Cat).start().await
 }
 
