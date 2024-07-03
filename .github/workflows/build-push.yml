@@ -13,7 +13,7 @@ on:
 jobs:
   docker_publish:
     # run workflow only on numaproj/numaflow-rs repository
-    if: ${{ github.repository }} == "numaproj/numaflow-rs"
+#    if: ${{ github.repository }} == "numaproj/numaflow-rs"
     name: Build, Tag, and Push Image
     runs-on: ubuntu-latest
 
