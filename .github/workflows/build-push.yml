@@ -38,3 +38,4 @@ jobs:
           password: ${{ secrets.NUMAIO_PASSWORD }}
       - name: Build, tag, and push images
         run: ./hack/update_examples.sh --build-push-example ${{ matrix.dockerfile_paths }}
+
