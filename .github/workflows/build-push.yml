@@ -1,31 +1,31 @@
 name: Docker Publish
 
 on:
-  pull_request:
-    types: [synchronize]
-
-#on:
-#  push:
-#    branches: [ main ]
-#    tags:
-#      - '*'
+  push:
+    branches: [ main ]
+    tags:
+      - '*'
 
 jobs:
   docker_publish:
     # run workflow only on numaproj/numaflow-rs repository
-#    if: ${{ github.repository }} == "numaproj/numaflow-rs"
+    if: ${{ github.repository }} == "numaproj/numaflow-rs"
     name: Build, Tag, and Push Image
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         dockerfile_paths: [
-          "examples/map-cat"
+          "examples/map-cat", "examples/map-tickgen-serde", "examples/mapt-event-time-filter",
+          "examples/reduce-counter", "examples/sideinput", "examples/sideinput/udf",
+          "examples/simple-source", "examples/sink-log", "examples/source-transformer-now"
         ]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -38,4 +38,3 @@ jobs:
           password: ${{ secrets.NUMAIO_PASSWORD }}
       - name: Build, tag, and push images
         run: ./hack/update_examples.sh --build-push-example ${{ matrix.dockerfile_paths }}
-
