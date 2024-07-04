@@ -1,6 +1,6 @@
 TAG ?= stable
 PUSH ?= false
-REPO = quay.io/numaio/numaflow-rs/udf-sideinput-example:${TAG}
+IMAGE_REGISTRY = quay.io/numaio/numaflow-rs/udf-sideinput-example:${TAG}
 DOCKER_FILE_PATH = examples/sideinput/udf/Dockerfile
 
 .PHONY: update
@@ -12,8 +12,8 @@ update:
 image: update
 	cd ../../../ && docker build \
 	-f ${DOCKER_FILE_PATH}  \
-	-t ${REPO} .
-	@if [ "$(PUSH)" = "true" ]; then docker push ${REPO}; fi
+	-t ${IMAGE_REGISTRY} .
+	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
 
 .PHONY: clean
 clean:

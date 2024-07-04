@@ -1,6 +1,6 @@
 TAG ?= stable
 PUSH ?= false
-REPO = quay.io/numaio/numaflow-rs/reduce-counter:${TAG}
+IMAGE_REGISTRY = quay.io/numaio/numaflow-rs/reduce-counter:${TAG}
 DOCKER_FILE_PATH = examples/reduce-counter/Dockerfile
 
 .PHONY: update
@@ -12,8 +12,8 @@ update:
 image: update
 	cd ../../ && docker build \
 	-f ${DOCKER_FILE_PATH}  \
-	-t ${REPO} .
-	@if [ "$(PUSH)" = "true" ]; then docker push ${REPO}; fi
+	-t ${IMAGE_REGISTRY} .
+	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
 
 .PHONY: clean
 clean:
