@@ -1,7 +1,8 @@
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use numaflow::sideinput::{self, SideInputer};
 
-use numaflow::sideinput::SideInputer;
-use numaflow::sideinput::start_uds_server;
+
 use tonic::async_trait;
 
 struct SideInputHandler {
@@ -35,8 +36,6 @@ impl SideInputer for SideInputHandler {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let side_input_handler = SideInputHandler::new();
-    start_uds_server(side_input_handler).await?;
-    Ok(())
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    sideinput::Server::new(SideInputHandler::new()).start().await
 }

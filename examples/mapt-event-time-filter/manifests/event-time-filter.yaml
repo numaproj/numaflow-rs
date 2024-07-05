@@ -13,7 +13,7 @@ spec:
           duration: 1s
         transformer:
           container:
-            image: quay.io/numaio/numaflow-rust/mapt-event-time-filter:stable
+            image: quay.io/numaio/numaflow-rs/mapt-event-time-filter:stable
             imagePullPolicy: Always
     - name: out
       scale:

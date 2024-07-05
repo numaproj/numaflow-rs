@@ -5,7 +5,7 @@ use numaflow::map::{Mapper, MapRequest, Message, Server};
 use tokio::spawn;
 use tonic::async_trait;
 
-const DIR_PATH: &str = "/var/numaflow/side-inputs";
+const DIR_PATH: &str = "/var/numaflow/sideinputs";
 
 struct UdfMapper;
 
@@ -13,9 +13,9 @@ struct UdfMapper;
 impl Mapper for UdfMapper {
     async fn map(&self, _input: MapRequest) -> Vec<Message> {
         let message = Message {
-            keys: vec![],
+            keys: vec![].into(),
             value: b"some_value".to_vec(),
-            tags: vec![],
+            tags: vec![].into(),
         };
         vec![message]
     }

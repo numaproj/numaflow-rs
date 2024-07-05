@@ -14,7 +14,7 @@ spec:
           value: 5
         transformer:
           container:
-            image: quay.io/numaio/numaflow-rs/source-transformer-now:v1
+            image: quay.io/numaio/numaflow-rs/source-transformer-now:stable
             imagePullPolicy: Always
     - name: out
       sink:

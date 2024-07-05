@@ -3,7 +3,7 @@ use numaflow::sourcetransform;
 /// A simple source transformer which assigns event time to the current time in utc.
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     sourcetransform::Server::new(NowCat).start().await
 }
 

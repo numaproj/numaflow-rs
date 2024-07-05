@@ -5,16 +5,16 @@ RUN apt-get install protobuf-compiler -y
 
 WORKDIR /numaflow-rs
 COPY ./ ./
-WORKDIR /numaflow-rs/examples/sink-log
+WORKDIR /numaflow-rs/examples/sideinput
 
 # build for release
 RUN cargo build --release
 
 # our final base
-FROM rust AS sink-log
+FROM rust AS sideinput
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/sink-log/target/release/server .
+COPY --from=build /numaflow-rs/examples/sideinput/target/release/server .
 
 # set the startup command to run your binary
 CMD ["./server"]
