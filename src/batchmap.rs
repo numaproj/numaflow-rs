@@ -451,6 +451,7 @@ mod tests {
     use std::{error::Error, time::Duration};
 
     use tempfile::TempDir;
+    use tokio::net::UnixStream;
     use tokio::sync::mpsc::Receiver;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
@@ -501,9 +502,13 @@ mod tests {
         // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
-                // Connect to a Uds socket
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
                 let sock_file = sock_file.clone();
-                tokio::net::UnixStream::connect(sock_file)
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
             }))
             .await?;
 
