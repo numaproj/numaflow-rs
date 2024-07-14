@@ -283,6 +283,8 @@ where
         // wait for the sink handle to respond
         let responses = batch_map_handle.await;
 
+        // TODO(): add the check for length of responses
+
         println!("Received responses from the batch map handle {}", responses.len());
         tokio::spawn(async move {
             // forward the responses
