@@ -10,9 +10,6 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::batchmap::proto::batch_map_server::BatchMap;
-use crate::batchmap::proto::BatchMapResponse;
-use crate::error::Error::BatchMapError;
-use crate::error::ErrorKind::InternalError;
 use crate::shared;
 use crate::shared::shutdown_signal;
 
@@ -452,7 +449,7 @@ impl<C> Drop for Server<C> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
-    use std::any::type_name;
+
     use tempfile::TempDir;
     use tokio::sync::mpsc::Receiver;
     use tokio::sync::oneshot;
@@ -527,10 +524,6 @@ mod tests {
         while let Some(response) = r.message().await? {
             responses.push(response);
         }
-        // for response in responses {
-        //     let msg = proto::batch_map_response::Result::from(response.results[0].clone());
-        // }
-
 
         assert_eq!(responses.len(), 1, "Expected single message from server");
         let msg = &responses[0];
