@@ -319,6 +319,7 @@ mod tests {
 
     use crate::source;
     use tempfile::TempDir;
+    use tokio::net::UnixStream;
     use tokio::sync::mpsc::Sender;
     use tokio::sync::oneshot;
     use tokio_stream::StreamExt;
@@ -412,11 +413,16 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
-                // Connect to a Uds socket
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
                 let sock_file = sock_file.clone();
-                tokio::net::UnixStream::connect(sock_file)
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
             }))
             .await?;
 
