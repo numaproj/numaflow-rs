@@ -9,7 +9,7 @@ fn main() {
                 "proto/reduce.proto",
                 "proto/sink.proto",
                 "proto/sideinput.proto",
-                "proto/batchmap.proto"
+                "proto/batchmap.proto",
             ],
             &["proto"],
         )

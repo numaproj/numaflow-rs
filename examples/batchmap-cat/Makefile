@@ -1,4 +1,4 @@
-TAG ?= stable4
+TAG ?= stable5
 PUSH ?= true
 IMAGE_REGISTRY = quay.io/kohlisid/numaflow-rs/batchmap-cat:${TAG}
 DOCKER_FILE_PATH = examples/batchmap-cat/Dockerfile

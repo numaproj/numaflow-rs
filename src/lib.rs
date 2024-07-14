@@ -34,7 +34,7 @@ pub mod sideinput;
 
 // TODO : Fix link after docs are added
 /// batchmap is for writing the [batch map mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/batchmap/) handlers.
-pub mod  batchmap;
+pub mod batchmap;
 
 // Error handling on Numaflow SDKs!
 //

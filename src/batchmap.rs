@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::channel;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
@@ -250,14 +250,16 @@ where
 
     type BatchMapFnStream = ReceiverStream<Result<proto::BatchMapResponse, Status>>;
 
-    async fn batch_map_fn(&self, request: Request<Streaming<proto::BatchMapRequest>>) -> Result<Response<Self::BatchMapFnStream>, Status> {
+    async fn batch_map_fn(
+        &self,
+        request: Request<Streaming<proto::BatchMapRequest>>,
+    ) -> Result<Response<Self::BatchMapFnStream>, Status> {
         let mut stream = request.into_inner();
         let (tx, rx) = mpsc::channel::<Datum>(1);
 
         // Create a channel to send the response back to the grpc client.
         let (grpc_response_tx, grpc_response_rx) =
             channel::<Result<proto::BatchMapResponse, Status>>(1);
-
 
         // call the user's batch map handle
         let batch_map_handle = self.handler.batchmap(rx);
@@ -282,7 +284,10 @@ where
 
         // TODO(): add the check for length of responses
 
-        println!("Received responses from the batch map handle {}", responses.len());
+        println!(
+            "Received responses from the batch map handle {}",
+            responses.len()
+        );
         tokio::spawn(async move {
             // forward the responses
             for response in responses {
@@ -304,9 +309,7 @@ where
                 // send the response to the grpc client
                 println!("Sending response to client {}", grpc_resp.id);
 
-                let send_result = grpc_response_tx
-                    .send(Ok(grpc_resp))
-                    .await;
+                let send_result = grpc_response_tx.send(Ok(grpc_resp)).await;
 
                 if let Err(e) = send_result {
                     grpc_response_tx
@@ -318,9 +321,6 @@ where
                 println!("Sent response from grpc");
             }
         });
-
-
-
 
         // // forward the responses
         // for response in responses {
@@ -458,8 +458,8 @@ mod tests {
     use tower::service_fn;
 
     use crate::batchmap;
-    use crate::batchmap::{BatchResponse, Datum, Message};
     use crate::batchmap::proto::batch_map_client::BatchMapClient;
+    use crate::batchmap::{BatchResponse, Datum, Message};
 
     #[tokio::test]
     async fn batch_map_server() -> Result<(), Box<dyn Error>> {
@@ -522,7 +522,9 @@ mod tests {
             headers: Default::default(),
         };
 
-        let resp = client.batch_map_fn(tokio_stream::iter(vec![request])).await?;
+        let resp = client
+            .batch_map_fn(tokio_stream::iter(vec![request]))
+            .await?;
         let mut r = resp.into_inner();
         let mut responses = Vec::new();
 
