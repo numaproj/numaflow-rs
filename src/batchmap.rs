@@ -277,8 +277,6 @@ where
                 .expect("expected next message from stream")
             {
                 let datum = Datum::from(next_message);
-                println!("Received message from client {}", datum.id);
-                // FIXME: panic is very bad idea!
                 tx.send(datum)
                     .await
                     .expect("send be successfully received!");
@@ -286,19 +284,13 @@ where
             }
         });
 
-        // wait for the sink handle to respond
+        // wait for the batch map handle to respond
         let responses = batch_map_handle.await;
-
-        println!(
-            "Received responses from the batch map handle {}",
-            responses.len()
-        );
 
         let counter2 = counter_orig.clone();
         tokio::spawn(async move {
             // check if the number of responses is equal to the number of messages received
             let num_responses = counter2.load(Ordering::Relaxed);
-            println!("Number of responses: {}", num_responses);
             if num_responses != responses.len() {
                 grpc_response_tx
                     .send(Err(Status::internal(
@@ -310,10 +302,10 @@ where
 
                 // Send a shutdown signal to the grpc server.
                 shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+                return;
             }
-            // forward the responses
+            // forward the responses back to the client
             for response in responses {
-                println!("Sending response to client {}", response.id);
                 let send_result = grpc_response_tx
                     .send(Ok(proto::BatchMapResponse {
                         results: response.message.into_iter().map(|m| m.into()).collect(),
@@ -533,7 +525,6 @@ mod tests {
         assert_eq!(responses.len(), 1, "Expected single message from server");
         let msg = &responses[0];
         assert_eq!(msg.id, "1");
-        println!("Response from server: {:?}", msg.results);
 
         shutdown_tx
             .send(())
