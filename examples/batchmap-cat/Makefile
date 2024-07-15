@@ -1,6 +1,6 @@
-TAG ?= stable5
-PUSH ?= true
-IMAGE_REGISTRY = quay.io/kohlisid/numaflow-rs/batchmap-cat:${TAG}
+TAG ?= stable
+PUSH ?= false
+IMAGE_REGISTRY = quay.io/numaio/numaflow-rs/batchmap-cat:${TAG}
 DOCKER_FILE_PATH = examples/batchmap-cat/Dockerfile
 
 .PHONY: update
