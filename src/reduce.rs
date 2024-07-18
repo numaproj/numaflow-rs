@@ -819,7 +819,11 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
+        let listener = shared::create_listener_stream(
+            &self.sock_addr,
+            &self.server_info_file,
+            shared::default_info_file(),
+        )?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let cln_token = CancellationToken::new();

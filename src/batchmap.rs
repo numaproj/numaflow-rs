@@ -16,7 +16,7 @@ use crate::shared::shutdown_signal;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/batchmapper-server-info";
+const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 const DROP: &str = "U+005C__DROP__";
 /// Numaflow Batch Map Proto definitions.
 pub mod proto {
@@ -264,8 +264,6 @@ where
 
         let shutdown_tx = self._shutdown_tx.clone();
 
-        // call the user's batch map handle
-        let batch_map_handle = self.handler.batchmap(rx);
         let counter_orig = Arc::new(AtomicUsize::new(0));
 
         let counter = counter_orig.clone();
@@ -285,12 +283,11 @@ where
         });
 
         // wait for the batch map handle to respond
-        let responses = batch_map_handle.await;
+        let responses = self.handler.batchmap(rx).await;
 
-        let counter2 = counter_orig.clone();
         tokio::spawn(async move {
             // check if the number of responses is equal to the number of messages received
-            let num_responses = counter2.load(Ordering::Relaxed);
+            let num_responses = counter_orig.load(Ordering::Relaxed);
             if num_responses != responses.len() {
                 grpc_response_tx
                     .send(Err(Status::internal(
@@ -390,7 +387,12 @@ impl<T> crate::batchmap::Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
+        let mut info = shared::default_info_file();
+        // update the info json metadata field, and add the map mode
+        info["metadata"][shared::MAP_MODE_KEY] =
+            serde_json::Value::String(shared::BATCH_MAP.to_string());
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
 
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
@@ -504,7 +506,7 @@ mod tests {
 
         let mut client = BatchMapClient::new(channel);
         let request = batchmap::proto::BatchMapRequest {
-            keys: vec!["first".into(), "second".into()],
+            keys: vec!["first".into()],
             value: "hello".into(),
             watermark: Some(prost_types::Timestamp::default()),
             event_time: Some(prost_types::Timestamp::default()),
@@ -512,8 +514,17 @@ mod tests {
             headers: Default::default(),
         };
 
+        let request2 = batchmap::proto::BatchMapRequest {
+            keys: vec!["second".into()],
+            value: "hello2".into(),
+            watermark: Some(prost_types::Timestamp::default()),
+            event_time: Some(prost_types::Timestamp::default()),
+            id: "2".to_string(),
+            headers: Default::default(),
+        };
+
         let resp = client
-            .batch_map_fn(tokio_stream::iter(vec![request]))
+            .batch_map_fn(tokio_stream::iter(vec![request, request2]))
             .await?;
         let mut r = resp.into_inner();
         let mut responses = Vec::new();
@@ -522,9 +533,9 @@ mod tests {
             responses.push(response);
         }
 
-        assert_eq!(responses.len(), 1, "Expected single message from server");
-        let msg = &responses[0];
-        assert_eq!(msg.id, "1");
+        assert_eq!(responses.len(), 2, "Expected two message from server");
+        assert_eq!(&responses[0].id, "1");
+        assert_eq!(&responses[1].id, "2");
 
         shutdown_tx
             .send(())
@@ -540,8 +551,8 @@ mod tests {
         #[tonic::async_trait]
         impl batchmap::BatchMapper for Logger {
             async fn batchmap(&self, mut input: Receiver<Datum>) -> Vec<BatchResponse> {
-                let mut responses: Vec<BatchResponse> = Vec::new();
-                while let Some(datum) = input.recv().await {}
+                let responses: Vec<BatchResponse> = Vec::new();
+                while let Some(_datum) = input.recv().await {}
                 responses
             }
         }
@@ -559,7 +570,7 @@ mod tests {
         assert_eq!(server.server_info_file(), server_info_file);
         assert_eq!(server.socket_file(), sock_file);
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;

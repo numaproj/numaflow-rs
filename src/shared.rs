@@ -11,23 +11,39 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
-#[tracing::instrument(fields(path = ? path.as_ref()))]
-fn write_info_file(path: impl AsRef<Path>) -> io::Result<()> {
-    let parent = path.as_ref().parent().unwrap();
-    std::fs::create_dir_all(parent)?;
-
-    // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
+// default_info_file is a function to get a default server info json
+// file content. This is used to write the server info file.
+// This function is used in the write_info_file function.
+// This function is not exposed to the user.
+pub fn default_info_file() -> serde_json::Value {
     let metadata: HashMap<String, String> = HashMap::new();
-    let info = serde_json::json!({
+    serde_json::json!({
         "protocol": "uds",
         "language": "rust",
         "version": "0.0.1",
         "metadata": metadata,
-    });
+    })
+}
+pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
+pub(crate) const UNARY_MAP: &str = "unary-map";
+pub(crate) const STREAM_MAP: &str = "stream-map";
+pub(crate) const BATCH_MAP: &str = "batch-map";
+
+// #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
+#[tracing::instrument(fields(path = ? path.as_ref()))]
+fn write_info_file(path: impl AsRef<Path>, mut server_info: serde_json::Value) -> io::Result<()> {
+    let parent = path.as_ref().parent().unwrap();
+    std::fs::create_dir_all(parent)?;
+
+    // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
+
+    // if server_info object is not provided, use the default one
+    if server_info.is_null() {
+        server_info = default_info_file();
+    }
 
     // Convert to a string of JSON and print it out
-    let content = format!("{}U+005C__END__", info);
+    let content = format!("{}U+005C__END__", server_info);
     info!(content, "Writing to file");
     fs::write(path, content)
 }
@@ -35,8 +51,10 @@ fn write_info_file(path: impl AsRef<Path>) -> io::Result<()> {
 pub(crate) fn create_listener_stream(
     socket_file: impl AsRef<Path>,
     server_info_file: impl AsRef<Path>,
+    server_info: serde_json::Value,
 ) -> Result<UnixListenerStream, Box<dyn std::error::Error + Send + Sync>> {
-    write_info_file(server_info_file).map_err(|e| format!("writing info file: {e:?}"))?;
+    write_info_file(server_info_file, server_info)
+        .map_err(|e| format!("writing info file: {e:?}"))?;
 
     let uds_stream = UnixListener::bind(socket_file)?;
     Ok(UnixListenerStream::new(uds_stream))
@@ -155,8 +173,14 @@ mod tests {
         // Create a temporary file
         let temp_file = NamedTempFile::new()?;
 
+        // Get a default server info file content
+        // let server_info = default_info_file();
+        let mut info = default_info_file();
+        // update the info json metadata field, and add the map mode key value pair
+        info["metadata"][MAP_MODE_KEY] = serde_json::Value::String(BATCH_MAP.to_string());
+
         // Call write_info_file with the path of the temporary file
-        write_info_file(temp_file.path())?;
+        write_info_file(temp_file.path(), info)?;
 
         // Open the file and read its contents
         let mut file = File::open(temp_file.path())?;
@@ -167,7 +191,7 @@ mod tests {
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
         assert!(contents.contains(r#""version":"0.0.1""#));
-        assert!(contents.contains(r#""metadata":{}"#));
+        assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
 
         Ok(())
     }

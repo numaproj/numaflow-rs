@@ -283,7 +283,12 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
+        let mut info = shared::default_info_file();
+        // update the info json metadata field, and add the map mode key value pair
+        info["metadata"][shared::MAP_MODE_KEY] =
+            serde_json::Value::String(shared::UNARY_MAP.to_string());
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
 
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
