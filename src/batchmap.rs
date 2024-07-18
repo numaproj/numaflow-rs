@@ -264,8 +264,10 @@ where
 
         let shutdown_tx = self._shutdown_tx.clone();
 
+        // counter to keep track of the number of messages received
         let counter_orig = Arc::new(AtomicUsize::new(0));
 
+        // clone the counter to be used in the request spawn
         let counter = counter_orig.clone();
         // write to the user-defined channel
         tokio::spawn(async move {
@@ -285,9 +287,12 @@ where
         // wait for the batch map handle to respond
         let responses = self.handler.batchmap(rx).await;
 
+        // spawn a task to forward the responses back to the client
         tokio::spawn(async move {
             // check if the number of responses is equal to the number of messages received
             let num_responses = counter_orig.load(Ordering::Relaxed);
+            // if the number of responses is not equal to the number of messages received,
+            // return an error status and send a shutdown signal to the grpc server
             if num_responses != responses.len() {
                 grpc_response_tx
                     .send(Err(Status::internal(
@@ -327,7 +332,7 @@ where
     }
 }
 
-/// gRPC server to start a sink service
+/// gRPC server to start a batch map service
 #[derive(Debug)]
 pub struct Server<T> {
     sock_addr: PathBuf,
