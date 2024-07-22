@@ -693,8 +693,8 @@ where
         // Extract the start and end time from the window
         let window = &windows[0];
         let (start_time, end_time) = (
-            shared::utc_from_timestamp(window.start.clone()),
-            shared::utc_from_timestamp(window.end.clone()),
+            shared::utc_from_timestamp(window.start),
+            shared::utc_from_timestamp(window.end),
         );
 
         // Create the IntervalWindow

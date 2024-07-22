@@ -464,4 +464,92 @@ mod tests {
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
+
+    #[tokio::test]
+    async fn sink_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicSink;
+        #[tonic::async_trait]
+        impl sink::Sinker for PanicSink {
+            async fn sink(
+                &self,
+                mut input: tokio::sync::mpsc::Receiver<sink::SinkRequest>,
+            ) -> Vec<sink::Response> {
+                let mut responses: Vec<sink::Response> = Vec::new();
+                let mut count = 0;
+
+                while let Some(datum) = input.recv().await {
+                    if count > 5 {
+                        panic!("Should not cross 5");
+                    }
+                    count += 1;
+                    responses.push(sink::Response::ok(datum.id));
+                }
+                responses
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sink.sock");
+        let server_info_file = tmp_dir.path().join("sinker-server-info");
+
+        let mut server = sink::Server::new(PanicSink)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = SinkClient::new(channel);
+        let mut requests = Vec::new();
+
+        for i in 0..10 {
+            let request = sink::proto::SinkRequest {
+                keys: vec!["first".into(), "second".into()],
+                value: format!("hello {}", i).into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                id: i.to_string(),
+                headers: Default::default(),
+            };
+            requests.push(request);
+        }
+
+        let resp = client.sink_fn(tokio_stream::iter(requests)).await;
+        assert!(resp.is_err(), "Expected error from server");
+
+        if let Err(e) = resp {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"));
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
 }
