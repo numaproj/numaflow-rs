@@ -1,13 +1,14 @@
+use crate::error::Error::SinkError;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::shared;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{env, fs};
-
-use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
-
-use crate::shared;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -24,8 +25,9 @@ pub mod proto {
 }
 
 struct SinkService<T: Sinker> {
-    handler: T,
-    _shutdown_tx: mpsc::Sender<()>,
+    handler: Arc<T>,
+    shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// Sinker trait for implementing user defined sinks.
@@ -180,33 +182,61 @@ where
         request: Request<Streaming<proto::SinkRequest>>,
     ) -> Result<tonic::Response<proto::SinkResponse>, Status> {
         let mut stream = request.into_inner();
-
+        let sink_handle = self.handler.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        let shutdown_tx = self.shutdown_tx.clone();
         // TODO: what should be the idle buffer size?
         let (tx, rx) = mpsc::channel::<SinkRequest>(1);
 
-        // call the user's sink handle
-        let sink_handle = self.handler.sink(rx);
+        let writer_cln_token = cancellation_token.clone();
 
-        // write to the user-defined channel
+        // spawn a task to read messages from the stream and send them to the user's sink handle
         tokio::spawn(async move {
-            while let Some(next_message) = stream
-                .message()
-                .await
-                .expect("expected next message from stream")
-            {
-                // FIXME: panic is very bad idea!
-                tx.send(next_message.into())
-                    .await
-                    .expect("send be successfully received!");
+            loop {
+                tokio::select! {
+                    next_message = stream.message() => {
+                        match next_message {
+                            Ok(Some(message)) => {
+                                // If sending fails, it means the receiver is dropped, and we should stop the task.
+                                if tx.send(message.into()).await.is_err() {
+                                    break;
+                                }
+                            },
+                            // If there's an error or the stream ends, break the loop to stop the task.
+                            Ok(None) | Err(_) => break,
+                        }
+                    },
+                    // Listen for cancellation. If triggered, break the loop to stop reading new messages.
+                    _ = writer_cln_token.cancelled() => {
+                        break;
+                    },
+                }
             }
         });
 
-        // wait for the sink handle to respond
-        let responses = sink_handle.await;
+        // call the user's sink handle
+        let handle = tokio::spawn(async move { sink_handle.sink(rx).await });
 
-        Ok(tonic::Response::new(proto::SinkResponse {
-            results: responses.into_iter().map(|r| r.into()).collect(),
-        }))
+        // wait for the sink handle to finish processing the messages
+        tokio::select! {
+            result = handle => {
+                match result {
+                    Ok(responses) => {
+                        Ok(tonic::Response::new(proto::SinkResponse {
+                            results: responses.into_iter().map(|r| r.into()).collect(),
+                        }))
+                    }
+                    Err(e) => {
+                        shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
+                        Err(Status::internal(SinkError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            },
+
+            _ = cancellation_token.cancelled() => {
+                Err(Status::cancelled(SinkError(InternalError("Server is shutting down".to_string())).to_string()))
+            }
+        }
     }
 
     async fn is_ready(
@@ -269,7 +299,7 @@ impl<T> Server<T> {
         self.max_message_size
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
+    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
@@ -290,22 +320,20 @@ impl<T> Server<T> {
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
+        let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
 
         let svc = SinkService {
-            handler,
-            _shutdown_tx: internal_shutdown_tx,
+            handler: Arc::new(handler),
+            shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
 
         let svc = proto::sink_server::SinkServer::new(svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(svc)

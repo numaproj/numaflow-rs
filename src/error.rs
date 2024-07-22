@@ -22,4 +22,7 @@ pub enum Error {
 
     #[error("Source Error - {0}")]
     SourceError(ErrorKind),
+
+    #[error("Source Transformer Error: {0}")]
+    SourceTransformerError(ErrorKind),
 }

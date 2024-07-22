@@ -1,13 +1,14 @@
+use crate::error::Error::SourceTransformerError;
+use crate::error::ErrorKind::UserDefinedError;
+use crate::shared::{self, prost_timestamp_from_utc};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-
-use chrono::{DateTime, Utc};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
-
-use crate::shared::{self, prost_timestamp_from_utc};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
@@ -21,8 +22,9 @@ pub mod proto {
 }
 
 struct SourceTransformerService<T> {
-    handler: T,
-    _shutdown_tx: mpsc::Sender<()>,
+    handler: Arc<T>,
+    shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// SourceTransformer trait for implementing SourceTransform handler.
@@ -238,15 +240,28 @@ where
         request: Request<proto::SourceTransformRequest>,
     ) -> Result<Response<proto::SourceTransformResponse>, Status> {
         let request = request.into_inner();
+        let handler = Arc::clone(&self.handler);
+        let handle = tokio::spawn(async move { handler.transform(request.into()).await });
+        let shutdown_tx = self.shutdown_tx.clone();
+        let cancellation_token = self.cancellation_token.clone();
 
-        let messages = self.handler.transform(request.into()).await;
-
-        Ok(Response::new(proto::SourceTransformResponse {
-            results: messages
-                .into_iter()
-                .map(|msg| msg.into())
-                .collect::<Vec<_>>(),
-        }))
+        tokio::select! {
+            result = handle => {
+                match result {
+                    Ok(messages) => Ok(Response::new(proto::SourceTransformResponse {
+                        results: messages.into_iter().map(|msg| msg.into()).collect(),
+                    })),
+                    Err(e) => {
+                        tracing::error!("Error in source transform handler: {:?}", e);
+                        shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
+                        Err(Status::internal(SourceTransformerError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            },
+            _ = cancellation_token.cancelled() => {
+                Err(Status::internal(SourceTransformerError(UserDefinedError("Server is shutting down".to_string())).to_string()))
+            },
+        }
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
@@ -318,21 +333,19 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let cln_token = CancellationToken::new();
 
         let sourcetrf_svc = SourceTransformerService {
-            handler,
-            _shutdown_tx: internal_shutdown_tx,
+            handler: Arc::new(handler),
+            shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
         let sourcetrf_svc =
             proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
                 .max_encoding_message_size(self.max_message_size)
                 .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(sourcetrf_svc)
@@ -374,7 +387,7 @@ mod tests {
     use crate::sourcetransform::proto::source_transform_client::SourceTransformClient;
 
     #[tokio::test]
-    async fn sourcetransformer_server() -> Result<(), Box<dyn Error>> {
+    async fn source_transformer_server() -> Result<(), Box<dyn Error>> {
         struct NowCat;
         #[tonic::async_trait]
         impl sourcetransform::SourceTransformer for NowCat {
@@ -442,6 +455,78 @@ mod tests {
             .send(())
             .expect("Sending shutdown signal to gRPC server");
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_transformer_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicTransformer;
+        #[tonic::async_trait]
+        impl sourcetransform::SourceTransformer for PanicTransformer {
+            async fn transform(
+                &self,
+                _: sourcetransform::SourceTransformRequest,
+            ) -> Vec<sourcetransform::Message> {
+                panic!("Panic in transformer");
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sourcetransform.sock");
+        let server_info_file = tmp_dir.path().join("sourcetransformer-server-info");
+
+        let mut server = sourcetransform::Server::new(PanicTransformer)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = SourceTransformClient::new(channel);
+        let request = tonic::Request::new(sourcetransform::proto::SourceTransformRequest {
+            keys: vec!["first".into(), "second".into()],
+            value: "hello".into(),
+            watermark: Some(prost_types::Timestamp::default()),
+            event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
+        });
+
+        let resp = client.source_transform_fn(request).await;
+        assert!(resp.is_err(), "Expected error from server");
+
+        if let Err(e) = resp {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"));
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
