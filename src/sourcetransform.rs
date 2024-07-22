@@ -245,6 +245,8 @@ where
         let shutdown_tx = self.shutdown_tx.clone();
         let cancellation_token = self.cancellation_token.clone();
 
+        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
+        // then return an error.
         tokio::select! {
             result = handle => {
                 match result {
@@ -253,6 +255,8 @@ where
                     })),
                     Err(e) => {
                         tracing::error!("Error in source transform handler: {:?}", e);
+                        // Send a shutdown signal to the server to do a graceful shutdown because there was
+                        // a panic in the handler.
                         shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
                         Err(Status::internal(SourceTransformerError(UserDefinedError(e.to_string())).to_string()))
                     }

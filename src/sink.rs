@@ -217,7 +217,8 @@ where
         // call the user's sink handle
         let handle = tokio::spawn(async move { sink_handle.sink(rx).await });
 
-        // wait for the sink handle to finish processing the messages
+        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
+        // then return an error.
         tokio::select! {
             result = handle => {
                 match result {
@@ -227,6 +228,8 @@ where
                         }))
                     }
                     Err(e) => {
+                        // Send a shutdown signal to the server to do a graceful shutdown because there was
+                        // a panic in the handler.
                         shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
                         Err(Status::internal(SinkError(UserDefinedError(e.to_string())).to_string()))
                     }
