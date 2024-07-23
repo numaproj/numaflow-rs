@@ -281,8 +281,7 @@ impl<T> Server<T> {
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
-        // will call cancel_token.cancel() when the function exits
-        // because of abort request, ctrl-c, or SIGTERM signal
+        // will call cancel_token.cancel() on drop of _drop_guard
         let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()

@@ -832,8 +832,7 @@ impl<C> Server<C> {
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
 
-        // will call cancel_token.cancel() when the function exits
-        // because of abort request, ctrl-c, or SIGTERM signal
+        // will call cancel_token.cancel() on drop of _drop_guard
         let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
@@ -1271,6 +1270,9 @@ mod tests {
         Ok(())
     }
 
+    // test panic in reduce method when there are multiple inflight requests
+    // panic only happens for one of the requests, the other request should be
+    // processed successfully since we do graceful shutdown of the server.
     #[tokio::test]
     async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
         struct PanicReducerCreator;
