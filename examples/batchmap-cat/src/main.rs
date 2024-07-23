@@ -12,15 +12,15 @@ struct Cat;
 impl batchmap::BatchMapper for Cat {
     async fn batchmap(&self, mut input: tokio::sync::mpsc::Receiver<Datum>) -> Vec<BatchResponse> {
         let mut responses: Vec<BatchResponse> = Vec::new();
-             while let Some(datum) = input.recv().await {
-                let mut response = BatchResponse::from_id(datum.id);
-                response.append(Message {
-                        keys: Option::from(datum.keys),
-                        value: datum.value,
-                        tags: None,
-                });
-                responses.push(response);
-            }
+        while let Some(datum) = input.recv().await {
+            let mut response = BatchResponse::from_id(datum.id);
+            response.append(Message {
+                keys: Some(datum.keys),
+                value: datum.value,
+                tags: None,
+            });
+            responses.push(response);
+        }
         responses
     }
 }

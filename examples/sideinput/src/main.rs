@@ -1,7 +1,6 @@
+use numaflow::sideinput::{self, SideInputer};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use numaflow::sideinput::{self, SideInputer};
-
 
 use tonic::async_trait;
 
@@ -37,5 +36,7 @@ impl SideInputer for SideInputHandler {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    sideinput::Server::new(SideInputHandler::new()).start().await
+    sideinput::Server::new(SideInputHandler::new())
+        .start()
+        .await
 }

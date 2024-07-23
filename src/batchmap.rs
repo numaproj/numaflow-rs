@@ -26,6 +26,7 @@ pub mod proto {
 struct BatchMapService<T: BatchMapper> {
     handler: T,
     _shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// BatchMapper trait for implementing batch mode user defined function.
@@ -263,6 +264,7 @@ where
             channel::<Result<proto::BatchMapResponse, Status>>(1);
 
         let shutdown_tx = self._shutdown_tx.clone();
+        let writer_cln_token = self.cancellation_token.clone();
 
         // counter to keep track of the number of messages received
         let counter_orig = Arc::new(AtomicUsize::new(0));
@@ -271,16 +273,26 @@ where
         let counter = counter_orig.clone();
         // write to the user-defined channel
         tokio::spawn(async move {
-            while let Some(next_message) = stream
-                .message()
-                .await
-                .expect("expected next message from stream")
-            {
-                let datum = Datum::from(next_message);
-                tx.send(datum)
-                    .await
-                    .expect("send be successfully received!");
-                counter.fetch_add(1, Ordering::Relaxed);
+            loop {
+                tokio::select! {
+                    next_message = stream.message() => {
+                        match next_message {
+                            Ok(Some(message)) => {
+                                let datum = Datum::from(message);
+                                if tx.send(datum).await.is_err() {
+                                    break;
+                                }
+                                counter.fetch_add(1, Ordering::Relaxed);
+                            },
+                            // If there's an error or the stream ends, break the loop to stop the task.
+                            Ok(None) | Err(_) => break,
+                        }
+                    },
+                    // Listen for cancellation. If triggered, break the loop to stop reading new messages.
+                    _ = writer_cln_token.cancelled() => {
+                        break;
+                    }
+                }
             }
         });
 
@@ -315,11 +327,9 @@ where
                     }))
                     .await;
                 // if the send fails, return an error status on the streaming endpoint
-                if send_result.is_err() {
+                if let Err(e) = send_result {
                     grpc_response_tx
-                        .send(Err(Status::internal(
-                            send_result.err().unwrap().to_string(),
-                        )))
+                        .send(Err(Status::internal(e.to_string())))
                         .await
                         .expect("send to grpc response channel failed");
                     return;
@@ -400,22 +410,21 @@ impl<T> crate::batchmap::Server<T> {
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
 
+        let cln_token = CancellationToken::new();
+
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let map_svc = crate::batchmap::BatchMapService {
             handler,
             _shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
 
         let map_svc = proto::batch_map_server::BatchMapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(map_svc)
@@ -608,18 +617,16 @@ mod tests {
             .await?;
         let mut r = resp.into_inner();
 
-        let mut error_flag = false;
+        let Err(server_err) = r.message().await else {
+            return Err("Expected error from server".into());
+        };
 
-        if let Err(e) = r.message().await {
-            assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains(
-                "number of responses does not \
-                    match the number of messages received"
-            ));
-            error_flag = true;
-        }
-        // Check if the error flag is set
-        assert!(error_flag, "Expected error from server");
+        assert_eq!(server_err.code(), tonic::Code::Internal);
+        assert!(server_err.message().contains(
+            "number of responses does not \
+              match the number of messages received"
+        ));
+
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
