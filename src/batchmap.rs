@@ -6,11 +6,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::batchmap::proto::batch_map_server::BatchMap;
+use crate::error::Error;
+use crate::error::Error::{BatchMapError, ReduceError};
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
 use crate::shared::shutdown_signal;
 
@@ -24,7 +28,7 @@ pub mod proto {
 }
 
 struct BatchMapService<T: BatchMapper> {
-    handler: T,
+    handler: Arc<T>,
     _shutdown_tx: mpsc::Sender<()>,
     cancellation_token: CancellationToken,
 }
@@ -271,68 +275,116 @@ where
 
         // clone the counter to be used in the request spawn
         let counter = counter_orig.clone();
+
+        // clone the shutdown_tx to be used in the request spawn
+        let read_shutdown_tx = shutdown_tx.clone();
         // write to the user-defined channel
-        tokio::spawn(async move {
+        let read_handler = tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    next_message = stream.message() => {
-                        match next_message {
-                            Ok(Some(message)) => {
-                                let datum = Datum::from(message);
-                                if tx.send(datum).await.is_err() {
-                                    break;
-                                }
-                                counter.fetch_add(1, Ordering::Relaxed);
-                            },
-                            // If there's an error or the stream ends, break the loop to stop the task.
-                            Ok(None) | Err(_) => break,
+                match stream.message().await {
+                    Ok(Some(message)) => {
+                        let datum = Datum::from(message);
+                        if let Err(e) = tx.send(datum).await {
+                            tracing::error!("Failed to send message: {}", e);
+                            break;
                         }
-                    },
-                    // Listen for cancellation. If triggered, break the loop to stop reading new messages.
-                    _ = writer_cln_token.cancelled() => {
+                        counter.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // If there's an error or the stream ends, break the loop to stop the task.
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::error!("Error reading message: {}", e);
+                        read_shutdown_tx
+                            .send(())
+                            .await
+                            .expect("shutdown_tx send failed");
                         break;
                     }
                 }
             }
         });
 
-        // wait for the batch map handle to respond
-        let responses = self.handler.batchmap(rx).await;
+        let (response_tx, mut response_rx) = channel::<Result<proto::BatchMapResponse, Error>>(1);
 
-        // spawn a task to forward the responses back to the client
-        tokio::spawn(async move {
-            // check if the number of responses is equal to the number of messages received
-            let num_responses = counter_orig.load(Ordering::Relaxed);
-            // if the number of responses is not equal to the number of messages received,
-            // return an error status and send a shutdown signal to the grpc server
-            if num_responses != responses.len() {
-                grpc_response_tx
-                    .send(Err(Status::internal(
-                        "number of responses does not \
-                    match the number of messages received",
-                    )))
-                    .await
-                    .expect("send to grpc response channel failed");
+        let handler = Arc::clone(&self.handler);
 
-                // Send a shutdown signal to the grpc server.
-                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+        let udf_response_tx = response_tx.clone();
+        let udf_task_handle = tokio::spawn(async move {
+            // check if there is an error in the user defined function
+            let messages = handler.batchmap(rx).await;
+            let counter = counter_orig.load(Ordering::Relaxed);
+            if counter != messages.len() {
+                let _ = udf_response_tx
+                    .send(Err(BatchMapError(InternalError(
+                        "number of responses does not match the number of messages received"
+                            .to_string(),
+                    ))))
+                    .await;
                 return;
             }
-            // forward the responses back to the client
-            for response in responses {
-                let send_result = grpc_response_tx
+            for response in messages {
+                let send_result = udf_response_tx
                     .send(Ok(proto::BatchMapResponse {
                         results: response.message.into_iter().map(|m| m.into()).collect(),
                         id: response.id,
                     }))
                     .await;
-                // if the send fails, return an error status on the streaming endpoint
                 if let Err(e) = send_result {
-                    grpc_response_tx
-                        .send(Err(Status::internal(e.to_string())))
-                        .await
-                        .expect("send to grpc response channel failed");
+                    let _ = udf_response_tx
+                        .send(Err(BatchMapError(InternalError(format!(
+                            "Failed to send response back: {}",
+                            e
+                        )))))
+                        .await;
                     return;
+                }
+            }
+        });
+
+        let handle = tokio::spawn(async move {
+            if let Err(e) = udf_task_handle.await {
+                let _ = response_tx
+                    .send(Err(BatchMapError(UserDefinedError(format!(" {}", e)))))
+                    .await;
+            }
+        });
+
+        // Spawn a task to write the response to the grpc client, we also need to check if the cancel token is set
+        // in that case we need to stop the task.
+        tokio::spawn(async move {
+            // wait for the batch map handle to respond
+            loop {
+                tokio::select! {
+                    response = response_rx.recv() => {
+                        match response {
+                            Some(Ok(response)) => {
+                               grpc_response_tx
+                                    .send(Ok(response))
+                                    .await
+                                    .expect("send to grpc response channel failed");
+                            },
+                            Some(Err(error)) => {
+                                grpc_response_tx
+                                    .send(Err(Status::internal(error.to_string())))
+                                    .await
+                                    .expect("send to grpc response channel failed");
+                                // Send a shutdown signal to the grpc server.
+                                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+                            }
+                            None => {
+                                // TODO: What should be for None? Is this reachable
+                                break;
+                            }
+                        }
+                    }
+                    _ = writer_cln_token.cancelled() => {
+                        // Send a shutdown signal to the grpc server.
+                        shutdown_tx.send(()).await.expect("shutdown_tx send failed");
+                        // Send an abort signal to the task executor to abort all the tasks.
+                        handle.abort();
+                        read_handler.abort();
+                        break;
+                    }
                 }
             }
         });
@@ -415,7 +467,7 @@ impl<T> crate::batchmap::Server<T> {
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let map_svc = crate::batchmap::BatchMapService {
-            handler,
+            handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
             cancellation_token: cln_token.clone(),
         };
@@ -628,6 +680,83 @@ mod tests {
         ));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+    #[tokio::test]
+    async fn batchmap_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicBatch;
+        #[tonic::async_trait]
+        impl batchmap::BatchMapper for PanicBatch {
+            async fn batchmap(&self, input: Receiver<Datum>) -> Vec<BatchResponse> {
+                panic!("Should not cross 5");
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("batchmap.sock");
+        let server_info_file = tmp_dir.path().join("mapper-server-info");
+
+        let mut server = batchmap::Server::new(PanicBatch)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = BatchMapClient::new(channel);
+        let mut requests = Vec::new();
+
+        for i in 0..10 {
+            let request = batchmap::proto::BatchMapRequest {
+                keys: vec!["first".into(), "second".into()],
+                value: format!("hello {}", i).into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                id: i.to_string(),
+                headers: Default::default(),
+            };
+            requests.push(request);
+        }
+
+        let resp = client.batch_map_fn(tokio_stream::iter(requests)).await?;
+        let mut response_stream = resp.into_inner();
+
+        if let Err(e) = response_stream.message().await {
+            println!("Error: {:?}", e);
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"))
+        } else {
+            return Err("Expected error from server".into());
+        };
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
