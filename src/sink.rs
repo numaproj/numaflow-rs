@@ -188,28 +188,28 @@ where
         // TODO: what should be the idle buffer size?
         let (tx, rx) = mpsc::channel::<SinkRequest>(1);
 
-        let writer_cln_token = cancellation_token.clone();
-
+        let reader_shutdown_tx = shutdown_tx.clone();
         // spawn a task to read messages from the stream and send them to the user's sink handle
-        tokio::spawn(async move {
+        let reader_handle = tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    next_message = stream.message() => {
-                        match next_message {
-                            Ok(Some(message)) => {
-                                // If sending fails, it means the receiver is dropped, and we should stop the task.
-                                if tx.send(message.into()).await.is_err() {
-                                    break;
-                                }
-                            },
-                            // If there's an error or the stream ends, break the loop to stop the task.
-                            Ok(None) | Err(_) => break,
+                match stream.message().await {
+                    Ok(Some(message)) => {
+                        // If sending fails, it means the receiver is dropped, and we should stop the task.
+                        if let Err(e) = tx.send(message.into()).await {
+                            tracing::error!("Failed to send message: {}", e);
+                            break;
                         }
-                    },
-                    // Listen for cancellation. If triggered, break the loop to stop reading new messages.
-                    _ = writer_cln_token.cancelled() => {
+                    }
+                    // If there's an error or the stream ends, break the loop to stop the task.
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::error!("Error reading message from stream: {}", e);
+                        reader_shutdown_tx
+                            .send(())
+                            .await
+                            .expect("Sending shutdown signal to gRPC server");
                         break;
-                    },
+                    }
                 }
             }
         });
@@ -237,6 +237,8 @@ where
             },
 
             _ = cancellation_token.cancelled() => {
+                // abort the reader task to stop reading messages from the stream
+                reader_handle.abort();
                 Err(Status::cancelled(SinkError(InternalError("Server is shutting down".to_string())).to_string()))
             }
         }
@@ -336,7 +338,11 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() when the function exits
+        // because of abort request, ctrl-c, or SIGTERM signal
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(svc)

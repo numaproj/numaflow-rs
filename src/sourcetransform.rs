@@ -349,7 +349,11 @@ impl<T> Server<T> {
                 .max_encoding_message_size(self.max_message_size)
                 .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() when the function exits
+        // because of abort request, ctrl-c, or SIGTERM signal
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(sourcetrf_svc)
