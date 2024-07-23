@@ -351,6 +351,7 @@ where
                     }
                     // COB
                     None => {
+                        println!("COB received");
                         task_tx
                             .send(TaskCommand::Close)
                             .await
@@ -371,6 +372,7 @@ where
                     result = response_rx.recv() => {
                         match result {
                             Some(Ok(response)) => {
+                                println!("Response from task: {:?}", response);
                                 let eof = response.eof;
                                 grpc_response_tx
                                     .send(Ok(response))
@@ -382,6 +384,7 @@ where
                                 }
                             }
                             Some(Err(error)) => {
+                                println!("Error from task: {:?}", error);
                                 tracing::error!("Error from task: {:?}", error);
                                 grpc_response_tx
                                     .send(Err(Status::internal(error.to_string())))
@@ -712,6 +715,7 @@ where
 
     // Closes all tasks in the task set and sends an EOF message to the response stream.
     async fn close(&mut self) {
+        println!("close on task set was invoked");
         for (_, task) in self.tasks.drain() {
             task.close().await;
         }

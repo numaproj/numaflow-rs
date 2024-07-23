@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 mod counter {
     use numaflow::reduce::{Message, ReduceRequest};
-    use numaflow::reduce::{Reducer, Metadata};
+    use numaflow::reduce::{Metadata, Reducer};
     use tokio::sync::mpsc::Receiver;
     use tonic::async_trait;
 
@@ -37,14 +37,19 @@ mod counter {
             &self,
             keys: Vec<String>,
             mut input: Receiver<ReduceRequest>,
-            md: &Metadata,
+            _md: &Metadata,
         ) -> Vec<Message> {
             let mut counter = 0;
             // the loop exits when input is closed which will happen only on close of book.
             while input.recv().await.is_some() {
                 counter += 1;
+                if counter == 100 && !keys.is_empty() && keys[0] == "even" {
+                    panic!("Reduce counter panicked");
+                }
             }
-            let message = Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
+            let message = Message::new(counter.to_string().into_bytes())
+                .tags(vec![])
+                .keys(keys.clone());
             vec![message]
         }
     }
