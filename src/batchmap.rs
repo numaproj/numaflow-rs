@@ -261,13 +261,18 @@ where
         request: Request<Streaming<proto::BatchMapRequest>>,
     ) -> Result<Response<Self::BatchMapFnStream>, Status> {
         let mut stream = request.into_inner();
+
+        // Create a channel to send the messages to the user defined function.
         let (tx, rx) = mpsc::channel::<Datum>(1);
 
         // Create a channel to send the response back to the grpc client.
         let (grpc_response_tx, grpc_response_rx) =
             channel::<Result<proto::BatchMapResponse, Status>>(1);
 
+        // clone the shutdown_tx to be used in the writer spawn
         let shutdown_tx = self._shutdown_tx.clone();
+
+        // clone the cancellation token to be used in the writer spawn
         let writer_cln_token = self.cancellation_token.clone();
 
         // counter to keep track of the number of messages received
@@ -278,7 +283,7 @@ where
 
         // clone the shutdown_tx to be used in the request spawn
         let read_shutdown_tx = shutdown_tx.clone();
-        // write to the user-defined channel
+        // read the messages from the grpc client and send it to the user defined function
         let read_handler = tokio::spawn(async move {
             loop {
                 match stream.message().await {
@@ -291,6 +296,7 @@ where
                         counter.fetch_add(1, Ordering::Relaxed);
                     }
                     // If there's an error or the stream ends, break the loop to stop the task.
+                    // and send a shutdown signal to the grpc server.
                     Ok(None) => break,
                     Err(e) => {
                         tracing::error!("Error reading message: {}", e);
@@ -304,15 +310,19 @@ where
             }
         });
 
+        // Create a channel for receiving the response from the user defined function.
         let (response_tx, mut response_rx) = channel::<Result<proto::BatchMapResponse, Error>>(1);
 
         let handler = Arc::clone(&self.handler);
 
         let udf_response_tx = response_tx.clone();
+        // spawn a task to invoke the user defined function
         let udf_task_handle = tokio::spawn(async move {
-            // check if there is an error in the user defined function
+            // wait for the messages to be received
             let messages = handler.batchmap(rx).await;
             let counter = counter_orig.load(Ordering::Relaxed);
+            // check if the number of responses matches the number of messages received
+            // if not send an error back to the grpc client.
             if counter != messages.len() {
                 let _ = udf_response_tx
                     .send(Err(BatchMapError(InternalError(
@@ -322,6 +332,7 @@ where
                     .await;
                 return;
             }
+            // send the response back to the grpc client
             for response in messages {
                 let send_result = udf_response_tx
                     .send(Ok(proto::BatchMapResponse {
@@ -329,6 +340,7 @@ where
                         id: response.id,
                     }))
                     .await;
+                // if there's an error sending the response back, send an error back to the grpc client.
                 if let Err(e) = send_result {
                     let _ = udf_response_tx
                         .send(Err(BatchMapError(InternalError(format!(
@@ -341,7 +353,10 @@ where
             }
         });
 
+        // Spawn a task to handle the error from the user defined function
         let handle = tokio::spawn(async move {
+            // if there was an error while executing the user defined function spawn,
+            // send an error back to the grpc client.
             if let Err(e) = udf_task_handle.await {
                 let _ = response_tx
                     .send(Err(BatchMapError(UserDefinedError(format!(" {}", e)))))
@@ -364,6 +379,7 @@ where
                                     .expect("send to grpc response channel failed");
                             },
                             Some(Err(error)) => {
+                                tracing::error!("Error from UDF: {:?}", error);
                                 grpc_response_tx
                                     .send(Err(Status::internal(error.to_string())))
                                     .await
@@ -377,9 +393,8 @@ where
                             }
                         }
                     }
+                    // If the cancellation token is set, stop the task.
                     _ = writer_cln_token.cancelled() => {
-                        // Send a shutdown signal to the grpc server.
-                        shutdown_tx.send(()).await.expect("shutdown_tx send failed");
                         // Send an abort signal to the task executor to abort all the tasks.
                         handle.abort();
                         read_handler.abort();
