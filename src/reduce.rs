@@ -328,6 +328,39 @@ where
         // commands to the task executor and an oneshot tx to abort all the tasks.
         let (task_tx, abort_tx) = TaskSet::start_task_executor(creator, response_tx.clone());
 
+        // Spawn a new task to handle the incoming ReduceRequests from the client
+        let reader_handle = tokio::spawn(async move {
+            let mut stream = request.into_inner();
+            loop {
+                match stream.next().await {
+                    Some(Ok(rr)) => {
+                        task_tx
+                            .send(TaskCommand::HandleReduceRequest(rr))
+                            .await
+                            .expect("task_tx send failed");
+                    }
+                    Some(Err(e)) => {
+                        response_tx
+                            .send(Err(ReduceError(InternalError(format!(
+                                "Failed to receive request: {}",
+                                e
+                            )))))
+                            .await
+                            .expect("error_tx send failed");
+                        break;
+                    }
+                    // COB
+                    None => {
+                        task_tx
+                            .send(TaskCommand::Close)
+                            .await
+                            .expect("task_tx send failed");
+                        break;
+                    }
+                }
+            }
+        });
+
         // Spawn a new task to listen to the response channel and send the response back to the grpc client.
         // In case of error, it propagates the error back to the client in grpc status format and sends a shutdown
         // signal to the grpc server. It also listens to the cancellation signal and aborts all the tasks.
@@ -349,10 +382,13 @@ where
                                 }
                             }
                             Some(Err(error)) => {
+                                tracing::error!("Error from task: {:?}", error);
                                 grpc_response_tx
                                     .send(Err(Status::internal(error.to_string())))
                                     .await
                                     .expect("send to grpc response channel failed");
+                                // stop reading new messages from the stream.
+                                reader_handle.abort();
                                 // Send a shutdown signal to the grpc server.
                                 shutdown_tx.send(()).await.expect("shutdown_tx send failed");
                             }
@@ -363,52 +399,14 @@ where
                         }
                     }
                     _ = response_task_token.cancelled() => {
+                        // stop reading new messages from stream.
+                        reader_handle.abort();
                         // Send an abort signal to the task executor to abort all the tasks.
                         abort_tx.send(()).expect("task_tx send failed");
                         break;
                     }
                 }
             }
-        });
-
-        let request_cancel_token = self.cancellation_token.clone();
-
-        // Spawn a new task to handle the incoming ReduceRequests from the client
-        tokio::spawn(async move {
-            let mut stream = request.into_inner();
-            loop {
-                tokio::select! {
-                    reduce_request = stream.next() => {
-                        match reduce_request {
-                            Some(Ok(rr)) => {
-                                task_tx
-                                    .send(TaskCommand::HandleReduceRequest(rr))
-                                    .await
-                                    .expect("task_tx send failed");
-                            }
-                            Some(Err(e)) => {
-                                response_tx
-                                    .send(Err(ReduceError(InternalError(format!(
-                                        "Failed to receive request: {}",
-                                        e
-                                    )))))
-                                    .await
-                                    .expect("error_tx send failed");
-                            }
-                            // COB
-                            None => break,
-                        }
-                    }
-                    _ = request_cancel_token.cancelled() => {
-                        // stop reading because server is shutting down
-                        break;
-                    }
-                }
-            }
-            task_tx
-                .send(TaskCommand::Close)
-                .await
-                .expect("task_tx send failed");
         });
 
         // return the rx as the streaming endpoint
