@@ -6,14 +6,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::batchmap::proto::batch_map_server::BatchMap;
 use crate::error::Error;
-use crate::error::Error::{BatchMapError, ReduceError};
+use crate::error::Error::BatchMapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
 use crate::shared::shutdown_signal;
@@ -276,10 +275,10 @@ where
         let writer_cln_token = self.cancellation_token.clone();
 
         // counter to keep track of the number of messages received
-        let counter_orig = Arc::new(AtomicUsize::new(0));
+        let total_messages_recvd = Arc::new(AtomicUsize::new(0));
 
         // clone the counter to be used in the request spawn
-        let counter = counter_orig.clone();
+        let counter = Arc::clone(&total_messages_recvd);
 
         // clone the shutdown_tx to be used in the request spawn
         let read_shutdown_tx = shutdown_tx.clone();
@@ -320,7 +319,8 @@ where
         let udf_task_handle = tokio::spawn(async move {
             // wait for the messages to be received
             let messages = handler.batchmap(rx).await;
-            let counter = counter_orig.load(Ordering::Relaxed);
+
+            let counter = total_messages_recvd.load(Ordering::Relaxed);
             // check if the number of responses matches the number of messages received
             // if not send an error back to the grpc client.
             if counter != messages.len() {
@@ -332,6 +332,7 @@ where
                     .await;
                 return;
             }
+
             // send the response back to the grpc client
             for response in messages {
                 let send_result = udf_response_tx
@@ -354,7 +355,7 @@ where
         });
 
         // Spawn a task to handle the error from the user defined function
-        let handle = tokio::spawn(async move {
+        let error_handle = tokio::spawn(async move {
             // if there was an error while executing the user defined function spawn,
             // send an error back to the grpc client.
             if let Err(e) = udf_task_handle.await {
@@ -395,8 +396,9 @@ where
                     }
                     // If the cancellation token is set, stop the task.
                     _ = writer_cln_token.cancelled() => {
+                        tracing::info!("token cancelled!, shutting down");
                         // Send an abort signal to the task executor to abort all the tasks.
-                        handle.abort();
+                        error_handle.abort();
                         read_handler.abort();
                         break;
                     }
@@ -703,7 +705,7 @@ mod tests {
         struct PanicBatch;
         #[tonic::async_trait]
         impl batchmap::BatchMapper for PanicBatch {
-            async fn batchmap(&self, input: Receiver<Datum>) -> Vec<BatchResponse> {
+            async fn batchmap(&self, _input: Receiver<Datum>) -> Vec<BatchResponse> {
                 panic!("Should not cross 5");
             }
         }
