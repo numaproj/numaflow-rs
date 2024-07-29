@@ -328,6 +328,39 @@ where
         // commands to the task executor and an oneshot tx to abort all the tasks.
         let (task_tx, abort_tx) = TaskSet::start_task_executor(creator, response_tx.clone());
 
+        // Spawn a new task to handle the incoming ReduceRequests from the client
+        let reader_handle = tokio::spawn(async move {
+            let mut stream = request.into_inner();
+            loop {
+                match stream.next().await {
+                    Some(Ok(rr)) => {
+                        task_tx
+                            .send(TaskCommand::HandleReduceRequest(rr))
+                            .await
+                            .expect("task_tx send failed");
+                    }
+                    Some(Err(e)) => {
+                        response_tx
+                            .send(Err(ReduceError(InternalError(format!(
+                                "Failed to receive request: {}",
+                                e
+                            )))))
+                            .await
+                            .expect("error_tx send failed");
+                        break;
+                    }
+                    // COB
+                    None => {
+                        task_tx
+                            .send(TaskCommand::Close)
+                            .await
+                            .expect("task_tx send failed");
+                        break;
+                    }
+                }
+            }
+        });
+
         // Spawn a new task to listen to the response channel and send the response back to the grpc client.
         // In case of error, it propagates the error back to the client in grpc status format and sends a shutdown
         // signal to the grpc server. It also listens to the cancellation signal and aborts all the tasks.
@@ -349,10 +382,13 @@ where
                                 }
                             }
                             Some(Err(error)) => {
+                                tracing::error!("Error from task: {:?}", error);
                                 grpc_response_tx
                                     .send(Err(Status::internal(error.to_string())))
                                     .await
                                     .expect("send to grpc response channel failed");
+                                // stop reading new messages from the stream.
+                                reader_handle.abort();
                                 // Send a shutdown signal to the grpc server.
                                 shutdown_tx.send(()).await.expect("shutdown_tx send failed");
                             }
@@ -363,52 +399,14 @@ where
                         }
                     }
                     _ = response_task_token.cancelled() => {
+                        // stop reading new messages from stream.
+                        reader_handle.abort();
                         // Send an abort signal to the task executor to abort all the tasks.
                         abort_tx.send(()).expect("task_tx send failed");
                         break;
                     }
                 }
             }
-        });
-
-        let request_cancel_token = self.cancellation_token.clone();
-
-        // Spawn a new task to handle the incoming ReduceRequests from the client
-        tokio::spawn(async move {
-            let mut stream = request.into_inner();
-            loop {
-                tokio::select! {
-                    reduce_request = stream.next() => {
-                        match reduce_request {
-                            Some(Ok(rr)) => {
-                                task_tx
-                                    .send(TaskCommand::HandleReduceRequest(rr))
-                                    .await
-                                    .expect("task_tx send failed");
-                            }
-                            Some(Err(e)) => {
-                                response_tx
-                                    .send(Err(ReduceError(InternalError(format!(
-                                        "Failed to receive request: {}",
-                                        e
-                                    )))))
-                                    .await
-                                    .expect("error_tx send failed");
-                            }
-                            // COB
-                            None => break,
-                        }
-                    }
-                    _ = request_cancel_token.cancelled() => {
-                        // stop reading because server is shutting down
-                        break;
-                    }
-                }
-            }
-            task_tx
-                .send(TaskCommand::Close)
-                .await
-                .expect("task_tx send failed");
         });
 
         // return the rx as the streaming endpoint
@@ -693,8 +691,8 @@ where
         // Extract the start and end time from the window
         let window = &windows[0];
         let (start_time, end_time) = (
-            shared::utc_from_timestamp(window.start.clone()),
-            shared::utc_from_timestamp(window.end.clone()),
+            shared::utc_from_timestamp(window.start),
+            shared::utc_from_timestamp(window.end),
         );
 
         // Create the IntervalWindow
@@ -832,8 +830,10 @@ impl<C> Server<C> {
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown =
-            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
+
+        // will call cancel_token.cancel() on drop of _drop_guard
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(reduce_svc)
@@ -1261,6 +1261,158 @@ mod tests {
 
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+
+        Ok(())
+    }
+
+    // test panic in reduce method when there are multiple inflight requests
+    // panic only happens for one of the requests, the other request should be
+    // processed successfully since we do graceful shutdown of the server.
+    #[tokio::test]
+    async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
+        struct PanicReducerCreator;
+
+        impl reduce::ReducerCreator for PanicReducerCreator {
+            type R = PanicReducer;
+            fn create(&self) -> PanicReducer {
+                PanicReducer {}
+            }
+        }
+
+        struct PanicReducer;
+
+        #[tonic::async_trait]
+        impl reduce::Reducer for PanicReducer {
+            async fn reduce(
+                &self,
+                keys: Vec<String>,
+                mut input: mpsc::Receiver<reduce::ReduceRequest>,
+                _md: &reduce::Metadata,
+            ) -> Vec<reduce::Message> {
+                let mut count = 0;
+                while input.recv().await.is_some() {
+                    count += 1;
+                    if count == 10 && keys[0] == "key2" {
+                        panic!("Panic in reduce method");
+                    }
+                }
+                vec![]
+            }
+        }
+        let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let client = setup_client(sock_file.clone()).await?;
+
+        let (tx1, rx1) = mpsc::channel(1);
+
+        let (tx2, rx2) = mpsc::channel(1);
+
+        // Spawn a task to send ReduceRequests to the channel
+        tokio::spawn(async move {
+            let rr = reduce::proto::ReduceRequest {
+                payload: Some(reduce::proto::reduce_request::Payload {
+                    keys: vec!["key1".to_string()],
+                    value: vec![],
+                    watermark: None,
+                    event_time: None,
+                    headers: Default::default(),
+                }),
+                operation: Some(reduce::proto::reduce_request::WindowOperation {
+                    event: 0,
+                    windows: vec![reduce::proto::Window {
+                        start: Some(Timestamp {
+                            seconds: 60000,
+                            nanos: 0,
+                        }),
+                        end: Some(Timestamp {
+                            seconds: 120000,
+                            nanos: 0,
+                        }),
+                        slot: "slot-0".to_string(),
+                    }],
+                }),
+            };
+
+            for _ in 0..20 {
+                tx1.send(rr.clone()).await.unwrap();
+                sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            let rr = reduce::proto::ReduceRequest {
+                payload: Some(reduce::proto::reduce_request::Payload {
+                    keys: vec!["key2".to_string()],
+                    value: vec![],
+                    watermark: None,
+                    event_time: None,
+                    headers: Default::default(),
+                }),
+                operation: Some(reduce::proto::reduce_request::WindowOperation {
+                    event: 0,
+                    windows: vec![reduce::proto::Window {
+                        start: Some(Timestamp {
+                            seconds: 60000,
+                            nanos: 0,
+                        }),
+                        end: Some(Timestamp {
+                            seconds: 120000,
+                            nanos: 0,
+                        }),
+                        slot: "slot-0".to_string(),
+                    }],
+                }),
+            };
+
+            for _ in 0..10 {
+                tx2.send(rr.clone()).await.unwrap();
+                sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        // Convert the receiver end of the channel into a stream
+        let stream1 = ReceiverStream::new(rx1);
+
+        let stream2 = ReceiverStream::new(rx2);
+
+        // Create a tonic::Request from the stream
+        let request1 = Request::new(stream1);
+
+        let request2 = Request::new(stream2);
+
+        let mut first_client = client.clone();
+        tokio::spawn(async move {
+            let mut response_stream = first_client.reduce_fn(request1).await.unwrap().into_inner();
+            assert!(response_stream.message().await.is_ok());
+        });
+
+        let mut second_client = client.clone();
+        tokio::spawn(async move {
+            let mut response_stream = second_client
+                .reduce_fn(request2)
+                .await
+                .unwrap()
+                .into_inner();
+
+            if let Err(e) = response_stream.message().await {
+                assert_eq!(e.code(), tonic::Code::Internal);
+                assert!(e.message().contains("User Defined Error"))
+            }
+        });
+
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
             if task.is_finished() {
                 break;
             }

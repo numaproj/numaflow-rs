@@ -1,13 +1,14 @@
+use crate::error::Error::SinkError;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::shared;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{env, fs};
-
-use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
-
-use crate::shared;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -24,8 +25,9 @@ pub mod proto {
 }
 
 struct SinkService<T: Sinker> {
-    handler: T,
-    _shutdown_tx: mpsc::Sender<()>,
+    handler: Arc<T>,
+    shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// Sinker trait for implementing user defined sinks.
@@ -180,33 +182,66 @@ where
         request: Request<Streaming<proto::SinkRequest>>,
     ) -> Result<tonic::Response<proto::SinkResponse>, Status> {
         let mut stream = request.into_inner();
-
+        let sink_handle = self.handler.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        let shutdown_tx = self.shutdown_tx.clone();
         // TODO: what should be the idle buffer size?
         let (tx, rx) = mpsc::channel::<SinkRequest>(1);
 
-        // call the user's sink handle
-        let sink_handle = self.handler.sink(rx);
-
-        // write to the user-defined channel
-        tokio::spawn(async move {
-            while let Some(next_message) = stream
-                .message()
-                .await
-                .expect("expected next message from stream")
-            {
-                // FIXME: panic is very bad idea!
-                tx.send(next_message.into())
-                    .await
-                    .expect("send be successfully received!");
+        let reader_shutdown_tx = shutdown_tx.clone();
+        // spawn a task to read messages from the stream and send them to the user's sink handle
+        let reader_handle = tokio::spawn(async move {
+            loop {
+                match stream.message().await {
+                    Ok(Some(message)) => {
+                        // If sending fails, it means the receiver is dropped, and we should stop the task.
+                        if let Err(e) = tx.send(message.into()).await {
+                            tracing::error!("Failed to send message: {}", e);
+                            break;
+                        }
+                    }
+                    // If there's an error or the stream ends, break the loop to stop the task.
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::error!("Error reading message from stream: {}", e);
+                        reader_shutdown_tx
+                            .send(())
+                            .await
+                            .expect("Sending shutdown signal to gRPC server");
+                        break;
+                    }
+                }
             }
         });
 
-        // wait for the sink handle to respond
-        let responses = sink_handle.await;
+        // call the user's sink handle
+        let handle = tokio::spawn(async move { sink_handle.sink(rx).await });
 
-        Ok(tonic::Response::new(proto::SinkResponse {
-            results: responses.into_iter().map(|r| r.into()).collect(),
-        }))
+        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
+        // then return an error.
+        tokio::select! {
+            result = handle => {
+                match result {
+                    Ok(responses) => {
+                        Ok(tonic::Response::new(proto::SinkResponse {
+                            results: responses.into_iter().map(|r| r.into()).collect(),
+                        }))
+                    }
+                    Err(e) => {
+                        // Send a shutdown signal to the server to do a graceful shutdown because there was
+                        // a panic in the handler.
+                        shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
+                        Err(Status::internal(SinkError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            },
+
+            _ = cancellation_token.cancelled() => {
+                // abort the reader task to stop reading messages from the stream
+                reader_handle.abort();
+                Err(Status::cancelled(SinkError(InternalError("Server is shutting down".to_string())).to_string()))
+            }
+        }
     }
 
     async fn is_ready(
@@ -269,7 +304,7 @@ impl<T> Server<T> {
         self.max_message_size
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
+    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
@@ -290,22 +325,23 @@ impl<T> Server<T> {
     {
         let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
         let handler = self.svc.take().unwrap();
+        let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
 
         let svc = SinkService {
-            handler,
-            _shutdown_tx: internal_shutdown_tx,
+            handler: Arc::new(handler),
+            shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
 
         let svc = proto::sink_server::SinkServer::new(svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() on drop of _drop_guard
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(svc)
@@ -433,6 +469,94 @@ mod tests {
             .send(())
             .expect("Sending shutdown signal to gRPC server");
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sink_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicSink;
+        #[tonic::async_trait]
+        impl sink::Sinker for PanicSink {
+            async fn sink(
+                &self,
+                mut input: tokio::sync::mpsc::Receiver<sink::SinkRequest>,
+            ) -> Vec<sink::Response> {
+                let mut responses: Vec<sink::Response> = Vec::new();
+                let mut count = 0;
+
+                while let Some(datum) = input.recv().await {
+                    if count > 5 {
+                        panic!("Should not cross 5");
+                    }
+                    count += 1;
+                    responses.push(sink::Response::ok(datum.id));
+                }
+                responses
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sink.sock");
+        let server_info_file = tmp_dir.path().join("sinker-server-info");
+
+        let mut server = sink::Server::new(PanicSink)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = SinkClient::new(channel);
+        let mut requests = Vec::new();
+
+        for i in 0..10 {
+            let request = sink::proto::SinkRequest {
+                keys: vec!["first".into(), "second".into()],
+                value: format!("hello {}", i).into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                id: i.to_string(),
+                headers: Default::default(),
+            };
+            requests.push(request);
+        }
+
+        let resp = client.sink_fn(tokio_stream::iter(requests)).await;
+        assert!(resp.is_err(), "Expected error from server");
+
+        if let Err(e) = resp {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"));
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }

@@ -8,14 +8,13 @@ use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
 fn write_info_file(path: impl AsRef<Path>) -> io::Result<()> {
     let parent = path.as_ref().parent().unwrap();
-    std::fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent)?;
 
     // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
     let metadata: HashMap<String, String> = HashMap::new();
@@ -57,18 +56,13 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 
 /// shuts downs the gRPC server. This happens in 2 cases
 /// 1. there has been an internal error (one of the tasks failed) and we need to shutdown
-/// 2. user is explictly asking us to shutdown
+/// 2. user is explicitly asking us to shutdown
 /// Once the request for shutdown has be invoked, server will broadcast shutdown to all tasks
 /// through the cancellation-token.
 pub(crate) async fn shutdown_signal(
     mut shutdown_on_err: mpsc::Receiver<()>,
     shutdown_from_user: Option<oneshot::Receiver<()>>,
-    cancel_token: CancellationToken,
 ) {
-    // will call cancel_token.cancel() when the function exits
-    // because of abort request, ctrl-c, or SIGTERM signal
-    let _drop_guard = cancel_token.drop_guard();
-
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -180,12 +174,7 @@ mod tests {
 
         // Spawn a new task to call shutdown_signal
         let shutdown_signal_task = tokio::spawn(async move {
-            shutdown_signal(
-                internal_shutdown_rx,
-                Some(user_shutdown_rx),
-                CancellationToken::new(),
-            )
-            .await;
+            shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx)).await;
         });
 
         // Send a shutdown signal

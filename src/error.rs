@@ -22,4 +22,10 @@ pub enum Error {
 
     #[error("Source Error - {0}")]
     SourceError(ErrorKind),
+
+    #[error("Source Transformer Error: {0}")]
+    SourceTransformerError(ErrorKind),
+
+    #[error("SideInput Error: {0}")]
+    SideInputError(ErrorKind),
 }
