@@ -493,7 +493,7 @@ impl<T> crate::batchmap::Server<T> {
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
         tonic::transport::Server::builder()
             .add_service(map_svc)
