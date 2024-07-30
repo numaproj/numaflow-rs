@@ -4,14 +4,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::{self, prost_timestamp_from_utc};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
-
-use crate::shared::{self, prost_timestamp_from_utc};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -25,6 +24,7 @@ pub mod proto {
 struct SourceService<T> {
     handler: Arc<T>,
     _shutdown_tx: Sender<()>,
+    _cancellation_token: CancellationToken,
 }
 
 #[async_trait]
@@ -271,21 +271,22 @@ impl<T> Server<T> {
         )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let cln_token = CancellationToken::new();
 
         let source_service = SourceService {
             handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
+            _cancellation_token: cln_token.clone(),
         };
 
         let source_svc = proto::source_server::SourceServer::new(source_service)
             .max_decoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() on drop of _drop_guard
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(source_svc)

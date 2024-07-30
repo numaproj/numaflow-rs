@@ -1,14 +1,15 @@
+use crate::error::Error::MapError;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::shared;
+use crate::shared::shutdown_signal;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-
-use chrono::{DateTime, Utc};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
-
-use crate::shared;
-use crate::shared::shutdown_signal;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
@@ -21,10 +22,9 @@ pub mod proto {
 }
 
 struct MapService<T> {
-    handler: T,
-    // not used ATM
-    // PLEASE WRITE WHY
-    _shutdown_tx: mpsc::Sender<()>,
+    handler: Arc<T>,
+    shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// Mapper trait for implementing Map handler.
@@ -71,11 +71,36 @@ where
         request: Request<proto::MapRequest>,
     ) -> Result<Response<proto::MapResponse>, Status> {
         let request = request.into_inner();
-        let result = self.handler.map(request.into()).await;
+        let handler = Arc::clone(&self.handler);
+        let handle = tokio::spawn(async move { handler.map(request.into()).await });
+        let shutdown_tx = self.shutdown_tx.clone();
+        let cancellation_token = self.cancellation_token.clone();
 
-        Ok(Response::new(proto::MapResponse {
-            results: result.into_iter().map(|msg| msg.into()).collect(),
-        }))
+        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
+        // then return an error.
+        tokio::select! {
+            result = handle => {
+                match result {
+                    Ok(result) => Ok(Response::new(proto::MapResponse {
+                        results: result.into_iter().map(|msg| msg.into()).collect(),
+                    })),
+                    Err(e) => {
+                        tracing::error!("Error in map handler: {:?}", e);
+                        // Send a shutdown signal to the server to do a graceful shutdown because there was
+                        // a panic in the handler.
+                        shutdown_tx
+                            .send(())
+                            .await
+                            .expect("Sending shutdown signal to gRPC server");
+                        Err(Status::internal(MapError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            },
+
+            _ = cancellation_token.cancelled() => {
+                Err(Status::internal(MapError(InternalError("Server is shutting down".to_string())).to_string()))
+            },
+        }
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
@@ -290,23 +315,24 @@ impl<T> Server<T> {
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
+        let cln_token = CancellationToken::new();
 
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let map_svc = MapService {
-            handler,
-            _shutdown_tx: internal_shutdown_tx,
+            handler: Arc::new(handler),
+            shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
 
         let map_svc = proto::map_server::MapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() on drop of _drop_guard
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(map_svc)
@@ -343,6 +369,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::oneshot;
+    use tokio::time::sleep;
     use tonic::transport::Uri;
     use tower::service_fn;
 
@@ -411,6 +438,169 @@ mod tests {
             .send(())
             .expect("Sending shutdown signal to gRPC server");
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn map_server_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicCat;
+        #[tonic::async_trait]
+        impl map::Mapper for PanicCat {
+            async fn map(&self, _input: map::MapRequest) -> Vec<map::Message> {
+                panic!("PanicCat panicking");
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("map.sock");
+        let server_info_file = tmp_dir.path().join("mapper-server-info");
+
+        let mut server = map::Server::new(PanicCat)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = MapClient::new(channel);
+        let request = tonic::Request::new(map::proto::MapRequest {
+            keys: vec!["first".into(), "second".into()],
+            value: "hello".into(),
+            watermark: Some(prost_types::Timestamp::default()),
+            event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
+        });
+
+        // server should return an error because of the panic.
+        let resp = client.map_fn(request).await;
+        assert!(resp.is_err(), "Expected error from server");
+
+        if let Err(e) = resp {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"));
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    // tests for panic when we have multiple inflight requests, only one of the requests
+    // causes panic, the other requests should be processed successfully and the server
+    // should shut down gracefully.
+    #[tokio::test]
+    async fn panic_with_multiple_requests() -> Result<(), Box<dyn Error>> {
+        struct PanicCat;
+        #[tonic::async_trait]
+        impl map::Mapper for PanicCat {
+            async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
+                if !input.keys.is_empty() && input.keys[0] == "key1" {
+                    sleep(Duration::from_millis(20)).await;
+                    panic!("Cat panicked");
+                }
+                // assume each request takes 100ms to process
+                sleep(Duration::from_millis(100)).await;
+                vec![]
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("map.sock");
+        let server_info_file = tmp_dir.path().join("mapper-server-info");
+
+        let mut server = map::Server::new(PanicCat)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = MapClient::new(channel);
+
+        let mut client_one = client.clone();
+        tokio::spawn(async move {
+            let request = tonic::Request::new(map::proto::MapRequest {
+                keys: vec!["key2".into()],
+                value: "hello".into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                headers: Default::default(),
+            });
+
+            // panic is only for requests with key "key1", since we have graceful shutdown
+            // the request should get processed.
+            let resp = client_one.map_fn(request).await;
+            assert!(resp.is_ok(), "Expected ok from server");
+        });
+
+        let request = tonic::Request::new(map::proto::MapRequest {
+            keys: vec!["key1".into()],
+            value: "hello".into(),
+            watermark: Some(prost_types::Timestamp::default()),
+            event_time: Some(prost_types::Timestamp::default()),
+            headers: Default::default(),
+        });
+
+        // panic happens for the key1 request, so we should expect error on the client side.
+        let resp = client.map_fn(request).await;
+        assert!(resp.is_err(), "Expected error from server");
+
+        if let Err(e) = resp {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("User Defined Error"));
+        }
+
+        // but since there is a panic, the server should shutdown.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }

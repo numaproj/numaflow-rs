@@ -1,12 +1,13 @@
+use crate::error::Error::SideInputError;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::shared;
+use crate::shared::shutdown_signal;
 use std::fs;
 use std::path::PathBuf;
-
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
-
-use crate::shared;
-use crate::shared::shutdown_signal;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
@@ -17,8 +18,9 @@ mod proto {
 }
 
 struct SideInputService<T> {
-    handler: T,
-    _shutdown_tx: mpsc::Sender<()>,
+    handler: Arc<T>,
+    shutdown_tx: mpsc::Sender<()>,
+    cancellation_token: CancellationToken,
 }
 
 /// The `SideInputer` trait defines a method for retrieving side input data.
@@ -94,19 +96,35 @@ where
         &self,
         _: Request<()>,
     ) -> Result<Response<proto::SideInputResponse>, Status> {
-        let msg = self.handler.retrieve_sideinput().await;
-        let si = match msg {
-            Some(value) => proto::SideInputResponse {
-                value,
-                no_broadcast: false,
-            },
-            None => proto::SideInputResponse {
-                value: Vec::new(),
-                no_broadcast: true,
-            },
-        };
+        let handler = Arc::clone(&self.handler);
+        let shutdown_tx = self.shutdown_tx.clone();
+        let handle = tokio::spawn(async move { handler.retrieve_sideinput().await });
 
-        Ok(Response::new(si))
+        tokio::select! {
+            msg = handle => {
+                match msg {
+                    Ok(Some(value)) => {
+                        Ok(Response::new(proto::SideInputResponse {
+                            value,
+                            no_broadcast: false,
+                        }))
+                    }
+                    Ok(None) => {
+                        Ok(Response::new(proto::SideInputResponse {
+                            value: Vec::new(),
+                            no_broadcast: true,
+                        }))
+                    }
+                    Err(e) => {
+                        shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
+                        Err(Status::internal(SideInputError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            }
+            _ = self.cancellation_token.cancelled() => {
+                Err(Status::internal(SideInputError(InternalError("Server is shutting down".to_string())).to_string()))
+            },
+        }
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
@@ -183,20 +201,21 @@ impl<T> Server<T> {
         )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
+        let cln_token = CancellationToken::new();
 
         let sideinput_svc = SideInputService {
-            handler,
-            _shutdown_tx: internal_shutdown_tx,
+            handler: Arc::new(handler),
+            shutdown_tx: internal_shutdown_tx,
+            cancellation_token: cln_token.clone(),
         };
         let sideinput_svc = proto::side_input_server::SideInputServer::new(sideinput_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shutdown_signal(
-            internal_shutdown_rx,
-            Some(shutdown_rx),
-            CancellationToken::new(),
-        );
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+
+        // will call cancel_token.cancel() on drop of _drop_guard
+        let _drop_guard = cln_token.drop_guard();
 
         tonic::transport::Server::builder()
             .add_service(sideinput_svc)
