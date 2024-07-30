@@ -194,7 +194,11 @@ impl<T> Server<T> {
     where
         T: SideInputer + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file)?;
+        let listener = shared::create_listener_stream(
+            &self.sock_addr,
+            &self.server_info_file,
+            shared::default_info_file(),
+        )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();

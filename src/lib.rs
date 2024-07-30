@@ -32,6 +32,9 @@ pub mod sink;
 /// building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/)
 pub mod sideinput;
 
+/// batchmap is for writing the [batch map mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/batchmap/) handlers.
+pub mod batchmap;
+
 // Error handling on Numaflow SDKs!
 //
 // Any non-recoverable error will cause the process to shutdown with a non-zero exit status. All errors are non-recoverable.

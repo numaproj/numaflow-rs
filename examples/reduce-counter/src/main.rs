@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 mod counter {
     use numaflow::reduce::{Message, ReduceRequest};
-    use numaflow::reduce::{Reducer, Metadata};
+    use numaflow::reduce::{Metadata, Reducer};
     use tokio::sync::mpsc::Receiver;
     use tonic::async_trait;
 
@@ -44,7 +44,9 @@ mod counter {
             while input.recv().await.is_some() {
                 counter += 1;
             }
-            let message = Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
+            let message = Message::new(counter.to_string().into_bytes())
+                .tags(vec![])
+                .keys(keys.clone());
             vec![message]
         }
     }

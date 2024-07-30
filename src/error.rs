@@ -23,6 +23,9 @@ pub enum Error {
     #[error("Source Error - {0}")]
     SourceError(ErrorKind),
 
+    #[error("BatchMap Error - {0}")]
+    BatchMapError(ErrorKind),
+
     #[error("Source Transformer Error: {0}")]
     SourceTransformerError(ErrorKind),
 
