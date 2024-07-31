@@ -18,7 +18,8 @@ jobs:
         dockerfile_paths: [
           "examples/map-cat", "examples/map-tickgen-serde", "examples/mapt-event-time-filter",
           "examples/reduce-counter", "examples/sideinput", "examples/sideinput/udf",
-          "examples/simple-source", "examples/sink-log", "examples/source-transformer-now"
+          "examples/simple-source", "examples/sink-log", "examples/source-transformer-now",
+          "examples/batchmap-flatmap", "examples/batchmap-cat",
         ]
 
     steps:
