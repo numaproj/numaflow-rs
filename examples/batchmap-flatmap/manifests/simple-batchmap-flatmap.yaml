@@ -8,10 +8,10 @@ spec:
       source:
         # A self data generating source
         generator:
-          rpu: 500
+          rpu: 300
           duration: 1s
           keyCount: 5
-          value: "hello,hello"
+          value: 5
     - name: cat
       scale:
         min: 1
