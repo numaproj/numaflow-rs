@@ -21,7 +21,7 @@ impl batchmap::BatchMapper for Flatmap {
             // Split the string by ","
             let parts: Vec<&str> = s.split(',').collect();
 
-            // Print the resulting parts
+            // return the resulting parts
             for part in parts {
                 response.append(Message {
                     keys: Some(datum.keys.clone()),
