@@ -2,7 +2,7 @@
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let source_handle = simple_source::SimpleSource::new();
+    let source_handle = simple_source::SimpleSource::new("Hello World!".to_string());
     numaflow::source::Server::new(source_handle).start().await
 }
 
@@ -18,14 +18,14 @@ pub(crate) mod simple_source {
     /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK
     /// does not provide a mutable reference as explained in [`Sourcer`]
     pub(crate) struct SimpleSource {
-        num: usize,
+        payload: String,
         yet_to_ack: RwLock<HashSet<String>>,
     }
 
     impl SimpleSource {
-        pub(crate) fn new() -> Self {
+        pub(crate) fn new(payload: String) -> Self {
             Self {
-                num: 10,
+                payload,
                 yet_to_ack: RwLock::new(HashSet::new()),
             }
         }
@@ -44,7 +44,7 @@ pub(crate) mod simple_source {
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
                     .send(Message {
-                        value: format!("{}-{}", self.num, event_time).into_bytes(),
+                        value: format!("{}-{}", self.payload, event_time).into_bytes(),
                         event_time,
                         offset: Offset {
                             offset: offset.clone().into_bytes(),
@@ -72,7 +72,7 @@ pub(crate) mod simple_source {
         }
 
         async fn partitions(&self) -> Option<Vec<i32>> {
-            Some(vec![2])
+            Some(vec![0])
         }
     }
 }
