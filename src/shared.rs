@@ -10,6 +10,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
+pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
+pub(crate) const UNARY_MAP: &str = "unary-map";
+pub(crate) const STREAM_MAP: &str = "stream-map";
+pub(crate) const BATCH_MAP: &str = "batch-map";
+const MINIMUM_NUMAFLOW_VERSION: &str = "1.2.0-rc4";
+
 // default_info_file is a function to get a default server info json
 // file content. This is used to write the server info file.
 // This function is used in the write_info_file function.
@@ -21,13 +27,9 @@ pub fn default_info_file() -> serde_json::Value {
         "language": "rust",
         "version": "0.0.1",
         "metadata": metadata,
+        "minimum-numaflow-version": MINIMUM_NUMAFLOW_VERSION,
     })
 }
-pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
-pub(crate) const UNARY_MAP: &str = "unary-map";
-pub(crate) const STREAM_MAP: &str = "stream-map";
-pub(crate) const BATCH_MAP: &str = "batch-map";
-
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
 fn write_info_file(path: impl AsRef<Path>, mut server_info: serde_json::Value) -> io::Result<()> {
@@ -186,6 +188,7 @@ mod tests {
         assert!(contents.contains(r#""language":"rust""#));
         assert!(contents.contains(r#""version":"0.0.1""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
+        assert!(contents.contains(r#""minimum-numaflow-version":"1.2.0-rc4""#));
 
         Ok(())
     }
