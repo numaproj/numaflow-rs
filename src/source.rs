@@ -267,7 +267,7 @@ impl<T> Server<T> {
         let listener = shared::create_listener_stream(
             &self.sock_addr,
             &self.server_info_file,
-            shared::default_info_file(),
+            shared::ServerInfo::default(),
         )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);

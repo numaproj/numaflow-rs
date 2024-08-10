@@ -308,10 +308,10 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        let mut info = shared::default_info_file();
+        let mut info = shared::ServerInfo::default();
         // update the info json metadata field, and add the map mode key value pair
-        info["metadata"][shared::MAP_MODE_KEY] =
-            serde_json::Value::String(shared::UNARY_MAP.to_string());
+        info.set_metadata(shared::MAP_MODE_KEY, shared::UNARY_MAP);
+
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
