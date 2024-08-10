@@ -820,7 +820,7 @@ impl<C> Server<C> {
         let listener = shared::create_listener_stream(
             &self.sock_addr,
             &self.server_info_file,
-            shared::default_info_file(),
+            shared::ServerInfo::default(),
         )?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);

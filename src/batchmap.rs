@@ -471,10 +471,9 @@ impl<T> crate::batchmap::Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        let mut info = shared::default_info_file();
+        let mut info = shared::ServerInfo::default();
         // update the info json metadata field, and add the map mode
-        info["metadata"][shared::MAP_MODE_KEY] =
-            serde_json::Value::String(shared::BATCH_MAP.to_string());
+        info.set_metadata(shared::MAP_MODE_KEY, shared::BATCH_MAP);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
