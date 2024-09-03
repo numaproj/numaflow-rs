@@ -18,6 +18,7 @@ const DEFAULT_FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
 const DEFAULT_FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
+const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 /// Numaflow Sink Proto definitions.
 pub mod proto {
@@ -186,7 +187,7 @@ where
         let cancellation_token = self.cancellation_token.clone();
         let shutdown_tx = self.shutdown_tx.clone();
         // TODO: what should be the idle buffer size?
-        let (tx, rx) = mpsc::channel::<SinkRequest>(1);
+        let (tx, rx) = mpsc::channel::<SinkRequest>(DEFAULT_CHANNEL_SIZE);
 
         let reader_shutdown_tx = shutdown_tx.clone();
         // spawn a task to read messages from the stream and send them to the user's sink handle
