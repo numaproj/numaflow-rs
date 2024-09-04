@@ -18,6 +18,7 @@ const DEFAULT_FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
 const DEFAULT_FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
+// TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
 /// Numaflow Sink Proto definitions.
 pub mod proto {
