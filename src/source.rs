@@ -87,11 +87,12 @@ where
         let sr = request.into_inner().request.unwrap();
 
         // tx,rx pair for sending data over to user-defined source
-        let (stx, mut srx) = mpsc::channel::<Message>(1);
+        let (stx, mut srx) = mpsc::channel::<Message>(sr.num_records as usize);
         // tx,rx pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(1);
+        let (tx, rx) =
+            mpsc::channel::<Result<proto::ReadResponse, Status>>(sr.num_records as usize);
 
-        // start the ud-source rx asynchronously and start populating the gRPC response so it can be streamed to the gRPC client (numaflow).
+        // start the ud-source rx asynchronously and start populating the gRPC response, so it can be streamed to the gRPC client (numaflow).
         tokio::spawn(async move {
             while let Some(resp) = srx.recv().await {
                 tx.send(Ok(proto::ReadResponse {
