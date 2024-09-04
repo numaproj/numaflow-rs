@@ -1,4 +1,4 @@
-FROM rust:1.76-bookworm AS build
+FROM rust:1.80-bookworm AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
