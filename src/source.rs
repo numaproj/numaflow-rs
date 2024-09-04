@@ -15,7 +15,6 @@ use tonic::{async_trait, Request, Response, Status};
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 /// Source Proto definitions.
 pub mod proto {
@@ -88,9 +87,10 @@ where
         let sr = request.into_inner().request.unwrap();
 
         // tx,rx pair for sending data over to user-defined source
-        let (stx, mut srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+        let (stx, mut srx) = mpsc::channel::<Message>(sr.num_records as usize);
         // tx,rx pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) =
+            mpsc::channel::<Result<proto::ReadResponse, Status>>(sr.num_records as usize);
 
         // start the ud-source rx asynchronously and start populating the gRPC response, so it can be streamed to the gRPC client (numaflow).
         tokio::spawn(async move {
