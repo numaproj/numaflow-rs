@@ -13,7 +13,6 @@ use tracing::info;
 
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
-pub(crate) const STREAM_MAP: &str = "stream-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
 const MINIMUM_NUMAFLOW_VERSION: &str = "1.2.0-rc4";
 
