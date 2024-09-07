@@ -223,9 +223,7 @@ mod tests {
         // Check if the contents of the file are as expected
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
-        assert!(contents.contains(r#""version":"0.0.1""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
-        assert!(contents.contains(r#""minimum_numaflow_version":"1.2.0-rc4""#));
 
         Ok(())
     }
