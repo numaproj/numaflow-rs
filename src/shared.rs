@@ -14,7 +14,7 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
-const MINIMUM_NUMAFLOW_VERSION: &str = "1.2.0-rc4";
+const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1";
 
 // ServerInfo structure to store server-related information
 #[derive(Serialize, Deserialize, Debug)]
