@@ -2,6 +2,16 @@
 name = "numaflow"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80"
+description = "Rust SDK for Numaflow"
+authors = ["Numaflow Developers"]
+license = "Apache-2.0"
+readme = "README.md"
+homepage = "https://numaproj.github.io/numaflow/"
+repository = "https://github.com/numaproj/numaflow-rs"
+keywords = ["numaflow", "streaming", "messaging", "event-driven"]
+categories = ["network-programming", "api-bindings"]
+
 
 [lib]
 name = "numaflow"

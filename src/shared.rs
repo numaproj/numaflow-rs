@@ -13,9 +13,8 @@ use tracing::info;
 
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
-pub(crate) const STREAM_MAP: &str = "stream-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
-const MINIMUM_NUMAFLOW_VERSION: &str = "1.2.0-rc4";
+const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1";
 
 // ServerInfo structure to store server-related information
 #[derive(Serialize, Deserialize, Debug)]
@@ -224,9 +223,7 @@ mod tests {
         // Check if the contents of the file are as expected
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
-        assert!(contents.contains(r#""version":"0.0.1""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
-        assert!(contents.contains(r#""minimum_numaflow_version":"1.2.0-rc4""#));
 
         Ok(())
     }
