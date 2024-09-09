@@ -40,7 +40,6 @@ impl ServerInfo {
         let metadata: HashMap<String, String> = HashMap::new();
         // Return the default server info json content
         // Create a ServerInfo object with default values
-        info!("keran is testing, the current sdk version is: {}", SDK_VERSION);
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
