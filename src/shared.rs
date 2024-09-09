@@ -15,6 +15,7 @@ pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
 const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1";
+const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
 #[derive(Serialize, Deserialize, Debug)]
@@ -39,11 +40,12 @@ impl ServerInfo {
         let metadata: HashMap<String, String> = HashMap::new();
         // Return the default server info json content
         // Create a ServerInfo object with default values
+        info!("keran is testing, the current sdk version is: {}", SDK_VERSION);
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
             minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION.to_string(),
-            version: "0.0.1".to_string(),
+            version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
     }
