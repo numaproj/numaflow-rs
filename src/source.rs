@@ -4,18 +4,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::error::Error::SourceError;
+use crate::error::{Error, ErrorKind};
 use crate::shared::{self, prost_timestamp_from_utc};
+use crate::source::proto::{AckRequest, AckResponse, ReadRequest};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-use crate::source::proto::{AckRequest, AckResponse, ReadRequest};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+// TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
+const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 /// Source Proto definitions.
 pub mod proto {
@@ -48,8 +53,8 @@ struct SourceService<T> {
 pub trait Sourcer {
     /// Reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
-    /// Acknowledges the messages that have been processed by the user-defined source.
-    async fn ack(&self, offsets: Vec<Offset>);
+    /// Acknowledges the message that has been processed by the user-defined source.
+    async fn ack(&self, offset: Offset);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     async fn pending(&self) -> usize;
     /// Returns the partitions associated with the source. This will be used by the platform to determine
@@ -82,14 +87,112 @@ where
 {
     type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
-    async fn read_fn(&self, request: Request<Streaming<ReadRequest>>) -> Result<Response<Self::ReadFnStream>, Status> {
-        todo!()
+    async fn read_fn(
+        &self,
+        request: Request<Streaming<ReadRequest>>,
+    ) -> Result<Response<Self::ReadFnStream>, Status> {
+        let mut sr = request.into_inner();
+
+        // tx,rx pair for gRPC response
+        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+
+        let handler_fn = Arc::clone(&self.handler);
+
+        let grpc_read_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+            while let Some(read_request) = sr
+                .message()
+                .await
+                .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
+            {
+                // tx,rx pair for sending data over to user-defined source
+                let (stx, mut srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+
+                let Some(request) = read_request.request else {
+                    panic!("request cannot be empty");
+                };
+
+                let grpc_resp_tx = tx.clone();
+                // start the ud-source rx asynchronously and start populating the gRPC response, so it can be streamed to the gRPC client (numaflow).
+                let grpc_writer_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    while let Some(resp) = srx.recv().await {
+                        grpc_resp_tx
+                            .send(Ok(proto::ReadResponse {
+                                result: Some(proto::read_response::Result {
+                                    payload: resp.value,
+                                    offset: Some(proto::Offset {
+                                        offset: resp.offset.offset,
+                                        partition_id: resp.offset.partition_id,
+                                    }),
+                                    event_time: prost_timestamp_from_utc(resp.event_time),
+                                    keys: resp.keys,
+                                    headers: Default::default(),
+                                }),
+                                status: None,
+                            }))
+                            .await
+                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+                    }
+
+                    grpc_resp_tx
+                        .send(Ok(proto::ReadResponse {
+                            result: None,
+                            status: Some(proto::read_response::Status {
+                                eot: true,
+                                code: 0,
+                                error: 0,
+                                msg: None,
+                            }),
+                        }))
+                        .await
+                        .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
+
+                    Ok(())
+                });
+
+                handler_fn
+                    .read(
+                        SourceReadRequest {
+                            count: request.num_records as usize,
+                            timeout: Duration::from_millis(request.timeout_in_ms as u64),
+                        },
+                        stx,
+                    )
+                    .await;
+
+                grpc_writer_handle
+                    .await
+                    .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
+                    .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+            }
+            Ok(())
+        });
+
+        // we want to start streaming to the server as soon as possible
+        tokio::spawn(async move {
+            // user-defined source read handler
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
-    async fn ack_fn(&self, request: Request<Streaming<AckRequest>>) -> Result<Response<AckResponse>, Status> {
-        todo!()
+    async fn ack_fn(
+        &self,
+        request: Request<Streaming<AckRequest>>,
+    ) -> Result<Response<AckResponse>, Status> {
+        let mut acks = request.into_inner();
+        while let Some(ack_request) = acks.message().await? {
+            let offset = ack_request.request.unwrap().offset;
+            self.handler
+                .ack(Offset {
+                    offset: offset.clone().unwrap().offset,
+                    partition_id: offset.unwrap().partition_id,
+                })
+                .await;
+        }
+        Ok(Response::new(AckResponse {
+            result: Some(proto::ack_response::Result { success: None }),
+        }))
     }
-
 
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
