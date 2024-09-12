@@ -10,7 +10,8 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status};
+use tonic::{async_trait, Request, Response, Status, Streaming};
+use crate::source::proto::{AckRequest, AckResponse, ReadRequest};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -27,6 +28,7 @@ struct SourceService<T> {
     _cancellation_token: CancellationToken,
 }
 
+// FIXME: remove async_trait
 #[async_trait]
 /// Trait representing a [user defined source](https://numaflow.numaproj.io/user-guide/sources/overview/).
 ///
@@ -80,83 +82,14 @@ where
 {
     type ReadFnStream = ReceiverStream<Result<proto::ReadResponse, Status>>;
 
-    async fn read_fn(
-        &self,
-        request: Request<proto::ReadRequest>,
-    ) -> Result<Response<Self::ReadFnStream>, Status> {
-        let sr = request.into_inner().request.unwrap();
-
-        // tx,rx pair for sending data over to user-defined source
-        let (stx, mut srx) = mpsc::channel::<Message>(sr.num_records as usize);
-        // tx,rx pair for gRPC response
-        let (tx, rx) =
-            mpsc::channel::<Result<proto::ReadResponse, Status>>(sr.num_records as usize);
-
-        // start the ud-source rx asynchronously and start populating the gRPC response, so it can be streamed to the gRPC client (numaflow).
-        tokio::spawn(async move {
-            while let Some(resp) = srx.recv().await {
-                tx.send(Ok(proto::ReadResponse {
-                    result: Some(proto::read_response::Result {
-                        payload: resp.value,
-                        offset: Some(proto::Offset {
-                            offset: resp.offset.offset,
-                            partition_id: resp.offset.partition_id,
-                        }),
-                        event_time: prost_timestamp_from_utc(resp.event_time),
-                        keys: resp.keys,
-                    }),
-                }))
-                .await
-                .expect("receiver dropped");
-            }
-        });
-
-        let handler_fn = Arc::clone(&self.handler);
-        // we want to start streaming to the server as soon as possible
-        tokio::spawn(async move {
-            // user-defined source read handler
-            handler_fn
-                .read(
-                    SourceReadRequest {
-                        count: sr.num_records as usize,
-                        timeout: Duration::from_millis(sr.timeout_in_ms as u64),
-                    },
-                    stx,
-                )
-                .await
-        });
-
-        Ok(Response::new(ReceiverStream::new(rx)))
+    async fn read_fn(&self, request: Request<Streaming<ReadRequest>>) -> Result<Response<Self::ReadFnStream>, Status> {
+        todo!()
     }
 
-    async fn ack_fn(
-        &self,
-        request: Request<proto::AckRequest>,
-    ) -> Result<Response<proto::AckResponse>, Status> {
-        let ar: proto::AckRequest = request.into_inner();
-
-        let success_response = Response::new(proto::AckResponse {
-            result: Some(proto::ack_response::Result { success: Some(()) }),
-        });
-
-        let Some(request) = ar.request else {
-            return Ok(success_response);
-        };
-
-        // invoke the user-defined source's ack handler
-        let offsets = request
-            .offsets
-            .into_iter()
-            .map(|so| Offset {
-                offset: so.offset,
-                partition_id: so.partition_id,
-            })
-            .collect();
-
-        self.handler.ack(offsets).await;
-
-        Ok(success_response)
+    async fn ack_fn(&self, request: Request<Streaming<AckRequest>>) -> Result<Response<AckResponse>, Status> {
+        todo!()
     }
+
 
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
