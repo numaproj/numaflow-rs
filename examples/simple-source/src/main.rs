@@ -60,11 +60,9 @@ pub(crate) mod simple_source {
             self.yet_to_ack.write().unwrap().extend(message_offsets)
         }
 
-        async fn ack(&self, offsets: Vec<Offset>) {
-            for offset in offsets {
-                let x = &String::from_utf8(offset.offset).unwrap();
-                self.yet_to_ack.write().unwrap().remove(x);
-            }
+        async fn ack(&self, offset: Offset) {
+            let x = &String::from_utf8(offset.offset).unwrap();
+            self.yet_to_ack.write().unwrap().remove(x);
         }
 
         async fn pending(&self) -> usize {
