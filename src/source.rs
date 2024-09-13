@@ -93,12 +93,14 @@ where
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let mut sr = request.into_inner();
 
-        // tx,rx pair for gRPC response
+        // tx (read from client) ,rx (write to client) pair for gRPC response
         let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
         let handler_fn = Arc::clone(&self.handler);
 
+        // this _tx ends up writing to the client side
         let grpc_tx = tx.clone();
+
         let cln_token = self.cancellation_token.clone();
         let grpc_read_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             loop {
@@ -115,9 +117,13 @@ where
                             panic!("request cannot be empty");
                         };
 
+                        // start the ud-source rx asynchronously and start populating the gRPC
+                        // response, so it can be streamed to the gRPC client (numaflow).
                         let grpc_resp_tx = grpc_tx.clone();
-                        // start the ud-source rx asynchronously and start populating the gRPC response, so it can be streamed to the gRPC client (numaflow).
                         let grpc_writer_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                            // even though we use bi-di; the user-defined source sees this as a 1/2 duplex
+                            // server side streaming. this means that the below while loop will terminate
+                            // after every batch of read has been returned.
                             while let Some(resp) = srx.recv().await {
                                 grpc_resp_tx
                                     .send(Ok(proto::ReadResponse {
@@ -137,6 +143,7 @@ where
                                     .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
                             }
 
+                            // send end of transmission on success
                             grpc_resp_tx
                                 .send(Ok(proto::ReadResponse {
                                     result: None,
@@ -148,7 +155,7 @@ where
                                     }),
                                 }))
                                 .await
-                                .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
+                                .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
 
                             Ok(())
                         });
