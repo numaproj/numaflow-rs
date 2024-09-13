@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Error, Debug, Clone)]
 pub enum ErrorKind {
     #[error("User Defined Error: {0}")]
