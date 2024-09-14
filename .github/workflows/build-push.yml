@@ -11,7 +11,7 @@ jobs:
     # run workflow only on numaproj/numaflow-rs repository
     if: ${{ github.repository }} == "numaproj/numaflow-rs"
     name: Build, Tag, and Push Image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
       matrix:
