@@ -85,14 +85,15 @@ impl<T> SourceService<T>
 where
     T: Sourcer + Send + Sync + 'static,
 {
+    /// writes a read batch returned by the user-defined handler to the client (numaflow).
     async fn write_a_batch(
         grpc_resp_tx: Sender<Result<ReadResponse, Status>>,
-        mut srx: Receiver<Message>,
+        mut udsource_rx: Receiver<Message>,
     ) -> crate::error::Result<()> {
         // even though we use bi-di; the user-defined source sees this as a 1/2 duplex
         // server side streaming. this means that the below while loop will terminate
         // after every batch of read has been returned.
-        while let Some(resp) = srx.recv().await {
+        while let Some(resp) = udsource_rx.recv().await {
             grpc_resp_tx
                 .send(Ok(ReadResponse {
                     result: Some(proto::read_response::Result {
@@ -128,16 +129,23 @@ where
         Ok(())
     }
 
+    /// Invokes the user-defined source handler to get a read batch and streams it to the numaflow
+    /// (client).
     async fn forward_a_batch(
         handler_fn: Arc<T>,
         grpc_resp_tx: Sender<Result<ReadResponse, Status>>,
-        stx: Sender<Message>,
-        srx: Receiver<Message>,
         request: proto::read_request::Request,
     ) -> crate::error::Result<()> {
+        // tx,rx pair for sending data over to user-defined source
+        let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+
+        // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
+        // to the gprc response stream.
         let grpc_writer_handle: JoinHandle<Result<(), Error>> =
             tokio::spawn(async move { Self::write_a_batch(grpc_resp_tx, srx).await });
 
+        // spawn the handler, it will stream the data to tx passed which will be streamed to the client
+        // by the above task.
         handler_fn
             .read(
                 SourceReadRequest {
@@ -148,6 +156,7 @@ where
             )
             .await;
 
+        // wait for the spawned grpc writer to end
         grpc_writer_handle
             .await
             .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
@@ -169,26 +178,28 @@ where
         request: Request<Streaming<ReadRequest>>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
         let mut sr = request.into_inner();
-
-        // tx (read from client) ,rx (write to client) pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<proto::ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
-
+        // we have to call the handler over and over for each ReadRequest
         let handler_fn = Arc::clone(&self.handler);
+
+        // tx (read from client), rx (write to client) pair for gRPC response
+        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
         // this _tx ends up writing to the client side
         let grpc_tx = tx.clone();
 
         let cln_token = self.cancellation_token.clone();
+
+        // this is the top-level stream consumer and this task will only exit when stream is closed (which
+        // will happen when server and client are shutting down).
         let grpc_read_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             loop {
                 tokio::select! {
+                    // for each ReadRequest message, the handler will be called and a batch of messages
+                    // will be sent over to the client.
                     read_request = sr.message() => {
                         let read_request = read_request
                             .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
                             .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
-
-                        // tx,rx pair for sending data over to user-defined source
-                        let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
 
                         let request = read_request.request.ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
@@ -196,7 +207,8 @@ where
                         // response, so it can be streamed to the gRPC client (numaflow).
                         let grpc_resp_tx = grpc_tx.clone();
 
-                        Self::forward_a_batch(handler_fn.clone(), grpc_resp_tx, stx, srx, request).await?
+                        // let's forward a batch for this request
+                        Self::forward_a_batch(handler_fn.clone(), grpc_resp_tx, request).await?
                     }
                     _ = cln_token.cancelled() => {
                         info!("Cancellation token triggered, shutting down");
@@ -208,8 +220,10 @@ where
         });
 
         let shutdown_tx = self.shutdown_tx.clone();
+        // spawn so we can return the recv stream to client.
         tokio::spawn(async move {
-            // wait for grpc read handle, if there are any errors write to the grpc response channel
+            // wait for the grpc read handle; if there are any errors, we set the gRPC Status to failure
+            // which will close the stream with failure.
             if let Err(e) = grpc_read_handle.await {
                 error!("shutting down the gRPC channel, {}", e);
                 tx.send(Err(Status::internal(e.to_string())))
@@ -217,6 +231,7 @@ where
                     .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
+                // if there are any failures, we propagate those failures so that the server can shutdown.
                 shutdown_tx
                     .send(())
                     .await
