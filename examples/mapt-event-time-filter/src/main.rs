@@ -2,11 +2,14 @@ use filter_impl::filter_event_time;
 use numaflow::sourcetransform;
 use numaflow::sourcetransform::{Message, SourceTransformRequest};
 use std::error::Error;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     sourcetransform::Server::new(EventTimeFilter).start().await
 }
+
 struct EventTimeFilter;
+
 #[tonic::async_trait]
 impl sourcetransform::SourceTransformer for EventTimeFilter {
     /// Asynchronously transforms input messages based on their event time.
@@ -43,9 +46,8 @@ mod tests {
     use numaflow::sourcetransform::{Message, SourceTransformRequest};
     /// Tests that events from 2022 are tagged as within the year 2022.
     #[test]
-    fn test_filter_event_time_should_return_after_year_2022() {
+    fn test_filter_event_time_should_return_within_year_2022() {
         let time = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
-
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
@@ -53,17 +55,17 @@ mod tests {
             eventtime: time,
             headers: Default::default(),
         };
-        let messages = filter_event_time(source_request);
-        assert_eq!((&messages).len(), 1);
 
+        let messages = filter_event_time(source_request);
+
+        assert_eq!((&messages).len(), 1);
         assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "within_year_2022")
     }
 
     /// Tests that events from 2023 are tagged as after the year 2022.
     #[test]
-    fn test_filter_event_time_should_return_within_year_2022() {
+    fn test_filter_event_time_should_return_after_year_2022() {
         let time = Utc.with_ymd_and_hms(2023, 7, 2, 2, 0, 0).unwrap();
-
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
@@ -71,9 +73,10 @@ mod tests {
             eventtime: time,
             headers: Default::default(),
         };
-        let messages = filter_event_time(source_request);
-        assert_eq!((&messages).len(), 1);
 
+        let messages = filter_event_time(source_request);
+
+        assert_eq!((&messages).len(), 1);
         assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "after_year_2022")
     }
 
@@ -81,7 +84,6 @@ mod tests {
     #[test]
     fn test_filter_event_time_should_drop() {
         let time = Utc.with_ymd_and_hms(2021, 7, 2, 2, 0, 0).unwrap();
-
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
@@ -89,7 +91,9 @@ mod tests {
             eventtime: time,
             headers: Default::default(),
         };
+
         let messages = filter_event_time(source_request);
+
         assert_eq!((&messages).len(), 1);
         assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "U+005C__DROP__")
     }

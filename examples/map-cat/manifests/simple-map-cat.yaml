@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-rust-map-cat
+  name: simple-map-cat
 spec:
   vertices:
     - name: in
@@ -21,11 +21,9 @@ spec:
     - name: out
       sink:
         # A simple log printing sink
-        log: { }
+        log: {}
   edges:
     - from: in
       to: cat
     - from: cat
       to: out
-
-
