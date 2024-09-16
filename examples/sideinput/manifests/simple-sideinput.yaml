@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: my-pipeline
+  name: simple-sideinput
 spec:
   sideInputs:
     - name: myticker
@@ -32,7 +32,7 @@ spec:
     - name: out
       sink:
         # A simple log printing sink
-        log: { }
+        log: {}
   edges:
     - from: in
       to: si-log
