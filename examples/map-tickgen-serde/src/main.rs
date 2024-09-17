@@ -31,7 +31,7 @@ struct ResultPayload {
 
 #[tonic::async_trait]
 impl map::Mapper for TickGen {
-    async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
+    async fn map(&self, input: map::MapRequest) -> Vec<Message> {
         let Ok(payload) = serde_json::from_slice::<Payload>(&input.value) else {
             return vec![];
         };
@@ -45,8 +45,7 @@ impl map::Mapper for TickGen {
             })
             .unwrap_or_default(),
         )
-        .keys(input.keys)
-        .tags(vec![]);
+        .keys(input.keys.clone());
         vec![message]
     }
 }

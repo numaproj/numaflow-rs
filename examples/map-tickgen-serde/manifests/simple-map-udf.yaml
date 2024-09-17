@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-rust-tickgen-serde
+  name: simple-tickgen-serde
 spec:
   vertices:
     - name: in
@@ -21,7 +21,7 @@ spec:
     - name: out
       sink:
         # A simple log printing sink
-        log: { }
+        log: {}
   edges:
     - from: in
       to: tickgen-value

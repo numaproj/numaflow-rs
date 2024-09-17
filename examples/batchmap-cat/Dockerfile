@@ -11,7 +11,7 @@ WORKDIR /numaflow-rs/examples/batchmap-cat
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm AS map-cat
+FROM debian:bookworm AS batchmap-cat
 
 # copy the build artifact from the build stage
 COPY --from=build /numaflow-rs/examples/batchmap-cat/target/release/server .

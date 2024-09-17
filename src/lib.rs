@@ -1,6 +1,7 @@
 //! A Rust SDK for [Numaflow]. The Rust SDK is experimental has only implemented the most important
-//! features. It will support all the core features eventually. It supports [Map], [Reduce], and
-//! [User Defined Sinks].
+//! features.
+//! It will support all the core features eventually.
+//! It supports [Map], [Reduce], [User Defined Sources], [User Defined Source Transformer] and [User Defined Sinks].
 //!
 //! Please note that the Rust SDK is experimental and will be refactored in the future to make it more
 //! idiomatic.
@@ -9,6 +10,7 @@
 //! [Map]: https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/
 //! [Reduce]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/
 //! [User Defined Sources]: https://numaflow.numaproj.io/user-guide/sources/user-defined-sources/
+//! [User Defined Source Transformer]: https://numaflow.numaproj.io/user-guide/sources/transformer/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
 
 /// start up code
