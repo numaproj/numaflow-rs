@@ -2,14 +2,13 @@
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let source_handle = simple_source::SimpleSource::new("Hello World!".to_string());
+    let source_handle = simple_source::SimpleSource::new();
     numaflow::source::Server::new(source_handle).start().await
 }
 
 pub(crate) mod simple_source {
-    use std::{collections::HashSet, sync::RwLock};
-
     use chrono::Utc;
+    use std::{collections::HashSet, sync::RwLock};
     use tokio::sync::mpsc::Sender;
 
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
@@ -18,14 +17,12 @@ pub(crate) mod simple_source {
     /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK
     /// does not provide a mutable reference as explained in [`Sourcer`]
     pub(crate) struct SimpleSource {
-        payload: String,
         yet_to_ack: RwLock<HashSet<String>>,
     }
 
     impl SimpleSource {
-        pub(crate) fn new(payload: String) -> Self {
+        pub(crate) fn new() -> Self {
             Self {
-                payload,
                 yet_to_ack: RwLock::new(HashSet::new()),
             }
         }
@@ -44,7 +41,7 @@ pub(crate) mod simple_source {
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
                 transmitter
                     .send(Message {
-                        value: format!("{}-{}", self.payload, event_time).into_bytes(),
+                        value: format!("{}", i).into_bytes(),
                         event_time,
                         offset: Offset {
                             offset: offset.clone().into_bytes(),

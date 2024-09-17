@@ -107,6 +107,7 @@ where
                         headers: Default::default(),
                     }),
                     status: None,
+                    handshake: None,
                 }))
                 .await
                 .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
@@ -119,9 +120,10 @@ where
                 status: Some(proto::read_response::Status {
                     eot: true,
                     code: 0,
-                    error: 0,
+                    error: None,
                     msg: None,
                 }),
+                handshake: None,
             }))
             .await
             .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
@@ -140,7 +142,7 @@ where
         let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
 
         // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
-        // to the gprc response stream.
+        // to the grpc response stream.
         let grpc_writer_handle: JoinHandle<Result<(), Error>> =
             tokio::spawn(async move { Self::write_a_batch(grpc_resp_tx, srx).await });
 
@@ -188,6 +190,33 @@ where
         let grpc_tx = tx.clone();
 
         let cln_token = self.cancellation_token.clone();
+
+        // Handle the handshake first
+        let handshake_request = sr
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+
+        if let Some(handshake) = handshake_request.handshake {
+            grpc_tx
+                .send(Ok(ReadResponse {
+                    result: None,
+                    status: Some(proto::read_response::Status {
+                        eot: false,
+                        code: 0,
+                        error: None,
+                        msg: None,
+                    }),
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send handshake response {}", e))
+                })?;
+        } else {
+            return Err(Status::invalid_argument("Handshake not present"));
+        }
 
         // this is the top-level stream consumer and this task will only exit when stream is closed (which
         // will happen when server and client are shutting down).
@@ -528,11 +557,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
-        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
-                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
                 let sock_file = sock_file.clone();
                 async move {
                     Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
@@ -546,11 +572,18 @@ mod tests {
 
         // Test read_fn with bidirectional streaming
         let (read_tx, read_rx) = mpsc::channel(4);
+        let handshake_request = proto::ReadRequest {
+            request: None,
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+        read_tx.send(handshake_request).await.unwrap();
+
         let read_request = proto::ReadRequest {
             request: Some(proto::read_request::Request {
                 num_records: 5,
                 timeout_in_ms: 1000,
             }),
+            handshake: None,
         };
         read_tx.send(read_request).await.unwrap();
         drop(read_tx); // Close the sender to indicate no more requests
