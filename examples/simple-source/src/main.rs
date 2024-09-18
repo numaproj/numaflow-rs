@@ -8,6 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 pub(crate) mod simple_source {
     use chrono::Utc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{collections::HashSet, sync::RwLock};
     use tokio::sync::mpsc::Sender;
 
@@ -18,12 +19,14 @@ pub(crate) mod simple_source {
     /// does not provide a mutable reference as explained in [`Sourcer`]
     pub(crate) struct SimpleSource {
         yet_to_ack: RwLock<HashSet<String>>,
+        counter: AtomicUsize,
     }
 
     impl SimpleSource {
         pub(crate) fn new() -> Self {
             Self {
                 yet_to_ack: RwLock::new(HashSet::new()),
+                counter: AtomicUsize::new(0),
             }
         }
     }
@@ -39,9 +42,10 @@ pub(crate) mod simple_source {
             let mut message_offsets = Vec::with_capacity(request.count);
             for i in 0..request.count {
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+                let payload = self.counter.fetch_add(1, Ordering::SeqCst).to_string();
                 transmitter
                     .send(Message {
-                        value: format!("{}", i).into_bytes(),
+                        value: payload.into_bytes(),
                         event_time,
                         offset: Offset {
                             offset: offset.clone().into_bytes(),
