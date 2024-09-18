@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: kafka-pl
+  name: simple-source
 spec:
   vertices:
     - name: in
@@ -16,7 +16,7 @@ spec:
       scale:
         min: 1
       sink:
-        log: { }
+        log: {}
   edges:
     - from: in
       to: out

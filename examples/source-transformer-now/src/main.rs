@@ -15,9 +15,6 @@ impl sourcetransform::SourceTransformer for NowCat {
         &self,
         input: sourcetransform::SourceTransformRequest,
     ) -> Vec<sourcetransform::Message> {
-        let message = sourcetransform::Message::new(input.value, chrono::offset::Utc::now())
-            .keys(input.keys)
-            .tags(vec![]);
-        vec![message]
+        vec![sourcetransform::Message::new(input.value, chrono::offset::Utc::now()).keys(input.keys.clone())]
     }
 }

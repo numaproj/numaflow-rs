@@ -23,11 +23,7 @@ impl batchmap::BatchMapper for Flatmap {
 
             // return the resulting parts
             for part in parts {
-                response.append(Message {
-                    keys: Some(datum.keys.clone()),
-                    value: Vec::from(part),
-                    tags: None,
-                });
+                response.append(Message::new(Vec::from(part)).keys(datum.keys.clone()));
             }
             responses.push(response);
         }
