@@ -190,7 +190,7 @@ where
 
         let cln_token = self.cancellation_token.clone();
 
-        // Handle the handshake first
+        // do the handshake first to let the client know that we are ready to receive read requests.
         let handshake_request = sr
             .message()
             .await
