@@ -107,6 +107,7 @@ where
                         headers: Default::default(),
                     }),
                     status: None,
+                    handshake: None,
                 }))
                 .await
                 .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
@@ -119,9 +120,10 @@ where
                 status: Some(proto::read_response::Status {
                     eot: true,
                     code: 0,
-                    error: 0,
+                    error: None,
                     msg: None,
                 }),
+                handshake: None,
             }))
             .await
             .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
@@ -140,7 +142,7 @@ where
         let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
 
         // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
-        // to the gprc response stream.
+        // to the grpc response stream.
         let grpc_writer_handle: JoinHandle<Result<(), Error>> =
             tokio::spawn(async move { Self::write_a_batch(grpc_resp_tx, srx).await });
 
@@ -172,7 +174,6 @@ where
     T: Sourcer + Send + Sync + 'static,
 {
     type ReadFnStream = ReceiverStream<Result<ReadResponse, Status>>;
-
     async fn read_fn(
         &self,
         request: Request<Streaming<ReadRequest>>,
@@ -188,6 +189,28 @@ where
         let grpc_tx = tx.clone();
 
         let cln_token = self.cancellation_token.clone();
+
+        // do the handshake first to let the client know that we are ready to receive read requests.
+        let handshake_request = sr
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+
+        if let Some(handshake) = handshake_request.handshake {
+            grpc_tx
+                .send(Ok(ReadResponse {
+                    result: None,
+                    status: None,
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send handshake response {}", e))
+                })?;
+        } else {
+            return Err(Status::invalid_argument("Handshake not present"));
+        }
 
         // this is the top-level stream consumer and this task will only exit when stream is closed (which
         // will happen when server and client are shutting down).
@@ -242,31 +265,98 @@ where
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
+    type AckFnStream = ReceiverStream<Result<AckResponse, Status>>;
+
     async fn ack_fn(
         &self,
         request: Request<Streaming<AckRequest>>,
-    ) -> Result<Response<AckResponse>, Status> {
+    ) -> Result<Response<Self::AckFnStream>, Status> {
         let mut ack_stream = request.into_inner();
-        while let Some(ack_request) = ack_stream.message().await? {
-            // the request is not there send back status as invalid argument
-            let Some(request) = ack_request.request else {
-                return Err(Status::invalid_argument("request is empty"));
-            };
+        let (ack_tx, ack_rx) = mpsc::channel::<Result<AckResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
-            let Some(offset) = request.offset else {
-                return Err(Status::invalid_argument("offset is not present"));
-            };
+        let handler_fn = Arc::clone(&self.handler);
 
-            self.handler
-                .ack(Offset {
-                    offset: offset.clone().offset,
-                    partition_id: offset.partition_id,
-                })
-                .await;
+        // do the handshake first to let the client know that we are ready to receive ack requests.
+        let handshake_request = ack_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+
+        let ack_resp_tx = ack_tx.clone();
+        if let Some(handshake) = handshake_request.handshake {
+            ack_resp_tx
+                .send(Ok(AckResponse {
+                    result: None,
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send handshake response {}", e))
+                })?;
+        } else {
+            return Err(Status::invalid_argument("Handshake not present"));
         }
-        Ok(Response::new(AckResponse {
-            result: Some(proto::ack_response::Result { success: Some(()) }),
-        }))
+
+        let cln_token = self.cancellation_token.clone();
+        let grpc_read_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cln_token.cancelled() => {
+                        info!("Cancellation token triggered, shutting down");
+                        break;
+                    }
+                    ack_request = ack_stream.message() => {
+                        let ack_request = ack_request
+                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
+
+                        let request = ack_request.request
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request is empty".to_string())))?;
+
+                        let offset = request.offset
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset is empty".to_string())))?;
+
+                        handler_fn
+                            .ack(Offset {
+                                offset: offset.offset,
+                                partition_id: offset.partition_id,
+                            })
+                            .await;
+
+                        // the return of handler_fn implicitly means that the ack is successful; hence
+                        // we are able to send success. There is no path for failure.
+                        ack_resp_tx
+                            .send(Ok(AckResponse {
+                                result: Some(proto::ack_response::Result { success: Some(()) }),
+                                handshake: None,
+                            }))
+                            .await
+                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let shutdown_tx = self.shutdown_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = grpc_read_handle.await {
+                error!("shutting down the gRPC ack channel, {}", e);
+                ack_tx
+                    .send(Err(Status::internal(e.to_string())))
+                    .await
+                    .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))
+                    .expect("writing error to grpc response channel should never fail");
+
+                shutdown_tx
+                    .send(())
+                    .await
+                    .expect("write to shutdown channel should never fail");
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(ack_rx)))
     }
 
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
@@ -528,11 +618,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
-        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
-                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
                 let sock_file = sock_file.clone();
                 async move {
                     Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
@@ -546,11 +633,18 @@ mod tests {
 
         // Test read_fn with bidirectional streaming
         let (read_tx, read_rx) = mpsc::channel(4);
+        let handshake_request = proto::ReadRequest {
+            request: None,
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+        read_tx.send(handshake_request).await.unwrap();
+
         let read_request = proto::ReadRequest {
             request: Some(proto::read_request::Request {
                 num_records: 5,
                 timeout_in_ms: 1000,
             }),
+            handshake: None,
         };
         read_tx.send(read_request).await.unwrap();
         drop(read_tx); // Close the sender to indicate no more requests
@@ -580,6 +674,11 @@ mod tests {
 
         // Test ack_fn with client-side streaming
         let (ack_tx, ack_rx) = mpsc::channel(10);
+        let ack_handshake_request = proto::AckRequest {
+            request: None,
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+        ack_tx.send(ack_handshake_request).await.unwrap();
         for resp in response_values.iter() {
             let ack_request = proto::AckRequest {
                 request: Some(proto::ack_request::Request {
@@ -588,16 +687,24 @@ mod tests {
                         partition_id: resp.offset.clone().unwrap().partition_id,
                     }),
                 }),
+                handshake: None,
             };
             ack_tx.send(ack_request).await.unwrap();
         }
         drop(ack_tx); // Close the sender to indicate no more requests
 
-        let ack_response = client
+        let mut ack_response = client
             .ack_fn(Request::new(ReceiverStream::new(ack_rx)))
             .await?
             .into_inner();
-        assert!(ack_response.result.unwrap().success.is_some());
+
+        // first response will be the handshake response
+        let ack_handshake_response = ack_response.message().await?.unwrap();
+        assert!(ack_handshake_response.handshake.unwrap().sot);
+
+        for _ in 0..5 {
+            assert!(ack_response.message().await?.is_some());
+        }
 
         let pending_after_ack = client.pending_fn(Request::new(())).await?.into_inner();
         assert_eq!(pending_after_ack.result.unwrap().count, 0);
