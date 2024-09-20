@@ -24,12 +24,14 @@ pub(crate) const BATCH_MAP: &str = "batch-map";
 // E.g., if the minimum version is 1.3.1, then put "1.3.1-z"
 //
 // Why "-z"?
-// It's to support validating pre-releases like rc1, rc2 with the constraint.
-// The semantic versioning library(https://github.com/Masterminds/semver) we use
-// to evaluate the version constraint requires specifying a pre-release version in the constraint,
-// to be able to compare with a pre-release version.
+// It's to support validating pre-releases like rc1, rc2.
+// A pre-release a.b.c-rc1 is considered smaller than a.b.c, but the semantic versioning library
+// cannot validate a.b.c-rc1 against a constraint of ">= a.b.c".
+// Instead, the library(https://github.com/Masterminds/semver) requires a pre-release version in the version constraint,
+// to be able to validate a pre-release version.
 // To translate the constraint of ">= a.b.c" into a pre-release one, we use ">=a.b.c-z",
-// as `z` is relatively the largest character in the ASCII table.
+// because `z` is relatively the largest character in the ASCII table.
+// All the rc versions are considered smaller than `z`.
 const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1-z";
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
