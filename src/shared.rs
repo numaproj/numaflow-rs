@@ -14,7 +14,25 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
-const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1";
+
+// Minimum version of Numaflow required by the current SDK version
+//
+// Updating this value:
+// 1. For release candidate (RC) versions, use the RC version string directly.
+//    Example: For version 1.3.1-rc1, enter "1.3.1-rc1"
+// 2. For stable versions, append "-z" to the stable version string.
+//    Example: For version 1.3.1, enter "1.3.1-z"
+//
+// Why use "-z"?
+// The "-z" suffix allows validation of pre-release versions (e.g., rc1, rc2) against the minimum version.
+// In semantic versioning, a pre-release version like a.b.c-rc1 is considered less than its stable counterpart a.b.c.
+// However, the semantic versioning library (https://github.com/Masterminds/semver) does not support directly validating
+// a pre-release version against a constraint like ">= a.b.c".
+// For it to work, a pre-release must be specified in the constraint.
+// Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
+// The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
+// smaller than any stable version suffixed with '-z'.
+const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1-z";
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
