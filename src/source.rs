@@ -201,12 +201,7 @@ where
             grpc_tx
                 .send(Ok(ReadResponse {
                     result: None,
-                    status: Some(proto::read_response::Status {
-                        eot: false,
-                        code: 0,
-                        error: None,
-                        msg: None,
-                    }),
+                    status: None,
                     handshake: Some(handshake),
                 }))
                 .await
@@ -329,6 +324,8 @@ where
                             })
                             .await;
 
+                        // the return of handler_fn implicitly means that the ack is successful; hence
+                        // we are able to send success. There is no path for failure.
                         ack_resp_tx
                             .send(Ok(AckResponse {
                                 result: Some(proto::ack_response::Result { success: Some(()) }),

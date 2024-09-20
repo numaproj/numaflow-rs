@@ -42,7 +42,7 @@ pub(crate) mod simple_source {
             let mut message_offsets = Vec::with_capacity(request.count);
             for i in 0..request.count {
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
-                let payload = self.counter.fetch_add(1, Ordering::SeqCst).to_string();
+                let payload = self.counter.fetch_add(1, Ordering::Relaxed).to_string();
                 transmitter
                     .send(Message {
                         value: payload.into_bytes(),
