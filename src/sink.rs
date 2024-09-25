@@ -248,7 +248,7 @@ where
                 drop(tx);
 
                 // Wait for the sink handler to finish processing the request
-                sinker_handle
+                let _ = sinker_handle
                     .await
                     .map_err(|e| SinkError(UserDefinedError(e.to_string())))?;
 
