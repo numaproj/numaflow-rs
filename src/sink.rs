@@ -224,6 +224,7 @@ impl<T> SinkService<T>
 where
     T: Sinker + Send + Sync + 'static,
 {
+    // processes the stream of requests from the client
     async fn process_sink_stream(
         sink_handle: Arc<T>,
         mut sink_stream: Streaming<proto::SinkRequest>,
@@ -243,6 +244,8 @@ where
         Ok(())
     }
 
+    // processes a batch of messages from the client, sends them to the sink handler and sends the responses back to the client
+    // batches are separated by an EOT message
     async fn process_sink_batch(
         sink_handle: Arc<T>,
         sink_stream: &mut Streaming<proto::SinkRequest>,
@@ -277,7 +280,7 @@ where
                 }
             };
 
-            if message.status.as_ref().map_or(false, |status| status.eot) {
+            if message.status.map_or(false, |status| status.eot) {
                 break;
             }
 
@@ -304,6 +307,7 @@ where
         Ok(false)
     }
 
+    // handles errors from the sink handler and sends them to the client via the response channel
     async fn handle_sink_errors(
         handle: JoinHandle<Result<(), Error>>,
         resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
@@ -339,6 +343,7 @@ where
         }
     }
 
+    // performs handshake with the client
     async fn perform_handshake(
         &self,
         sink_stream: &mut Streaming<proto::SinkRequest>,
