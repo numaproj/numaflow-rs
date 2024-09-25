@@ -5,11 +5,11 @@ use crate::shared;
 use crate::sink::proto::SinkResponse;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
@@ -102,22 +102,16 @@ pub struct SinkRequest {
     pub headers: HashMap<String, String>,
 }
 
-impl TryFrom<proto::SinkRequest> for SinkRequest {
-    type Error = Error;
-
-    fn try_from(sr: proto::SinkRequest) -> Result<Self, Self::Error> {
-        let request = sr
-            .request
-            .ok_or(SinkError(InternalError("Request is empty".to_string())))?;
-
-        Ok(Self {
-            keys: request.keys,
-            value: request.value,
-            watermark: shared::utc_from_timestamp(request.watermark),
-            event_time: shared::utc_from_timestamp(request.event_time),
-            id: request.id,
-            headers: request.headers,
-        })
+impl From<proto::sink_request::Request> for SinkRequest {
+    fn from(sr: proto::sink_request::Request) -> Self {
+        Self {
+            keys: sr.keys,
+            value: sr.value,
+            watermark: shared::utc_from_timestamp(sr.watermark),
+            event_time: shared::utc_from_timestamp(sr.event_time),
+            id: sr.id,
+            headers: sr.headers,
+        }
     }
 }
 
@@ -194,17 +188,139 @@ where
         &self,
         request: Request<Streaming<proto::SinkRequest>>,
     ) -> Result<tonic::Response<Self::SinkFnStream>, Status> {
-        let mut stream = request.into_inner();
+        let mut sink_stream = request.into_inner();
         let sink_handle = self.handler.clone();
-        let cancellation_token = self.cancellation_token.clone();
+
         let shutdown_tx = self.shutdown_tx.clone();
-        // FIXME: we should be using the batch size as the channel size
-        let (tx, rx) = mpsc::channel::<SinkRequest>(DEFAULT_CHANNEL_SIZE);
+        let cln_token = self.cancellation_token.clone();
+
         let (resp_tx, resp_rx) =
             mpsc::channel::<Result<SinkResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
-        // do the handshake first to let the client know that we are ready to receive ack requests.
-        let handshake_request = stream
+        // Perform handshake
+        self.perform_handshake(&mut sink_stream, &resp_tx).await?;
+
+        let grpc_resp_tx = resp_tx.clone();
+        let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+            loop {
+                let (tx, rx) = mpsc::channel::<SinkRequest>(DEFAULT_CHANNEL_SIZE);
+
+                // Spawn a task to process the batch
+                let sink_handle = sink_handle.clone();
+                let resp_tx = grpc_resp_tx.clone();
+                let sinker_handle = tokio::spawn(async move {
+                    let responses = sink_handle.sink(rx).await;
+                    for response in responses {
+                        resp_tx
+                            .send(Ok(SinkResponse {
+                                result: Some(response.into()),
+                                handshake: None,
+                            }))
+                            .await
+                            .expect("Sending response to channel");
+                    }
+                });
+
+                // Read messages from the stream and send them to the sink handler
+                while let Some(message) = sink_stream.message().await.map_err(|e| {
+                    SinkError(InternalError(
+                        format!("Error reading message from stream: {}", e).to_string(),
+                    ))
+                })? {
+                    let request = message.request.ok_or(SinkError(InternalError(
+                        "Invalid argument, request can't be empty".to_string(),
+                    )))?;
+
+                    tx.send(request.into()).await.map_err(|e| {
+                        SinkError(InternalError(
+                            format!("Error sending message to sink handler: {}", e).to_string(),
+                        ))
+                    })?;
+
+                    if let Some(status) = message.status {
+                        if status.eot {
+                            break;
+                        }
+                    }
+                }
+
+                // Close the sender to signal the end of the batch
+                drop(tx);
+
+                // Wait for the sink handler to finish processing the request
+                sinker_handle
+                    .await
+                    .map_err(|e| SinkError(UserDefinedError(e.to_string())))?;
+
+                // If the stream is closed, exit the loop
+                if sink_stream
+                    .message()
+                    .await
+                    .map_err(|e| {
+                        SinkError(InternalError(
+                            format!("Error reading message from stream: {}", e).to_string(),
+                        ))
+                    })?
+                    .is_none()
+                {
+                    break;
+                }
+            }
+            Ok(())
+        });
+
+        // handle errors from the sink handler
+        tokio::spawn(async move {
+            tokio::select! {
+                resp = handle => {
+                    match resp {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => {
+                            resp_tx
+                                .send(Err(Status::internal(e.to_string())))
+                                .await
+                                .expect("Sending error to response channel");
+                            shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                        }
+                        Err(e) => {
+                            resp_tx
+                                .send(Err(Status::internal(format!("Sink handler aborted: {}", e))))
+                                .await
+                                .expect("Sending error to response channel");
+                            shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                        }
+                    }
+                },
+                _ = cln_token.cancelled() => {
+                    resp_tx
+                        .send(Err(Status::cancelled("Sink handler cancelled")))
+                        .await
+                        .expect("Sending error to response channel");
+                }
+            }
+        });
+
+        Ok(tonic::Response::new(ReceiverStream::new(resp_rx)))
+    }
+
+    async fn is_ready(
+        &self,
+        _: Request<()>,
+    ) -> Result<tonic::Response<proto::ReadyResponse>, Status> {
+        Ok(tonic::Response::new(proto::ReadyResponse { ready: true }))
+    }
+}
+
+impl<T> SinkService<T>
+where
+    T: Sinker + Send + Sync + 'static,
+{
+    async fn perform_handshake(
+        &self,
+        sink_stream: &mut Streaming<proto::SinkRequest>,
+        resp_tx: &mpsc::Sender<Result<SinkResponse, Status>>,
+    ) -> Result<(), Status> {
+        let handshake_request = sink_stream
             .message()
             .await
             .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
@@ -220,80 +336,10 @@ where
                 .map_err(|e| {
                     Status::internal(format!("failed to send handshake response {}", e))
                 })?;
+            Ok(())
         } else {
-            return Err(Status::invalid_argument("Handshake not present"));
+            Err(Status::invalid_argument("Handshake not present"))
         }
-
-        let reader_shutdown_tx = shutdown_tx.clone();
-        // spawn a task to read messages from the stream and send them to the user's sink handle
-        let reader_handle = tokio::spawn(async move {
-            loop {
-                match stream.message().await {
-                    Ok(Some(message)) => {
-                        // If sending fails, it means the receiver is dropped, and we should stop the task.
-                        if let Err(e) = tx
-                            .send(message.try_into().expect("request can't be empty"))
-                            .await
-                        {
-                            tracing::error!("Failed to send message: {}", e);
-                            break;
-                        }
-                    }
-                    // If there's an error or the stream ends, break the loop to stop the task.
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::error!("Error reading message from stream: {}", e);
-                        reader_shutdown_tx
-                            .send(())
-                            .await
-                            .expect("Sending shutdown signal to gRPC server");
-                        break;
-                    }
-                }
-            }
-        });
-
-        // call the user's sink handle
-        let handle = tokio::spawn(async move { sink_handle.sink(rx).await });
-
-        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
-        // then return an error.
-        tokio::spawn(async move {
-            tokio::select! {
-                result = handle => {
-                    match result {
-                        Ok(responses) => {
-                            for response in responses {
-                                resp_tx.send(Ok(SinkResponse{
-                                    result: Some(response.into()),
-                                    handshake: None,
-                                })).await.expect("Sending response to channel");
-                            }
-                        }
-                        Err(e) => {
-                            // Send a shutdown signal to the server to do a graceful shutdown because there was
-                            // a panic in the handler.
-                            shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
-                            resp_tx.send(Err(Status::internal(SinkError(UserDefinedError(e.to_string())).to_string()))).await.expect("Sending error to response channel");
-                        }
-                    }
-                },
-
-                _ = cancellation_token.cancelled() => {
-                    // abort the reader task to stop reading messages from the stream
-                    reader_handle.abort();
-                    resp_tx.send(Err(Status::cancelled(SinkError(InternalError("Server is shutting down".to_string())).to_string()))).await.expect("Sending error to response channel");
-                }
-            }
-        });
-        Ok(tonic::Response::new(ReceiverStream::new(resp_rx)))
-    }
-
-    async fn is_ready(
-        &self,
-        _: Request<()>,
-    ) -> Result<tonic::Response<proto::ReadyResponse>, Status> {
-        Ok(tonic::Response::new(proto::ReadyResponse { ready: true }))
     }
 }
 
