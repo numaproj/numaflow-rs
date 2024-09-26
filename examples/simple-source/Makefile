@@ -10,9 +10,10 @@ update:
 
 .PHONY: image
 image: update
-	cd ../../ && docker buildx build \
+	cd ../../ && docker build \
 	-f ${DOCKER_FILE_PATH}  \
-	-t ${IMAGE_REGISTRY} .  --platform linux/amd64,linux/arm64 --push
+	-t ${IMAGE_REGISTRY} .
+	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
 
 .PHONY: clean
 clean:

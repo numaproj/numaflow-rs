@@ -178,7 +178,7 @@ where
         &self,
         request: Request<Streaming<ReadRequest>>,
     ) -> Result<Response<Self::ReadFnStream>, Status> {
-        let mut sr = request.into_inner();
+        let mut req_stream = request.into_inner();
         // we have to call the handler over and over for each ReadRequest
         let handler_fn = Arc::clone(&self.handler);
 
@@ -191,26 +191,8 @@ where
         let cln_token = self.cancellation_token.clone();
 
         // do the handshake first to let the client know that we are ready to receive read requests.
-        let handshake_request = sr
-            .message()
-            .await
-            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
-
-        if let Some(handshake) = handshake_request.handshake {
-            grpc_tx
-                .send(Ok(ReadResponse {
-                    result: None,
-                    status: None,
-                    handshake: Some(handshake),
-                }))
-                .await
-                .map_err(|e| {
-                    Status::internal(format!("failed to send handshake response {}", e))
-                })?;
-        } else {
-            return Err(Status::invalid_argument("Handshake not present"));
-        }
+        self.perform_read_handshake(&mut req_stream, &grpc_tx)
+            .await?;
 
         // this is the top-level stream consumer and this task will only exit when stream is closed (which
         // will happen when server and client are shutting down).
@@ -219,7 +201,7 @@ where
                 tokio::select! {
                     // for each ReadRequest message, the handler will be called and a batch of messages
                     // will be sent over to the client.
-                    read_request = sr.message() => {
+                    read_request = req_stream.message() => {
                         let read_request = read_request
                             .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
                             .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
@@ -277,27 +259,9 @@ where
         let handler_fn = Arc::clone(&self.handler);
 
         // do the handshake first to let the client know that we are ready to receive ack requests.
-        let handshake_request = ack_stream
-            .message()
-            .await
-            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+        self.perform_ack_handshake(&mut ack_stream, &ack_tx).await?;
 
         let ack_resp_tx = ack_tx.clone();
-        if let Some(handshake) = handshake_request.handshake {
-            ack_resp_tx
-                .send(Ok(AckResponse {
-                    result: None,
-                    handshake: Some(handshake),
-                }))
-                .await
-                .map_err(|e| {
-                    Status::internal(format!("failed to send handshake response {}", e))
-                })?;
-        } else {
-            return Err(Status::invalid_argument("Handshake not present"));
-        }
-
         let cln_token = self.cancellation_token.clone();
         let grpc_read_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             loop {
@@ -312,10 +276,10 @@ where
                             .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         let request = ack_request.request
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request is empty".to_string())))?;
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
                         let offset = request.offset
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset is empty".to_string())))?;
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset can't be empty".to_string())))?;
 
                         handler_fn
                             .ack(Offset {
@@ -387,6 +351,68 @@ where
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
         Ok(Response::new(proto::ReadyResponse { ready: true }))
+    }
+}
+
+impl<T> SourceService<T>
+where
+    T: Sourcer + Send + Sync + 'static,
+{
+    // performs the read handshake with the client
+    async fn perform_read_handshake(
+        &self,
+        read_stream: &mut Streaming<ReadRequest>,
+        resp_tx: &Sender<Result<ReadResponse, Status>>,
+    ) -> Result<(), Status> {
+        let handshake_request = read_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("read handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("read stream closed before handshake"))?;
+
+        if let Some(handshake) = handshake_request.handshake {
+            resp_tx
+                .send(Ok(ReadResponse {
+                    result: None,
+                    status: None,
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send read handshake response {}", e))
+                })?;
+            Ok(())
+        } else {
+            Err(Status::invalid_argument("Read handshake not present"))
+        }
+    }
+
+    // performs the ack handshake with the client
+    async fn perform_ack_handshake(
+        &self,
+        ack_stream: &mut Streaming<AckRequest>,
+        resp_tx: &Sender<Result<AckResponse, Status>>,
+    ) -> Result<(), Status> {
+        let handshake_request = ack_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("ack handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("ack stream closed before handshake"))?;
+
+        if let Some(handshake) = handshake_request.handshake {
+            resp_tx
+                .send(Ok(AckResponse {
+                    result: None,
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send ack handshake response {}", e))
+                })?;
+            Ok(())
+        } else {
+            Err(Status::invalid_argument("Ack handshake not present"))
+        }
     }
 }
 
