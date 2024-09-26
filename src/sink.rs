@@ -245,7 +245,7 @@ where
         Ok(())
     }
 
-    /// processes a batch of messages from the client, sends them to the sink handler and sends the 
+    /// processes a batch of messages from the client, sends them to the sink handler and sends the
     /// responses back to the client batches are separated by an EOT message
     async fn process_sink_batch(
         sink_handle: Arc<T>,
@@ -256,7 +256,7 @@ where
         let resp_tx = grpc_resp_tx.clone();
         let sink_handle = sink_handle.clone();
 
-        // spawn the UDF 
+        // spawn the UDF
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
             for response in responses {
@@ -275,8 +275,8 @@ where
                 Ok(Some(m)) => m,
                 Ok(None) => {
                     info!("global bidi stream ended");
-                    return Ok(true) // bidi stream ended
-                },
+                    return Ok(true); // bidi stream ended
+                }
                 Err(e) => {
                     return Err(SinkError(InternalError(format!(
                         "Error reading message from stream: {}",
@@ -314,7 +314,7 @@ where
         sinker_handle
             .await
             .map_err(|e| SinkError(UserDefinedError(e.to_string())))?;
-        
+
         Ok(false)
     }
 
