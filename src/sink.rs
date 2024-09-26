@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
+use tracing::{debug, info};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -224,7 +225,7 @@ impl<T> SinkService<T>
 where
     T: Sinker + Send + Sync + 'static,
 {
-    // processes the stream of requests from the client
+    /// processes the stream of requests from the client
     async fn process_sink_stream(
         sink_handle: Arc<T>,
         mut sink_stream: Streaming<sink_pb::SinkRequest>,
@@ -244,8 +245,8 @@ where
         Ok(())
     }
 
-    // processes a batch of messages from the client, sends them to the sink handler and sends the responses back to the client
-    // batches are separated by an EOT message
+    /// processes a batch of messages from the client, sends them to the sink handler and sends the 
+    /// responses back to the client batches are separated by an EOT message
     async fn process_sink_batch(
         sink_handle: Arc<T>,
         sink_stream: &mut Streaming<sink_pb::SinkRequest>,
@@ -255,6 +256,7 @@ where
         let resp_tx = grpc_resp_tx.clone();
         let sink_handle = sink_handle.clone();
 
+        // spawn the UDF 
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
             for response in responses {
@@ -271,7 +273,10 @@ where
         loop {
             let message = match sink_stream.message().await {
                 Ok(Some(m)) => m,
-                Ok(None) => return Ok(true), // stream ended
+                Ok(None) => {
+                    info!("global bidi stream ended");
+                    return Ok(true) // bidi stream ended
+                },
                 Err(e) => {
                     return Err(SinkError(InternalError(format!(
                         "Error reading message from stream: {}",
@@ -280,16 +285,20 @@ where
                 }
             };
 
+            // we are done with this batch because eot=true
             if message.status.map_or(false, |status| status.eot) {
+                debug!("Batch Ended, received an EOT message");
                 break;
             }
 
+            // message.request cannot be none
             let request = message.request.ok_or_else(|| {
                 SinkError(InternalError(
-                    "Invalid argument, request can't be empty".to_string(),
+                    "Invalid argument, request can't be None".to_string(),
                 ))
             })?;
 
+            // write to the UDF's tx
             tx.send(request.into()).await.map_err(|e| {
                 SinkError(InternalError(format!(
                     "Error sending message to sink handler: {}",
@@ -301,13 +310,15 @@ where
         // drop the sender to signal the sink handler that the batch has ended
         drop(tx);
 
+        // wait for UDF task to return
         sinker_handle
             .await
             .map_err(|e| SinkError(UserDefinedError(e.to_string())))?;
+        
         Ok(false)
     }
 
-    // handles errors from the sink handler and sends them to the client via the response channel
+    /// handles errors from the sink handler and sends them to the client via the response channel
     async fn handle_sink_errors(
         handle: JoinHandle<Result<(), Error>>,
         resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
