@@ -2,7 +2,7 @@ use crate::error::Error;
 use crate::error::Error::SinkError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
-use crate::sink::proto::SinkResponse;
+use crate::sink::sink_pb::SinkResponse;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
 /// Numaflow Sink Proto definitions.
-pub mod proto {
+pub mod sink_pb {
     tonic::include_proto!("sink.v1");
 }
 
@@ -102,8 +102,8 @@ pub struct SinkRequest {
     pub headers: HashMap<String, String>,
 }
 
-impl From<proto::sink_request::Request> for SinkRequest {
-    fn from(sr: proto::sink_request::Request) -> Self {
+impl From<sink_pb::sink_request::Request> for SinkRequest {
+    fn from(sr: sink_pb::sink_request::Request) -> Self {
         Self {
             keys: sr.keys,
             value: sr.value,
@@ -161,16 +161,16 @@ impl Response {
     }
 }
 
-impl From<Response> for proto::sink_response::Result {
+impl From<Response> for sink_pb::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
             status: if r.fallback {
-                proto::Status::Fallback as i32
+                sink_pb::Status::Fallback as i32
             } else if r.success {
-                proto::Status::Success as i32
+                sink_pb::Status::Success as i32
             } else {
-                proto::Status::Failure as i32
+                sink_pb::Status::Failure as i32
             },
             err_msg: r.err.unwrap_or_default(),
         }
@@ -178,7 +178,7 @@ impl From<Response> for proto::sink_response::Result {
 }
 
 #[tonic::async_trait]
-impl<T> proto::sink_server::Sink for SinkService<T>
+impl<T> sink_pb::sink_server::Sink for SinkService<T>
 where
     T: Sinker + Send + Sync + 'static,
 {
@@ -186,7 +186,7 @@ where
 
     async fn sink_fn(
         &self,
-        request: Request<Streaming<proto::SinkRequest>>,
+        request: Request<Streaming<sink_pb::SinkRequest>>,
     ) -> Result<tonic::Response<Self::SinkFnStream>, Status> {
         let mut sink_stream = request.into_inner();
         let sink_handle = self.handler.clone();
@@ -215,8 +215,8 @@ where
     async fn is_ready(
         &self,
         _: Request<()>,
-    ) -> Result<tonic::Response<proto::ReadyResponse>, Status> {
-        Ok(tonic::Response::new(proto::ReadyResponse { ready: true }))
+    ) -> Result<tonic::Response<sink_pb::ReadyResponse>, Status> {
+        Ok(tonic::Response::new(sink_pb::ReadyResponse { ready: true }))
     }
 }
 
@@ -227,7 +227,7 @@ where
     // processes the stream of requests from the client
     async fn process_sink_stream(
         sink_handle: Arc<T>,
-        mut sink_stream: Streaming<proto::SinkRequest>,
+        mut sink_stream: Streaming<sink_pb::SinkRequest>,
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<(), Error> {
         loop {
@@ -248,7 +248,7 @@ where
     // batches are separated by an EOT message
     async fn process_sink_batch(
         sink_handle: Arc<T>,
-        sink_stream: &mut Streaming<proto::SinkRequest>,
+        sink_stream: &mut Streaming<sink_pb::SinkRequest>,
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<bool, Error> {
         let (tx, rx) = mpsc::channel::<SinkRequest>(DEFAULT_CHANNEL_SIZE);
@@ -346,7 +346,7 @@ where
     // performs handshake with the client
     async fn perform_handshake(
         &self,
-        sink_stream: &mut Streaming<proto::SinkRequest>,
+        sink_stream: &mut Streaming<sink_pb::SinkRequest>,
         resp_tx: &mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<(), Status> {
         let handshake_request = sink_stream
@@ -458,7 +458,7 @@ impl<T> Server<T> {
             cancellation_token: cln_token.clone(),
         };
 
-        let svc = proto::sink_server::SinkServer::new(svc)
+        let svc = sink_pb::sink_server::SinkServer::new(svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
@@ -504,9 +504,9 @@ mod tests {
     use tower::service_fn;
 
     use crate::sink;
-    use crate::sink::proto::sink_client::SinkClient;
-    use crate::sink::proto::sink_request::{Request, Status};
-    use crate::sink::proto::Handshake;
+    use crate::sink::sink_pb::sink_client::SinkClient;
+    use crate::sink::sink_pb::sink_request::{Request, Status};
+    use crate::sink::sink_pb::Handshake;
 
     #[tokio::test]
     async fn sink_server() -> Result<(), Box<dyn Error>> {
@@ -565,12 +565,12 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = sink::proto::SinkRequest {
+        let handshake_request = sink::sink_pb::SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
         };
-        let request = sink::proto::SinkRequest {
+        let request = sink::sink_pb::SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -583,13 +583,13 @@ mod tests {
             handshake: None,
         };
 
-        let eot_request = sink::proto::SinkRequest {
+        let eot_request = sink::sink_pb::SinkRequest {
             request: None,
             status: Some(Status { eot: true }),
             handshake: None,
         };
 
-        let request_two = sink::proto::SinkRequest {
+        let request_two = sink::sink_pb::SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -694,7 +694,7 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = sink::proto::SinkRequest {
+        let handshake_request = sink::sink_pb::SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
@@ -703,7 +703,7 @@ mod tests {
         let mut requests = vec![handshake_request];
 
         for i in 0..10 {
-            let request = sink::proto::SinkRequest {
+            let request = sink::sink_pb::SinkRequest {
                 request: Some(Request {
                     keys: vec!["first".into(), "second".into()],
                     value: format!("hello {}", i).into(),
@@ -718,7 +718,7 @@ mod tests {
             requests.push(request);
         }
 
-        requests.push(sink::proto::SinkRequest {
+        requests.push(sink::sink_pb::SinkRequest {
             request: None,
             status: Some(Status { eot: true }),
             handshake: None,
