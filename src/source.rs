@@ -276,10 +276,10 @@ where
                             .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         let request = ack_request.request
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request is empty".to_string())))?;
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
                         let offset = request.offset
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset is empty".to_string())))?;
+                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset can't be empty".to_string())))?;
 
                         handler_fn
                             .ack(Offset {
