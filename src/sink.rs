@@ -231,7 +231,6 @@ where
         mut sink_stream: Streaming<sink_pb::SinkRequest>,
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<(), Error> {
-
         // loop until the global stream has been shutdown.
         loop {
             // for every batch, we need to read from the stream. The end-of-batch is
@@ -241,7 +240,7 @@ where
                 &mut sink_stream,
                 grpc_resp_tx.clone(),
             )
-                .await?;
+            .await?;
 
             if stream_ended {
                 // shutting down, hence exiting the loop
