@@ -1,18 +1,20 @@
-use crate::error::Error::{self, SourceTransformerError};
-use crate::error::ErrorKind;
-use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp};
-use chrono::{DateTime, Utc};
-use proto::SourceTransformResponse;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use proto::SourceTransformResponse;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
+
+use crate::error::Error::{self, SourceTransformerError};
+use crate::error::ErrorKind;
+use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
@@ -118,7 +120,7 @@ impl Message {
     /// # Arguments
     ///
     /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is dropped,
-    ///  it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    ///   it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
     ///
     /// # Examples
     ///
@@ -284,8 +286,8 @@ where
                         };
 
                         let handler = handler.clone();
-                        // let messages = handler.transform(handler_input).await;
                         let udf_tranform_task = tokio::spawn(async move { handler.transform(handler_input).await });
+
                         let messages = tokio::select! {
                             result = udf_tranform_task => {
                                 match result {
@@ -300,6 +302,7 @@ where
                                 }
                             }
                         };
+
                         tx.send(Ok(SourceTransformResponse{
                             results:  messages.into_iter().map(|msg| msg.into()).collect(),
                             id: message_id,
@@ -462,9 +465,10 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::sourcetransform;
-    use crate::sourcetransform::proto;
-    use crate::sourcetransform::proto::source_transform_client::SourceTransformClient;
+    use crate::sourcetransform::{
+        self,
+        proto::{self, source_transform_client::SourceTransformClient},
+    };
 
     #[tokio::test]
     async fn source_transformer_server() -> Result<(), Box<dyn Error>> {
