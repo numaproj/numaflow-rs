@@ -279,14 +279,14 @@ where
         let (error_tx, mut error_rx) = mpsc::channel::<Error>(1);
 
         let handle: JoinHandle<Result<(), Error>> = tokio::spawn({
-            let cancellation_token = self.cancellation_token.clone();
+            let cancellation_token = self.cancellation_token.child_token();
             let tx = stream_response_tx.clone();
             let error_tx = error_tx.clone();
             async move {
                 loop {
                     tokio::select! {
                         transform_request = stream.message() => {
-                            tokio::spawn(handle_request(handler.clone(), transform_request, tx.clone(), error_tx.clone()));
+                            tokio::spawn(handle_request(handler.clone(), transform_request, tx.clone(), error_tx.clone(), cancellation_token.child_token()));
                         }
                         _ = cancellation_token.cancelled() => {
                             info!("Cancellation token is cancelled, shutting down");
@@ -298,24 +298,26 @@ where
             }
         });
 
-        let shutdown_tx = self.shutdown_tx.clone();
-        tokio::spawn(async move {
-            let err = tokio::select! {
-                _ = handle => return,
-                err = error_rx.recv() => err,
-            };
-            let Some(err) = err else {
-                return;
-            };
-            error!("Shutting down gRPC channel: {err:?}");
-            stream_response_tx
-                .send(Err(Status::internal(err.to_string())))
-                .await
-                .expect("Sending error message to gRPC response channel");
-            shutdown_tx
-                .send(())
-                .await
-                .expect("Writing to shutdown channel");
+        tokio::spawn({
+            let shutdown_tx = self.shutdown_tx.clone();
+            async move {
+                let err = tokio::select! {
+                    _ = handle => return,
+                    err = error_rx.recv() => err,
+                };
+                let Some(err) = err else {
+                    return;
+                };
+                error!("Shutting down gRPC channel: {err:?}");
+                stream_response_tx
+                    .send(Err(Status::internal(err.to_string())))
+                    .await
+                    .expect("Sending error message to gRPC response channel");
+                shutdown_tx
+                    .send(())
+                    .await
+                    .expect("Writing to shutdown channel");
+            }
         });
 
         Ok(Response::new(ReceiverStream::new(stream_response_rx)))
@@ -331,6 +333,7 @@ async fn handle_request<T>(
     transform_request: Result<Option<proto::SourceTransformRequest>, Status>,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
 ) where
     T: SourceTransformer + Send + Sync + 'static,
 {
@@ -369,38 +372,60 @@ async fn handle_request<T>(
 
     let message_id = request.id.clone();
 
-    let handler = handler.clone();
-    let udf_tranform_task = tokio::spawn(async move { handler.transform(request.into()).await });
-
-    let messages = tokio::select! {
-        result = udf_tranform_task => {
-            match result {
-                Ok(messages) => messages,
-                Err(e) => {
-                    tracing::error!("Failed to run transform function: {e:?}");
-                    error_tx.send(SourceTransformerError(ErrorKind::UserDefinedError("panic in transform UDF".to_string()))).await.expect("Sending error on channel");
-                    return;
-                }
+    // A new task is spawned to catch the panic
+    let udf_tranform_task = tokio::spawn({
+        let handler = handler.clone();
+        let token = token.child_token();
+        async move {
+            tokio::select! {
+                _ = token.cancelled() => None,
+                messages = handler.transform(request.into()) => Some(messages),
             }
+        }
+    });
+
+    let messages = match udf_tranform_task.await {
+        Ok(messages) => messages,
+        Err(e) => {
+            tracing::error!("Failed to run transform function: {e:?}");
+            error_tx
+                .send(SourceTransformerError(ErrorKind::UserDefinedError(
+                    "panic in transform UDF".to_string(),
+                )))
+                .await
+                .expect("Sending error on channel");
+            return;
         }
     };
 
-    let stream_response_result = stream_response_tx
-        .send(Ok(SourceTransformResponse {
-            results: messages.into_iter().map(|msg| msg.into()).collect(),
-            id: message_id,
-            handshake: None,
-        }))
-        .await;
+    let Some(messages) = messages else {
+        // CancellationToken is cancelled
+        return;
+    };
+
+    let send_response_fut = stream_response_tx.send(Ok(SourceTransformResponse {
+        results: messages.into_iter().map(|msg| msg.into()).collect(),
+        id: message_id,
+        handshake: None,
+    }));
+
+    let stream_response_result = tokio::select! {
+        result = send_response_fut => result,
+        _ = token.cancelled() => return,
+    };
+
     let Err(e) = stream_response_result else {
         return;
     };
-    error_tx
-        .send(SourceTransformerError(ErrorKind::InternalError(format!(
-            "sending source transform response over gRPC stream: {e:?}"
-        ))))
-        .await
-        .expect("Sending error on channel");
+
+    let send_err_fut = error_tx.send(SourceTransformerError(ErrorKind::InternalError(format!(
+        "sending source transform response over gRPC stream: {e:?}"
+    ))));
+
+    tokio::select! {
+        err = send_err_fut => err.expect("Sending error on channel"),
+        _ = token.cancelled() => (),
+    }
 }
 
 /// gRPC server to start a sourcetransform service
