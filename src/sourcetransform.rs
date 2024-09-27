@@ -278,6 +278,8 @@ where
 
         let (error_tx, mut error_rx) = mpsc::channel::<Error>(1);
 
+        // Spawn a task to continuously receive messages from the client over the gRPC stream.
+        // For each message received from the stream, a new task is spawned to call the trasnform function and send the response back to the client
         let handle: JoinHandle<()> = tokio::spawn({
             let cancellation_token = self.cancellation_token.child_token();
             let tx = stream_response_tx.clone();
@@ -345,6 +347,7 @@ where
     }
 }
 
+// Calls the user implemented transform function on the request.
 async fn handle_request<T>(
     handler: Arc<T>,
     transform_request: proto::SourceTransformRequest,
