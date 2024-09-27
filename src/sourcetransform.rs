@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
@@ -278,7 +278,7 @@ where
 
         let (error_tx, mut error_rx) = mpsc::channel::<Error>(1);
 
-        let handle: JoinHandle<Result<(), Error>> = tokio::spawn({
+        let handle: JoinHandle<()> = tokio::spawn({
             let cancellation_token = self.cancellation_token.child_token();
             let tx = stream_response_tx.clone();
             let error_tx = error_tx.clone();
@@ -286,7 +286,19 @@ where
                 loop {
                     tokio::select! {
                         transform_request = stream.message() => {
-                            tokio::spawn(handle_request(handler.clone(), transform_request, tx.clone(), error_tx.clone(), cancellation_token.child_token()));
+                            let transform_request = match transform_request {
+                                Ok(None) => return,
+                                Ok(Some(val)) => val,
+                                Err(val) => {
+                                    warn!("Received gRPC error from sender: {val:?}");
+                                    return;
+                                }
+                            };
+                            let child_token = cancellation_token.child_token();
+                            let handler = handler.clone();
+                            let error_tx =error_tx.clone();
+                            let tx = tx.clone();
+                            tokio::spawn(handle_request(handler, transform_request, tx, error_tx, child_token));
                         }
                         _ = cancellation_token.cancelled() => {
                             info!("Cancellation token is cancelled, shutting down");
@@ -294,17 +306,22 @@ where
                         }
                     }
                 }
-                Ok(())
             }
         });
 
         tokio::spawn({
             let shutdown_tx = self.shutdown_tx.clone();
+            let token = self.cancellation_token.clone();
             async move {
                 let err = tokio::select! {
-                    _ = handle => return,
+                    _ = handle => {
+                        token.cancel();
+                        return;
+                    },
                     err = error_rx.recv() => err,
                 };
+
+                token.cancel();
                 let Some(err) = err else {
                     return;
                 };
@@ -330,36 +347,13 @@ where
 
 async fn handle_request<T>(
     handler: Arc<T>,
-    transform_request: Result<Option<proto::SourceTransformRequest>, Status>,
+    transform_request: proto::SourceTransformRequest,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
     token: CancellationToken,
 ) where
     T: SourceTransformer + Send + Sync + 'static,
 {
-    let transform_request = match transform_request {
-        Ok(transform_request) => transform_request,
-        Err(e) => {
-            error_tx
-                .send(SourceTransformerError(ErrorKind::InternalError(
-                    e.to_string(),
-                )))
-                .await
-                .expect("Sending eror on channel");
-            return;
-        }
-    };
-
-    let Some(transform_request) = transform_request else {
-        error_tx
-            .send(SourceTransformerError(ErrorKind::InternalError(
-                "source transform request can not be empty".to_string(),
-            )))
-            .await
-            .expect("Sending eror on channel");
-        return;
-    };
-
     let Some(request) = transform_request.request else {
         error_tx
             .send(SourceTransformerError(ErrorKind::InternalError(
