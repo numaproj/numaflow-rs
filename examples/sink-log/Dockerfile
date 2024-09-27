@@ -11,7 +11,7 @@ WORKDIR /numaflow-rs/examples/sink-log
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm AS simple-source
+FROM debian:bookworm AS sink-log
 
 # copy the build artifact from the build stage
 COPY --from=build /numaflow-rs/examples/sink-log/target/release/server .
