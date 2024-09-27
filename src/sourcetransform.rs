@@ -225,6 +225,18 @@ impl From<Message> for proto::source_transform_response::Result {
     }
 }
 
+impl From<proto::source_transform_request::Request> for SourceTransformRequest {
+    fn from(request: proto::source_transform_request::Request) -> Self {
+        SourceTransformRequest {
+            keys: request.keys,
+            value: request.value,
+            watermark: utc_from_timestamp(request.watermark),
+            eventtime: utc_from_timestamp(request.event_time),
+            headers: request.headers,
+        }
+    }
+}
+
 #[async_trait]
 impl<T> proto::source_transform_server::SourceTransform for SourceTransformerService<T>
 where
@@ -239,7 +251,7 @@ where
         let mut stream = request.into_inner();
         let handler = Arc::clone(&self.handler);
 
-        let (tx, rx) =
+        let (stream_response_tx, stream_response_rx) =
             mpsc::channel::<Result<SourceTransformResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
         // do the handshake first to let the client know that we are ready to receive read requests.
@@ -250,65 +262,31 @@ where
             .ok_or_else(|| Status::internal("stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
-            tx.send(Ok(SourceTransformResponse {
-                results: vec![],
-                id: "".to_string(),
-                handshake: Some(handshake),
-            }))
-            .await
-            .map_err(|e| Status::internal(format!("failed to send handshake response {}", e)))?;
+            stream_response_tx
+                .send(Ok(SourceTransformResponse {
+                    results: vec![],
+                    id: "".to_string(),
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send handshake response {}", e))
+                })?;
         } else {
             return Err(Status::invalid_argument("Handshake not present"));
         }
 
+        let (error_tx, mut error_rx) = mpsc::channel::<Error>(1);
+
         let handle: JoinHandle<Result<(), Error>> = tokio::spawn({
-            let shutdown_tx = self.shutdown_tx.clone();
             let cancellation_token = self.cancellation_token.clone();
-            let tx = tx.clone();
+            let tx = stream_response_tx.clone();
+            let error_tx = error_tx.clone();
             async move {
                 loop {
                     tokio::select! {
                         transform_request = stream.message() => {
-                            let transform_request = transform_request.map_err(|e| SourceTransformerError(ErrorKind::InternalError(e.to_string())))?
-                            .ok_or_else(||SourceTransformerError(ErrorKind::InternalError("Stream closed".to_string())))?;
-
-                        let Some(request) = transform_request.request else {
-                            return Err(SourceTransformerError(ErrorKind::InternalError("Transform request can not be none".to_string())));
-                        };
-
-                        let message_id = request.id.clone();
-                        let handler_input = SourceTransformRequest{
-                            keys: request.keys,
-                            value: request.value,
-                            watermark: utc_from_timestamp(request.watermark),
-                            eventtime: utc_from_timestamp(request.event_time),
-                            headers: request.headers
-                        };
-
-                        let handler = handler.clone();
-                        let udf_tranform_task = tokio::spawn(async move { handler.transform(handler_input).await });
-
-                        let messages = tokio::select! {
-                            result = udf_tranform_task => {
-                                match result {
-                                    Ok(messages) => messages,
-                                    Err(e) => {
-                                        tracing::error!("Failed to run transform function: {e:?}");
-                                         // Send a shutdown signal to the server to do a graceful shutdown because there was
-                                        // a panic in the handler.
-                                        shutdown_tx.send(()).await.expect("Sending shutdown signal to gRPC server");
-                                        return Err(SourceTransformerError(ErrorKind::UserDefinedError("panic in transform UDF".to_string())));
-                                    }
-                                }
-                            }
-                        };
-
-                        tx.send(Ok(SourceTransformResponse{
-                            results:  messages.into_iter().map(|msg| msg.into()).collect(),
-                            id: message_id,
-                            handshake: None,
-                        })).await.expect("sending messages to the client over gRPC channel");
-
+                            tokio::spawn(handle_request(handler.clone(), transform_request, tx.clone(), error_tx.clone()));
                         }
                         _ = cancellation_token.cancelled() => {
                             info!("Cancellation token is cancelled, shutting down");
@@ -322,11 +300,16 @@ where
 
         let shutdown_tx = self.shutdown_tx.clone();
         tokio::spawn(async move {
-            let Err(e) = handle.await else {
+            let err = tokio::select! {
+                _ = handle => return,
+                err = error_rx.recv() => err,
+            };
+            let Some(err) = err else {
                 return;
             };
-            error!("Shutting down gRPC channel: {e:?}");
-            tx.send(Err(Status::internal(e.to_string())))
+            error!("Shutting down gRPC channel: {err:?}");
+            stream_response_tx
+                .send(Err(Status::internal(err.to_string())))
                 .await
                 .expect("Sending error message to gRPC response channel");
             shutdown_tx
@@ -335,12 +318,89 @@ where
                 .expect("Writing to shutdown channel");
         });
 
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(Response::new(ReceiverStream::new(stream_response_rx)))
     }
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
         Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
+}
+
+async fn handle_request<T>(
+    handler: Arc<T>,
+    transform_request: Result<Option<proto::SourceTransformRequest>, Status>,
+    stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+) where
+    T: SourceTransformer + Send + Sync + 'static,
+{
+    let transform_request = match transform_request {
+        Ok(transform_request) => transform_request,
+        Err(e) => {
+            error_tx
+                .send(SourceTransformerError(ErrorKind::InternalError(
+                    e.to_string(),
+                )))
+                .await
+                .expect("Sending eror on channel");
+            return;
+        }
+    };
+
+    let Some(transform_request) = transform_request else {
+        error_tx
+            .send(SourceTransformerError(ErrorKind::InternalError(
+                "source transform request can not be empty".to_string(),
+            )))
+            .await
+            .expect("Sending eror on channel");
+        return;
+    };
+
+    let Some(request) = transform_request.request else {
+        error_tx
+            .send(SourceTransformerError(ErrorKind::InternalError(
+                "Transform request can not be none".to_string(),
+            )))
+            .await
+            .expect("Sending error on channel");
+        return;
+    };
+
+    let message_id = request.id.clone();
+
+    let handler = handler.clone();
+    let udf_tranform_task = tokio::spawn(async move { handler.transform(request.into()).await });
+
+    let messages = tokio::select! {
+        result = udf_tranform_task => {
+            match result {
+                Ok(messages) => messages,
+                Err(e) => {
+                    tracing::error!("Failed to run transform function: {e:?}");
+                    error_tx.send(SourceTransformerError(ErrorKind::UserDefinedError("panic in transform UDF".to_string()))).await.expect("Sending error on channel");
+                    return;
+                }
+            }
+        }
+    };
+
+    let stream_response_result = stream_response_tx
+        .send(Ok(SourceTransformResponse {
+            results: messages.into_iter().map(|msg| msg.into()).collect(),
+            id: message_id,
+            handshake: None,
+        }))
+        .await;
+    let Err(e) = stream_response_result else {
+        return;
+    };
+    error_tx
+        .send(SourceTransformerError(ErrorKind::InternalError(format!(
+            "sending source transform response over gRPC stream: {e:?}"
+        ))))
+        .await
+        .expect("Sending error on channel");
 }
 
 /// gRPC server to start a sourcetransform service
