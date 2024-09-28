@@ -276,68 +276,25 @@ where
             return Err(Status::invalid_argument("Handshake not present"));
         }
 
-        let (error_tx, mut error_rx) = mpsc::channel::<Error>(1);
+        let (error_tx, error_rx) = mpsc::channel::<Error>(1);
 
         // Spawn a task to continuously receive messages from the client over the gRPC stream.
         // For each message received from the stream, a new task is spawned to call the trasnform function and send the response back to the client
-        let handle: JoinHandle<()> = tokio::spawn({
-            let cancellation_token = self.cancellation_token.child_token();
-            let tx = stream_response_tx.clone();
-            let error_tx = error_tx.clone();
-            async move {
-                loop {
-                    tokio::select! {
-                        transform_request = stream.message() => {
-                            let transform_request = match transform_request {
-                                Ok(None) => return,
-                                Ok(Some(val)) => val,
-                                Err(val) => {
-                                    warn!("Received gRPC error from sender: {val:?}");
-                                    return;
-                                }
-                            };
-                            let child_token = cancellation_token.child_token();
-                            let handler = handler.clone();
-                            let error_tx =error_tx.clone();
-                            let tx = tx.clone();
-                            tokio::spawn(handle_request(handler, transform_request, tx, error_tx, child_token));
-                        }
-                        _ = cancellation_token.cancelled() => {
-                            info!("Cancellation token is cancelled, shutting down");
-                            break;
-                        }
-                    }
-                }
-            }
-        });
+        let handle: JoinHandle<()> = tokio::spawn(handle_stream_requests(
+            handler.clone(),
+            stream,
+            stream_response_tx.clone(),
+            error_tx.clone(),
+            self.cancellation_token.child_token(),
+        ));
 
-        tokio::spawn({
-            let shutdown_tx = self.shutdown_tx.clone();
-            let token = self.cancellation_token.clone();
-            async move {
-                let err = tokio::select! {
-                    _ = handle => {
-                        token.cancel();
-                        return;
-                    },
-                    err = error_rx.recv() => err,
-                };
-
-                token.cancel();
-                let Some(err) = err else {
-                    return;
-                };
-                error!("Shutting down gRPC channel: {err:?}");
-                stream_response_tx
-                    .send(Err(Status::internal(err.to_string())))
-                    .await
-                    .expect("Sending error message to gRPC response channel");
-                shutdown_tx
-                    .send(())
-                    .await
-                    .expect("Writing to shutdown channel");
-            }
-        });
+        tokio::spawn(manage_gprc_stream(
+            handle,
+            self.cancellation_token.clone(),
+            stream_response_tx,
+            error_rx,
+            self.shutdown_tx.clone(),
+        ));
 
         Ok(Response::new(ReceiverStream::new(stream_response_rx)))
     }
@@ -347,8 +304,98 @@ where
     }
 }
 
-// Calls the user implemented transform function on the request.
+// shutdown the gRPC server on first error
+async fn manage_gprc_stream(
+    request_handler: JoinHandle<()>,
+    token: CancellationToken,
+    stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
+    mut error_rx: mpsc::Receiver<Error>,
+    server_shutdown_tx: mpsc::Sender<()>,
+) {
+    let err = tokio::select! {
+        _ = request_handler => {
+            token.cancel();
+            return;
+        },
+        err = error_rx.recv() => err,
+    };
+
+    token.cancel();
+    let Some(err) = err else {
+        return;
+    };
+    error!("Shutting down gRPC channel: {err:?}");
+    stream_response_tx
+        .send(Err(Status::internal(err.to_string())))
+        .await
+        .expect("Sending error message to gRPC response channel");
+    server_shutdown_tx
+        .send(())
+        .await
+        .expect("Writing to shutdown channel");
+}
+
+// Receives messages from the stream.
+// For each message received from the stream, a new task is spawned to call the transform function and send the response back to the client
+async fn handle_stream_requests<T>(
+    handler: Arc<T>,
+    mut stream: Streaming<proto::SourceTransformRequest>,
+    stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
+) where
+    T: SourceTransformer + Send + Sync + 'static,
+{
+    let mut stream_open = true;
+    while stream_open {
+        stream_open = tokio::select! {
+            transform_request = stream.message() => handle_request(
+                handler.clone(),
+                transform_request,
+                stream_response_tx.clone(),
+                error_tx.clone(),
+                token.clone(),
+            ).await,
+            _ = token.cancelled() => {
+                info!("Cancellation token is cancelled, shutting down");
+                break;
+            }
+        }
+    }
+}
+
+// The return boolean value indicates whether a task was created to handle the request.
+// If the return value is false, either client sent an error gRPC status or the stream was closed.
 async fn handle_request<T>(
+    handler: Arc<T>,
+    transform_request: Result<Option<proto::SourceTransformRequest>, Status>,
+    stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
+) -> bool
+where
+    T: SourceTransformer + Send + Sync + 'static,
+{
+    let transform_request = match transform_request {
+        Ok(None) => return false,
+        Ok(Some(val)) => val,
+        Err(val) => {
+            warn!("Received gRPC error from sender: {val:?}");
+            return false;
+        }
+    };
+    tokio::spawn(run_transform(
+        handler,
+        transform_request,
+        stream_response_tx,
+        error_tx,
+        token,
+    ));
+    true
+}
+
+// Calls the user implemented transform function on the request.
+async fn run_transform<T>(
     handler: Arc<T>,
     transform_request: proto::SourceTransformRequest,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
