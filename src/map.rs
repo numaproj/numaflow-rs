@@ -1,7 +1,7 @@
 use crate::error::Error::MapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
-use crate::shared::shutdown_signal;
+use crate::shared::{shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
@@ -309,6 +309,8 @@ impl<T> Server<T> {
         T: Mapper + Send + Sync + 'static,
     {
         let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the map container
+        info.set_minimum_numaflow_version(shared::MinimumNumaflowVersion.get(&ContainerType::Map).copied().unwrap_or_default());
         // update the info json metadata field, and add the map mode key value pair
         info.set_metadata(shared::MAP_MODE_KEY, shared::UNARY_MAP);
 

@@ -14,6 +14,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
+use crate::shared::ContainerType;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -466,10 +467,13 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
+        let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the sink container
+        info.set_minimum_numaflow_version(shared::MinimumNumaflowVersion.get(&ContainerType::Sink).copied().unwrap_or_default());
         let listener = shared::create_listener_stream(
             &self.sock_addr,
             &self.server_info_file,
-            shared::ServerInfo::default(),
+            info,
         )?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
