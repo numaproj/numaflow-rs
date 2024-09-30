@@ -254,7 +254,7 @@ where
         let (stream_response_tx, stream_response_rx) =
             mpsc::channel::<Result<SourceTransformResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
-        // do the handshake first to let the client know that we are ready to receive read requests.
+        // do the handshake first to let the client know that we are ready to receive transformation requests.
         let handshake_request = stream
             .message()
             .await
@@ -279,7 +279,7 @@ where
         let (error_tx, error_rx) = mpsc::channel::<Error>(1);
 
         // Spawn a task to continuously receive messages from the client over the gRPC stream.
-        // For each message received from the stream, a new task is spawned to call the trasnform function and send the response back to the client
+        // For each message received from the stream, a new task is spawned to call the transform function and send the response back to the client
         let handle: JoinHandle<()> = tokio::spawn(handle_stream_requests(
             handler.clone(),
             stream,
@@ -380,7 +380,7 @@ where
         Ok(None) => return false,
         Ok(Some(val)) => val,
         Err(val) => {
-            warn!("Received gRPC error from sender: {val:?}");
+            error!("Received gRPC error from sender: {val:?}");
             return false;
         }
     };
@@ -417,7 +417,7 @@ async fn run_transform<T>(
     let message_id = request.id.clone();
 
     // A new task is spawned to catch the panic
-    let udf_tranform_task = tokio::spawn({
+    let udf_transform_task = tokio::spawn({
         let handler = handler.clone();
         let token = token.child_token();
         async move {
@@ -428,7 +428,7 @@ async fn run_transform<T>(
         }
     });
 
-    let messages = match udf_tranform_task.await {
+    let messages = match udf_transform_task.await {
         Ok(messages) => messages,
         Err(e) => {
             tracing::error!("Failed to run transform function: {e:?}");
@@ -447,29 +447,24 @@ async fn run_transform<T>(
         return;
     };
 
-    let send_response_fut = stream_response_tx.send(Ok(SourceTransformResponse {
-        results: messages.into_iter().map(|msg| msg.into()).collect(),
-        id: message_id,
-        handshake: None,
-    }));
+    let send_response_result = stream_response_tx
+        .send(Ok(SourceTransformResponse {
+            results: messages.into_iter().map(|msg| msg.into()).collect(),
+            id: message_id,
+            handshake: None,
+        }))
+        .await;
 
-    let stream_response_result = tokio::select! {
-        result = send_response_fut => result,
-        _ = token.cancelled() => return,
-    };
-
-    let Err(e) = stream_response_result else {
+    let Err(e) = send_response_result else {
         return;
     };
 
-    let send_err_fut = error_tx.send(SourceTransformerError(ErrorKind::InternalError(format!(
-        "sending source transform response over gRPC stream: {e:?}"
-    ))));
-
-    tokio::select! {
-        err = send_err_fut => err.expect("Sending error on channel"),
-        _ = token.cancelled() => (),
-    }
+    error_tx
+        .send(SourceTransformerError(ErrorKind::InternalError(format!(
+            "sending source transform response over gRPC stream: {e:?}"
+        ))))
+        .await
+        .expect("Sending error on channel");
 }
 
 /// gRPC server to start a sourcetransform service
