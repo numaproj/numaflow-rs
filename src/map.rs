@@ -310,7 +310,12 @@ impl<T> Server<T> {
     {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the map container
-        info.set_minimum_numaflow_version(shared::MinimumNumaflowVersion.get(&ContainerType::Map).copied().unwrap_or_default());
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::Map)
+                .copied()
+                .unwrap_or_default(),
+        );
         // update the info json metadata field, and add the map mode key value pair
         info.set_metadata(shared::MAP_MODE_KEY, shared::UNARY_MAP);
 

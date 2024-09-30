@@ -819,12 +819,14 @@ impl<C> Server<C> {
     {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the reduce container
-        info.set_minimum_numaflow_version(shared::MinimumNumaflowVersion.get(&ContainerType::Reduce).copied().unwrap_or_default());
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            info,
-        )?;
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::Reduce)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let cln_token = CancellationToken::new();

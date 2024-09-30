@@ -470,12 +470,14 @@ impl<T> Server<T> {
     {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the sink container
-        info.set_minimum_numaflow_version(shared::MinimumNumaflowVersion.get(&ContainerType::Sink).copied().unwrap_or_default());
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            info,
-        )?;
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::Sink)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);

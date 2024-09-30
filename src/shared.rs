@@ -17,7 +17,7 @@ pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
 
 #[derive(Eq, PartialEq, Hash)]
-pub(crate) enum ContainerType{
+pub(crate) enum ContainerType {
     Map,
     Reduce,
     Sink,
