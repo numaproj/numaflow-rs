@@ -2,7 +2,9 @@ use crate::error::Error;
 use crate::error::Error::SinkError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
+use crate::shared::ContainerType;
 use crate::sink::sink_pb::SinkResponse;
+
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,7 +16,6 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
-use crate::shared::ContainerType;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
