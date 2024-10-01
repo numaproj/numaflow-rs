@@ -1,11 +1,10 @@
-use std::fs;
-use std::path::Path;
-use std::{collections::HashMap, io};
-
 use chrono::{DateTime, TimeZone, Timelike, Utc};
-use once_cell::sync::Lazy;
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use std::sync::LazyLock;
+use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
@@ -43,8 +42,8 @@ pub(crate) enum ContainerType {
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-pub(crate) static MINIMUM_NUMAFLOW_VERSION: Lazy<HashMap<ContainerType, &'static str>> =
-    Lazy::new(|| {
+pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
+    LazyLock::new(|| {
         let mut m = HashMap::new();
         m.insert(ContainerType::Source, "1.3.1-z");
         m.insert(ContainerType::Map, "1.3.1-z");

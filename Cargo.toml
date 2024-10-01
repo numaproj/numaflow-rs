@@ -32,7 +32,6 @@ tracing = "0.1.40"
 uuid = { version = "1.10.0", features = ["v4"] }
 thiserror = "1.0"
 hyper-util = "0.1.7"
-once_cell = "1.19.0"
 
 [build-dependencies]
 tonic-build = "0.12.2"
