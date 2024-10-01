@@ -76,11 +76,14 @@ impl ServerInfo {
     pub fn new(container_type: ContainerType) -> Self {
         let mut metadata: HashMap<String, String> = HashMap::new();
         if container_type == ContainerType::Map || container_type == ContainerType::BatchMap {
-            metadata.insert(MAP_MODE_KEY.to_string(), match container_type {
-                ContainerType::Map => UNARY_MAP.to_string(),
-                ContainerType::BatchMap => BATCH_MAP.to_string(),
-                _ => "".to_string(),
-            });
+            metadata.insert(
+                MAP_MODE_KEY.to_string(),
+                match container_type {
+                    ContainerType::Map => UNARY_MAP.to_string(),
+                    ContainerType::BatchMap => BATCH_MAP.to_string(),
+                    _ => "".to_string(),
+                },
+            );
         }
         ServerInfo {
             protocol: "uds".to_string(),

@@ -242,7 +242,7 @@ where
                 &mut sink_stream,
                 grpc_resp_tx.clone(),
             )
-                .await?;
+            .await?;
 
             if stream_ended {
                 // shutting down, hence exiting the loop
