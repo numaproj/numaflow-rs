@@ -14,8 +14,7 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::error::Error;
 use crate::error::Error::ReduceError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::prost_timestamp_from_utc;
+use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -817,11 +816,9 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let info = shared::ServerInfo::new(ContainerType::Reduce);
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let cln_token = CancellationToken::new();

@@ -14,8 +14,7 @@ use crate::batchmap::proto::batch_map_server::BatchMap;
 use crate::error::Error;
 use crate::error::Error::BatchMapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::shutdown_signal;
+use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -471,9 +470,7 @@ impl<T> crate::batchmap::Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // update the info json metadata field, and add the map mode
-        info.set_metadata(shared::MAP_MODE_KEY, shared::BATCH_MAP);
+        let info = shared::ServerInfo::new(ContainerType::BatchMap);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();

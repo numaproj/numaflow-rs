@@ -1,7 +1,6 @@
 use crate::error::Error::MapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::shutdown_signal;
+use crate::shared::{self, shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
@@ -308,10 +307,7 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // update the info json metadata field, and add the map mode key value pair
-        info.set_metadata(shared::MAP_MODE_KEY, shared::UNARY_MAP);
-
+        let info = shared::ServerInfo::new(ContainerType::Map);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();

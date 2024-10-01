@@ -1,10 +1,10 @@
-use std::fs;
-use std::path::Path;
-use std::{collections::HashMap, io};
-
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use std::sync::LazyLock;
+use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
@@ -14,6 +14,17 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
+
+#[derive(Eq, PartialEq, Hash)]
+pub(crate) enum ContainerType {
+    Map,
+    BatchMap,
+    Reduce,
+    Sink,
+    Source,
+    SourceTransformer,
+    SideInput,
+}
 
 // Minimum version of Numaflow required by the current SDK version
 //
@@ -32,7 +43,19 @@ pub(crate) const BATCH_MAP: &str = "batch-map";
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1-z";
+pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
+    LazyLock::new(|| {
+        let mut m = HashMap::new();
+        m.insert(ContainerType::Source, "1.3.1-z");
+        m.insert(ContainerType::Map, "1.3.1-z");
+        m.insert(ContainerType::BatchMap, "1.3.1-z");
+        m.insert(ContainerType::Reduce, "1.3.1-z");
+        m.insert(ContainerType::Sink, "1.3.1-z");
+        m.insert(ContainerType::SourceTransformer, "1.3.1-z");
+        m.insert(ContainerType::SideInput, "1.3.1-z");
+        m
+    });
+
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
@@ -50,57 +73,38 @@ pub(crate) struct ServerInfo {
     metadata: Option<HashMap<String, String>>, // Metadata is optional
 }
 impl ServerInfo {
-    // default_info_file is a function to get a default server info json
-    // file content. This is used to write the server info file.
-    // This function is used in the write_info_file function.
-    // This function is not exposed to the user.
-    pub fn default() -> Self {
-        let metadata: HashMap<String, String> = HashMap::new();
-        // Return the default server info json content
-        // Create a ServerInfo object with default values
+    pub fn new(container_type: ContainerType) -> Self {
+        let mut metadata: HashMap<String, String> = HashMap::new();
+        if container_type == ContainerType::Map || container_type == ContainerType::BatchMap {
+            metadata.insert(
+                MAP_MODE_KEY.to_string(),
+                match container_type {
+                    ContainerType::Map => UNARY_MAP.to_string(),
+                    ContainerType::BatchMap => BATCH_MAP.to_string(),
+                    _ => "".to_string(),
+                },
+            );
+        }
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
-            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION.to_string(),
+            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION
+                .get(&container_type)
+                .map(|&version| version.to_string())
+                .unwrap_or_else(String::new),
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
-        }
-    }
-
-    // Check if the struct is empty
-    pub fn is_empty(&self) -> bool {
-        self.protocol.is_empty()
-            && self.language.is_empty()
-            && self.minimum_numaflow_version.is_empty()
-            && self.version.is_empty()
-            && self.metadata.is_none()
-    }
-
-    // Set metadata key-value pair
-    pub fn set_metadata(&mut self, key: &str, value: &str) {
-        if let Some(metadata) = &mut self.metadata {
-            metadata.insert(key.to_string(), value.to_string());
-        } else {
-            let mut metadata = HashMap::new();
-            metadata.insert(key.to_string(), value.to_string());
-            self.metadata = Some(metadata);
         }
     }
 }
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
-fn write_info_file(path: impl AsRef<Path>, mut server_info: ServerInfo) -> io::Result<()> {
+fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Result<()> {
     let parent = path.as_ref().parent().unwrap();
     fs::create_dir_all(parent)?;
-
-    // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
-    // If the server_info is empty, set it to the default
-    if server_info.is_empty() {
-        server_info = ServerInfo::default();
-    }
     // Convert to a string of JSON and print it out
-    let serialized = serde_json::to_string(&server_info).unwrap();
+    let serialized = serde_json::to_string(&server_info)?;
     let content = format!("{}U+005C__END__", serialized);
     info!(content, "Writing to file");
     fs::write(path, content)
@@ -226,10 +230,8 @@ mod tests {
         // Create a temporary file
         let temp_file = NamedTempFile::new()?;
 
-        // Get a default server info file content
-        let mut info = ServerInfo::default();
-        // update the info json metadata field, and add the map mode key value pair
-        info.set_metadata(MAP_MODE_KEY, BATCH_MAP);
+        // Create a new ServerInfo object with ContainerType::BatchMap
+        let info = ServerInfo::new(ContainerType::BatchMap);
 
         // Call write_info_file with the path of the temporary file
         write_info_file(temp_file.path(), info)?;
@@ -242,6 +244,7 @@ mod tests {
         // Check if the contents of the file are as expected
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
+        assert!(contents.contains(r#""minimum_numaflow_version":"1.3.1-z""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
 
         Ok(())

@@ -10,11 +10,11 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
-use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp};
+use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
@@ -528,11 +528,9 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let info = shared::ServerInfo::new(ContainerType::SourceTransformer);
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
