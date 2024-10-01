@@ -674,7 +674,7 @@ where
                 self.handle_error(ReduceError(InternalError(
                     "Invalid ReduceRequest".to_string(),
                 )))
-                .await;
+                    .await;
                 return None;
             }
         };
@@ -684,7 +684,7 @@ where
             self.handle_error(ReduceError(InternalError(
                 "Exactly one window is required".to_string(),
             )))
-            .await;
+                .await;
             return None;
         }
 
@@ -735,7 +735,7 @@ where
                 "Failed to send EOF message: {}",
                 e
             ))))
-            .await;
+                .await;
         }
     }
 
@@ -817,14 +817,7 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // set the minimum numaflow version for the reduce container
-        info.set_minimum_numaflow_version(
-            shared::MINIMUM_NUMAFLOW_VERSION
-                .get(&ContainerType::Reduce)
-                .copied()
-                .unwrap_or_default(),
-        );
+        let info = shared::ServerInfo::new(ContainerType::Reduce);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();

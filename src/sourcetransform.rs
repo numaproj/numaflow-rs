@@ -528,14 +528,7 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // set the minimum numaflow version for the source transformer container
-        info.set_minimum_numaflow_version(
-            shared::MINIMUM_NUMAFLOW_VERSION
-                .get(&ContainerType::SourceTransformer)
-                .copied()
-                .unwrap_or_default(),
-        );
+        let info = shared::ServerInfo::new(ContainerType::SourceTransformer);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
@@ -662,9 +655,9 @@ mod tests {
             Duration::from_secs(2),
             client.source_transform_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for source_transform_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for source_transform_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
@@ -767,9 +760,9 @@ mod tests {
             Duration::from_secs(2),
             client.source_transform_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for source_transform_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for source_transform_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(

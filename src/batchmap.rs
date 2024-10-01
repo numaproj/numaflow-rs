@@ -471,16 +471,7 @@ impl<T> crate::batchmap::Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // set the minimum numaflow version for the map container
-        info.set_minimum_numaflow_version(
-            shared::MINIMUM_NUMAFLOW_VERSION
-                .get(&ContainerType::Map)
-                .copied()
-                .unwrap_or_default(),
-        );
-        // update the info json metadata field, and add the map mode
-        info.set_metadata(shared::MAP_MODE_KEY, shared::BATCH_MAP);
+        let info = shared::ServerInfo::new(ContainerType::BatchMap);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();

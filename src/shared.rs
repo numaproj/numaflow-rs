@@ -18,6 +18,7 @@ pub(crate) const BATCH_MAP: &str = "batch-map";
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
     Map,
+    BatchMap,
     Reduce,
     Sink,
     Source,
@@ -47,6 +48,7 @@ pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'st
         let mut m = HashMap::new();
         m.insert(ContainerType::Source, "1.3.1-z");
         m.insert(ContainerType::Map, "1.3.1-z");
+        m.insert(ContainerType::BatchMap, "1.3.1-z");
         m.insert(ContainerType::Reduce, "1.3.1-z");
         m.insert(ContainerType::Sink, "1.3.1-z");
         m.insert(ContainerType::SourceTransformer, "1.3.1-z");
@@ -71,60 +73,30 @@ pub(crate) struct ServerInfo {
     metadata: Option<HashMap<String, String>>, // Metadata is optional
 }
 impl ServerInfo {
-    // default_info_file is a function to get a default server info json
-    // file content. This is used to write the server info file.
-    // This function is used in the write_info_file function.
-    // This function is not exposed to the user.
-    pub fn default() -> Self {
-        let metadata: HashMap<String, String> = HashMap::new();
-        // Return the default server info json content
-        // Create a ServerInfo object with default values
+    pub fn new(container_type: ContainerType) -> Self {
+        let mut metadata: HashMap<String, String> = HashMap::new();
+        if container_type == ContainerType::Map || container_type == ContainerType::BatchMap {
+            metadata.insert(MAP_MODE_KEY.to_string(), match container_type {
+                ContainerType::Map => UNARY_MAP.to_string(),
+                ContainerType::BatchMap => BATCH_MAP.to_string(),
+                _ => "".to_string(),
+            });
+        }
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
-            minimum_numaflow_version: "".to_string(),
+            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION.get(&container_type).copied().unwrap_or_default().to_string(),
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
-    }
-
-    // Check if the struct is empty
-    pub fn is_empty(&self) -> bool {
-        self.protocol.is_empty()
-            && self.language.is_empty()
-            && self.minimum_numaflow_version.is_empty()
-            && self.version.is_empty()
-            && self.metadata.is_none()
-    }
-
-    // Set metadata key-value pair
-    pub fn set_metadata(&mut self, key: &str, value: &str) {
-        if let Some(metadata) = &mut self.metadata {
-            metadata.insert(key.to_string(), value.to_string());
-        } else {
-            let mut metadata = HashMap::new();
-            metadata.insert(key.to_string(), value.to_string());
-            self.metadata = Some(metadata);
-        }
-    }
-
-    // Set minimum numaflow version
-    pub fn set_minimum_numaflow_version(&mut self, version: &str) {
-        self.minimum_numaflow_version = version.to_string();
     }
 }
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
-fn write_info_file(path: impl AsRef<Path>, mut server_info: ServerInfo) -> io::Result<()> {
+fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Result<()> {
     let parent = path.as_ref().parent().unwrap();
     fs::create_dir_all(parent)?;
-
-    // TODO: make port-number and CPU meta-data configurable, e.g., ("CPU_LIMIT", "1")
-    // If the server_info is empty, set it to the default
-    if server_info.is_empty() {
-        server_info = ServerInfo::default();
-    }
     // Convert to a string of JSON and print it out
     let serialized = serde_json::to_string(&server_info)?;
     let content = format!("{}U+005C__END__", serialized);
@@ -252,10 +224,8 @@ mod tests {
         // Create a temporary file
         let temp_file = NamedTempFile::new()?;
 
-        // Get a default server info file content
-        let mut info = ServerInfo::default();
-        // update the info json metadata field, and add the map mode key value pair
-        info.set_metadata(MAP_MODE_KEY, BATCH_MAP);
+        // Create a new ServerInfo object with ContainerType::BatchMap
+        let info = ServerInfo::new(ContainerType::BatchMap);
 
         // Call write_info_file with the path of the temporary file
         write_info_file(temp_file.path(), info)?;
@@ -268,6 +238,7 @@ mod tests {
         // Check if the contents of the file are as expected
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
+        assert!(contents.contains(r#""minimum_numaflow_version":"1.3.1-z""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
 
         Ok(())

@@ -242,7 +242,7 @@ where
                 &mut sink_stream,
                 grpc_resp_tx.clone(),
             )
-            .await?;
+                .await?;
 
             if stream_ended {
                 // shutting down, hence exiting the loop
@@ -468,14 +468,7 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
-        let mut info = shared::ServerInfo::default();
-        // set the minimum numaflow version for the sink container
-        info.set_minimum_numaflow_version(
-            shared::MINIMUM_NUMAFLOW_VERSION
-                .get(&ContainerType::Sink)
-                .copied()
-                .unwrap_or_default(),
-        );
+        let info = shared::ServerInfo::new(ContainerType::Sink);
         let listener =
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
