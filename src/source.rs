@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use crate::error::Error::SourceError;
 use crate::error::{Error, ErrorKind};
-use crate::shared::{self, prost_timestamp_from_utc};
+use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
+
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
@@ -492,11 +493,16 @@ impl<T> Server<T> {
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the source container
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::Source)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();

@@ -2,7 +2,9 @@ use crate::error::Error;
 use crate::error::Error::SinkError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
+use crate::shared::ContainerType;
 use crate::sink::sink_pb::SinkResponse;
+
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -466,11 +468,16 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the sink container
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::Sink)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);

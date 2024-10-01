@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
-use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp};
+use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
@@ -528,11 +528,16 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the source transformer container
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::SourceTransformer)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -657,9 +662,9 @@ mod tests {
             Duration::from_secs(2),
             client.source_transform_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for source_transform_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for source_transform_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
@@ -762,9 +767,9 @@ mod tests {
             Duration::from_secs(2),
             client.source_transform_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for source_transform_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for source_transform_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(

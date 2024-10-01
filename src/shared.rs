@@ -3,6 +3,7 @@ use std::path::Path;
 use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
+use lazy_static::lazy_static;
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
@@ -14,6 +15,16 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
+
+#[derive(Eq, PartialEq, Hash)]
+pub(crate) enum ContainerType {
+    Map,
+    Reduce,
+    Sink,
+    Source,
+    SourceTransformer,
+    SideInput,
+}
 
 // Minimum version of Numaflow required by the current SDK version
 //
@@ -32,7 +43,18 @@ pub(crate) const BATCH_MAP: &str = "batch-map";
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-const MINIMUM_NUMAFLOW_VERSION: &str = "1.3.1-z";
+lazy_static! {
+    pub(crate) static ref MinimumNumaflowVersion: HashMap<ContainerType, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert(ContainerType::Source, "1.3.1-z");
+        m.insert(ContainerType::Map, "1.3.1-z");
+        m.insert(ContainerType::Reduce, "1.3.1-z");
+        m.insert(ContainerType::Sink, "1.3.1-z");
+        m.insert(ContainerType::SourceTransformer, "1.3.1-z");
+        m.insert(ContainerType::SideInput, "1.3.1-z");
+        m
+    };
+}
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
@@ -61,7 +83,7 @@ impl ServerInfo {
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
-            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION.to_string(),
+            minimum_numaflow_version: "".to_string(),
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
@@ -86,6 +108,11 @@ impl ServerInfo {
             self.metadata = Some(metadata);
         }
     }
+
+    // Set minimum numaflow version
+    pub fn set_minimum_numaflow_version(&mut self, version: &str) {
+        self.minimum_numaflow_version = version.to_string();
+    }
 }
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
@@ -100,7 +127,7 @@ fn write_info_file(path: impl AsRef<Path>, mut server_info: ServerInfo) -> io::R
         server_info = ServerInfo::default();
     }
     // Convert to a string of JSON and print it out
-    let serialized = serde_json::to_string(&server_info).unwrap();
+    let serialized = serde_json::to_string(&server_info)?;
     let content = format!("{}U+005C__END__", serialized);
     info!(content, "Writing to file");
     fs::write(path, content)

@@ -1,7 +1,7 @@
 use crate::error::Error::SideInputError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 use crate::shared;
-use crate::shared::shutdown_signal;
+use crate::shared::{shutdown_signal, ContainerType};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -194,11 +194,16 @@ impl<T> Server<T> {
     where
         T: SideInputer + Send + Sync + 'static,
     {
-        let listener = shared::create_listener_stream(
-            &self.sock_addr,
-            &self.server_info_file,
-            shared::ServerInfo::default(),
-        )?;
+        let mut info = shared::ServerInfo::default();
+        // set the minimum numaflow version for the side input container
+        info.set_minimum_numaflow_version(
+            shared::MinimumNumaflowVersion
+                .get(&ContainerType::SideInput)
+                .copied()
+                .unwrap_or_default(),
+        );
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
