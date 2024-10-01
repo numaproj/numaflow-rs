@@ -85,7 +85,10 @@ impl ServerInfo {
         ServerInfo {
             protocol: "uds".to_string(),
             language: "rust".to_string(),
-            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION.get(&container_type).copied().unwrap_or_default().to_string(),
+            minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION
+                .get(&container_type)
+                .map(|&version| version.to_string())
+                .unwrap_or_else(String::new),
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
