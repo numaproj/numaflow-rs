@@ -820,7 +820,7 @@ impl<C> Server<C> {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the reduce container
         info.set_minimum_numaflow_version(
-            shared::MinimumNumaflowVersion
+            shared::MINIMUM_NUMAFLOW_VERSION
                 .get(&ContainerType::Reduce)
                 .copied()
                 .unwrap_or_default(),

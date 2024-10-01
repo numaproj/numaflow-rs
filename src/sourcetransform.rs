@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
@@ -531,7 +531,7 @@ impl<T> Server<T> {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the source transformer container
         info.set_minimum_numaflow_version(
-            shared::MinimumNumaflowVersion
+            shared::MINIMUM_NUMAFLOW_VERSION
                 .get(&ContainerType::SourceTransformer)
                 .copied()
                 .unwrap_or_default(),

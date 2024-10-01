@@ -3,7 +3,7 @@ use std::path::Path;
 use std::{collections::HashMap, io};
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
@@ -43,8 +43,8 @@ pub(crate) enum ContainerType {
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-lazy_static! {
-    pub(crate) static ref MinimumNumaflowVersion: HashMap<ContainerType, &'static str> = {
+pub(crate) static MINIMUM_NUMAFLOW_VERSION: Lazy<HashMap<ContainerType, &'static str>> =
+    Lazy::new(|| {
         let mut m = HashMap::new();
         m.insert(ContainerType::Source, "1.3.1-z");
         m.insert(ContainerType::Map, "1.3.1-z");
@@ -53,8 +53,8 @@ lazy_static! {
         m.insert(ContainerType::SourceTransformer, "1.3.1-z");
         m.insert(ContainerType::SideInput, "1.3.1-z");
         m
-    };
-}
+    });
+
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information

@@ -471,7 +471,7 @@ impl<T> Server<T> {
         let mut info = shared::ServerInfo::default();
         // set the minimum numaflow version for the sink container
         info.set_minimum_numaflow_version(
-            shared::MinimumNumaflowVersion
+            shared::MINIMUM_NUMAFLOW_VERSION
                 .get(&ContainerType::Sink)
                 .copied()
                 .unwrap_or_default(),
