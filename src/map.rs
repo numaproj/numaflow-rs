@@ -1,7 +1,6 @@
 use crate::error::Error::MapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::{shutdown_signal, ContainerType};
+use crate::shared::{self, shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;

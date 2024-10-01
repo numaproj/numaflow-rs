@@ -14,8 +14,7 @@ use crate::batchmap::proto::batch_map_server::BatchMap;
 use crate::error::Error;
 use crate::error::Error::BatchMapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::{shutdown_signal, ContainerType};
+use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";

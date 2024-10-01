@@ -1,7 +1,6 @@
 use crate::error::Error::SideInputError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::{shutdown_signal, ContainerType};
+use crate::shared::{self, shutdown_signal, ContainerType};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;

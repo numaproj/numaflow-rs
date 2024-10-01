@@ -1,8 +1,7 @@
 use crate::error::Error;
 use crate::error::Error::SinkError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared;
-use crate::shared::ContainerType;
+use crate::shared::{self, ContainerType};
 use crate::sink::sink_pb::SinkResponse;
 
 use chrono::{DateTime, Utc};
