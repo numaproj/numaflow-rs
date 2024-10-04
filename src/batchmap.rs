@@ -118,7 +118,7 @@ pub struct Message {
 }
 
 /// Represents a message that can be modified and forwarded.
-impl crate::batchmap::Message {
+impl Message {
     /// Creates a new message with the specified value.
     ///
     /// This constructor initializes the message with no keys, tags, or specific event time.
@@ -148,11 +148,11 @@ impl crate::batchmap::Message {
     /// use numaflow::batchmap::Message;
     /// let dropped_message = Message::message_to_drop();
     /// ```
-    pub fn message_to_drop() -> crate::batchmap::Message {
-        crate::batchmap::Message {
+    pub fn message_to_drop() -> Message {
+        Message {
             keys: None,
             value: vec![],
-            tags: Some(vec![crate::batchmap::DROP.to_string()]),
+            tags: Some(vec![DROP.to_string()]),
         }
     }
 
@@ -245,11 +245,8 @@ impl<T> BatchMap for BatchMapService<T>
 where
     T: BatchMapper + Send + Sync + 'static,
 {
-    async fn is_ready(
-        &self,
-        _: Request<()>,
-    ) -> Result<tonic::Response<proto::ReadyResponse>, Status> {
-        Ok(tonic::Response::new(proto::ReadyResponse { ready: true }))
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
     }
 
     type BatchMapFnStream = ReceiverStream<Result<proto::BatchMapResponse, Status>>;
@@ -261,7 +258,7 @@ where
         let mut stream = request.into_inner();
 
         // Create a channel to send the messages to the user defined function.
-        let (tx, rx) = mpsc::channel::<Datum>(1);
+        let (tx, rx) = channel::<Datum>(1);
 
         // Create a channel to send the response back to the grpc client.
         let (grpc_response_tx, grpc_response_rx) =
@@ -418,9 +415,9 @@ pub struct Server<T> {
     server_info_file: PathBuf,
     svc: Option<T>,
 }
-impl<T> crate::batchmap::Server<T> {
+impl<T> Server<T> {
     pub fn new(batch_map_svc: T) -> Self {
-        crate::batchmap::Server {
+        Server {
             sock_addr: DEFAULT_SOCK_ADDR.into(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
@@ -478,8 +475,8 @@ impl<T> crate::batchmap::Server<T> {
         let cln_token = CancellationToken::new();
 
         // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
-        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let map_svc = crate::batchmap::BatchMapService {
+        let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
+        let map_svc = BatchMapService {
             handler: Arc::new(handler),
             _shutdown_tx: internal_shutdown_tx,
             cancellation_token: cln_token.clone(),
