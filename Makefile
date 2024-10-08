@@ -3,12 +3,22 @@
 # perform a cargo fmt on all directories containing a Cargo.toml file
 .PHONY: lint
 # find all directories containing Cargo.toml files
-DIRS := $(shell find . -type f -name Cargo.toml -exec dirname {} \; | sort -u)
+DIRS := $(shell find . -type f -name Cargo.toml -not -path "./target/*" -exec dirname {} \; | sort -u)
 $(info Included directories: $(DIRS))
-lint:
+fmt:
 	@for dir in $(DIRS); do \
 		echo "Formatting code in $$dir"; \
 		cargo fmt --all --manifest-path "$$dir/Cargo.toml"; \
+	done
+
+# Check if all files are formatted and run clippy on all directories containing a Cargo.toml file
+.PHONY: lint
+lint:
+	@for dir in $(DIRS); do \
+		echo "Checking if code is formatted in directory: $$dir"; \
+		cargo fmt --all --check --manifest-path "$$dir/Cargo.toml" || { echo "Code is not formatted in $$dir"; exit 1; }; \
+		echo "Running clippy in directory: $$dir"; \
+		cargo clippy --workspace --manifest-path "$$dir/Cargo.toml" -- -D warnings || { echo "Clippy warnings/errors found in $$dir"; exit 1; }; \
 	done
 
 # run cargo test on the repository root
