@@ -1,4 +1,4 @@
-name: Rust
+name: Tests
 
 on:
   push:
@@ -8,6 +8,10 @@ on:
   pull_request:
     branches:
       - main
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
