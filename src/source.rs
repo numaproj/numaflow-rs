@@ -4,11 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::error::Error::SourceError;
-use crate::error::{Error, ErrorKind};
-use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
-use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
-
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
@@ -17,6 +12,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
+
+use crate::error::Error::SourceError;
+use crate::error::{Error, ErrorKind};
+use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
+use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -543,13 +543,12 @@ impl<C> Drop for Server<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{proto, Message, Offset, SourceReadRequest};
-    use crate::source;
-    use chrono::Utc;
     use std::collections::{HashMap, HashSet};
     use std::error::Error;
     use std::time::Duration;
     use std::vec;
+
+    use chrono::Utc;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::mpsc::Sender;
@@ -559,6 +558,9 @@ mod tests {
     use tonic::Request;
     use tower::service_fn;
     use uuid::Uuid;
+
+    use super::{proto, Message, Offset, SourceReadRequest};
+    use crate::source;
 
     // A source that repeats the `num` for the requested count
     struct Repeater {

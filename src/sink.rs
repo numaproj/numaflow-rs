@@ -1,20 +1,21 @@
-use crate::error::Error;
-use crate::error::Error::SinkError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared::{self, ContainerType};
-use crate::sink::sink_pb::SinkResponse;
-
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
+
+use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
+
+use crate::error::Error;
+use crate::error::Error::SinkError;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::shared::{self, ContainerType};
+use crate::sink::sink_pb::SinkResponse;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";

@@ -1,17 +1,19 @@
-use crate::error::{Error, ErrorKind};
-use crate::map::proto::MapResponse;
-use crate::shared::{self, shutdown_signal, ContainerType};
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
+
+use crate::error::{Error, ErrorKind};
+use crate::map::proto::MapResponse;
+use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -544,17 +546,18 @@ impl<C> Drop for Server<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::map;
-    use crate::map::proto::map_client::MapClient;
     use std::{error::Error, time::Duration};
 
-    use crate::map::proto;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::{mpsc, oneshot};
     use tokio_stream::wrappers::ReceiverStream;
     use tonic::transport::Uri;
     use tower::service_fn;
+
+    use crate::map;
+    use crate::map::proto;
+    use crate::map::proto::map_client::MapClient;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {
