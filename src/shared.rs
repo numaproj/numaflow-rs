@@ -91,7 +91,7 @@ impl ServerInfo {
             minimum_numaflow_version: MINIMUM_NUMAFLOW_VERSION
                 .get(&container_type)
                 .map(|&version| version.to_string())
-                .unwrap_or_else(String::new),
+                .unwrap_or_default(),
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
@@ -136,8 +136,8 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 }
 
 /// shuts downs the gRPC server. This happens in 2 cases
-/// 1. there has been an internal error (one of the tasks failed) and we need to shutdown
-/// 2. user is explicitly asking us to shutdown
+///     1. there has been an internal error (one of the tasks failed) and we need to shutdown
+///     2. user is explicitly asking us to shutdown
 /// Once the request for shutdown has be invoked, server will broadcast shutdown to all tasks
 /// through the cancellation-token.
 pub(crate) async fn shutdown_signal(

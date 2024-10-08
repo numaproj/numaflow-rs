@@ -37,7 +37,7 @@ mod counter {
             &self,
             keys: Vec<String>,
             mut input: Receiver<ReduceRequest>,
-            md: &Metadata,
+            _md: &Metadata,
         ) -> Vec<Message> {
             let mut counter = 0;
             // the loop exits when input is closed which will happen only on close of book.
