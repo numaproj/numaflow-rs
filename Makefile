@@ -13,10 +13,18 @@ fmt:
 
 # Check if all files are formatted and run clippy on all directories containing a Cargo.toml file
 .PHONY: lint
-lint:
+lint: test-fmt clippy
+
+.PHONY: test-fmt
+test-fmt:
 	@for dir in $(DIRS); do \
 		echo "Checking if code is formatted in directory: $$dir"; \
 		cargo fmt --all --check --manifest-path "$$dir/Cargo.toml" || { echo "Code is not formatted in $$dir"; exit 1; }; \
+	done
+
+.PHONY: clippy
+clippy:
+	@for dir in $(DIRS); do \
 		echo "Running clippy in directory: $$dir"; \
 		cargo clippy --workspace --manifest-path "$$dir/Cargo.toml" -- -D warnings || { echo "Clippy warnings/errors found in $$dir"; exit 1; }; \
 	done

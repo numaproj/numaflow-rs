@@ -12,43 +12,28 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
+          cache-workspaces: |
+            . -> target
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install protoc (for Protocol Buffers)
+      - name: Configure sccache
         run: |
-          set -eux -o pipefail
-          PROTOC_VERSION=3.19.4
-          PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
-          curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
-          sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
-          sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
-          sudo chmod +x /usr/local/bin/protoc
-          sudo find /usr/local/include -type f | xargs sudo chmod a+r
-          sudo find /usr/local/include -type d | xargs sudo chmod a+rx
-          rm -f $PROTOC_ZIP
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Install dependencies
+        run: sudo apt-get install -y protobuf-compiler
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Lint
+        run: make lint
 
       - name: Run tests
-        run: cargo test --verbose
+        run: make test
 
       - name: Check formatting
         run: cargo fmt --all -- --check
