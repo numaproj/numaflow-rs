@@ -1,15 +1,21 @@
-use crate::error::Error::MapError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::shared::{self, shutdown_signal, ContainerType};
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status};
 
+use chrono::{DateTime, Utc};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
+use tonic::{async_trait, Request, Response, Status, Streaming};
+use tracing::{error, info};
+
+use crate::error::{Error, ErrorKind};
+use crate::map::proto::MapResponse;
+use crate::shared::{self, shutdown_signal, ContainerType};
+
+const DEFAULT_CHANNEL_SIZE: usize = 1000;
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
@@ -58,53 +64,6 @@ pub trait Mapper {
     /// }
     /// ```
     async fn map(&self, input: MapRequest) -> Vec<Message>;
-}
-
-#[async_trait]
-impl<T> proto::map_server::Map for MapService<T>
-where
-    T: Mapper + Send + Sync + 'static,
-{
-    async fn map_fn(
-        &self,
-        request: Request<proto::MapRequest>,
-    ) -> Result<Response<proto::MapResponse>, Status> {
-        let request = request.into_inner();
-        let handler = Arc::clone(&self.handler);
-        let handle = tokio::spawn(async move { handler.map(request.into()).await });
-        let shutdown_tx = self.shutdown_tx.clone();
-        let cancellation_token = self.cancellation_token.clone();
-
-        // Wait for the handler to finish processing the request. If the server is shutting down(token will be cancelled),
-        // then return an error.
-        tokio::select! {
-            result = handle => {
-                match result {
-                    Ok(result) => Ok(Response::new(proto::MapResponse {
-                        results: result.into_iter().map(|msg| msg.into()).collect(),
-                    })),
-                    Err(e) => {
-                        tracing::error!("Error in map handler: {:?}", e);
-                        // Send a shutdown signal to the server to do a graceful shutdown because there was
-                        // a panic in the handler.
-                        shutdown_tx
-                            .send(())
-                            .await
-                            .expect("Sending shutdown signal to gRPC server");
-                        Err(Status::internal(MapError(UserDefinedError(e.to_string())).to_string()))
-                    }
-                }
-            },
-
-            _ = cancellation_token.cancelled() => {
-                Err(Status::internal(MapError(InternalError("Server is shutting down".to_string())).to_string()))
-            },
-        }
-    }
-
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
-        Ok(Response::new(proto::ReadyResponse { ready: true }))
-    }
 }
 
 /// Message is the response struct from the [`Mapper::map`] .
@@ -234,8 +193,8 @@ pub struct MapRequest {
     pub headers: HashMap<String, String>,
 }
 
-impl From<proto::MapRequest> for MapRequest {
-    fn from(value: proto::MapRequest) -> Self {
+impl From<proto::map_request::Request> for MapRequest {
+    fn from(value: proto::map_request::Request) -> Self {
         Self {
             keys: value.keys,
             value: value.value,
@@ -243,6 +202,235 @@ impl From<proto::MapRequest> for MapRequest {
             eventtime: shared::utc_from_timestamp(value.event_time),
             headers: value.headers,
         }
+    }
+}
+
+#[async_trait]
+impl<T> proto::map_server::Map for MapService<T>
+where
+    T: Mapper + Send + Sync + 'static,
+{
+    type MapFnStream = ReceiverStream<Result<MapResponse, Status>>;
+
+    async fn map_fn(
+        &self,
+        request: Request<Streaming<proto::MapRequest>>,
+    ) -> Result<Response<Self::MapFnStream>, Status> {
+        let mut stream = request.into_inner();
+        let handler = Arc::clone(&self.handler);
+
+        let (stream_response_tx, stream_response_rx) =
+            mpsc::channel::<Result<MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+
+        // perform handshake
+        perform_handshake(&mut stream, &stream_response_tx).await?;
+
+        let (error_tx, error_rx) = mpsc::channel::<Error>(1);
+
+        // Spawn a task to handle incoming stream requests
+        let handle: JoinHandle<()> = tokio::spawn(handle_stream_requests(
+            handler.clone(),
+            stream,
+            stream_response_tx.clone(),
+            error_tx.clone(),
+            self.cancellation_token.child_token(),
+        ));
+
+        tokio::spawn(manage_grpc_stream(
+            handle,
+            self.cancellation_token.clone(),
+            stream_response_tx,
+            error_rx,
+            self.shutdown_tx.clone(),
+        ));
+
+        Ok(Response::new(ReceiverStream::new(stream_response_rx)))
+    }
+
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
+        Ok(Response::new(proto::ReadyResponse { ready: true }))
+    }
+}
+
+async fn handle_stream_requests<T>(
+    handler: Arc<T>,
+    mut stream: Streaming<proto::MapRequest>,
+    stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
+) where
+    T: Mapper + Send + Sync + 'static,
+{
+    let mut stream_open = true;
+    while stream_open {
+        stream_open = tokio::select! {
+            map_request = stream.message() => handle_request(
+                handler.clone(),
+                map_request,
+                stream_response_tx.clone(),
+                error_tx.clone(),
+                token.clone(),
+            ).await,
+            _ = token.cancelled() => {
+                info!("Cancellation token is cancelled, shutting down");
+                break;
+            }
+        }
+    }
+}
+
+async fn manage_grpc_stream(
+    request_handler: JoinHandle<()>,
+    token: CancellationToken,
+    stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    mut error_rx: mpsc::Receiver<Error>,
+    server_shutdown_tx: mpsc::Sender<()>,
+) {
+    let err = tokio::select! {
+        _ = request_handler => {
+            token.cancel();
+            return;
+        },
+        err = error_rx.recv() => err,
+    };
+
+    token.cancel();
+    let Some(err) = err else {
+        return;
+    };
+    error!("Shutting down gRPC channel: {err:?}");
+    stream_response_tx
+        .send(Err(Status::internal(err.to_string())))
+        .await
+        .expect("Sending error message to gRPC response channel");
+    server_shutdown_tx
+        .send(())
+        .await
+        .expect("Writing to shutdown channel");
+}
+
+async fn handle_request<T>(
+    handler: Arc<T>,
+    map_request: Result<Option<proto::MapRequest>, Status>,
+    stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
+) -> bool
+where
+    T: Mapper + Send + Sync + 'static,
+{
+    let map_request = match map_request {
+        Ok(None) => return false,
+        Ok(Some(val)) => val,
+        Err(val) => {
+            error!("Received gRPC error from sender: {val:?}");
+            return false;
+        }
+    };
+    tokio::spawn(run_map(
+        handler,
+        map_request,
+        stream_response_tx,
+        error_tx,
+        token,
+    ));
+    true
+}
+
+async fn run_map<T>(
+    handler: Arc<T>,
+    map_request: proto::MapRequest,
+    stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    error_tx: mpsc::Sender<Error>,
+    token: CancellationToken,
+) where
+    T: Mapper + Send + Sync + 'static,
+{
+    let Some(request) = map_request.request else {
+        error_tx
+            .send(Error::MapError(ErrorKind::InternalError(
+                "Request not present".to_string(),
+            )))
+            .await
+            .expect("Sending error on channel");
+        return;
+    };
+
+    let message_id = map_request.id.clone();
+
+    // A new task is spawned to catch the panic
+    let udf_map_task = tokio::spawn({
+        let handler = handler.clone();
+        let token = token.child_token();
+        async move {
+            tokio::select! {
+                _ = token.cancelled() => None,
+                messages = handler.map(request.into()) => Some(messages),
+            }
+        }
+    });
+
+    let messages = match udf_map_task.await {
+        Ok(messages) => messages,
+        Err(e) => {
+            error!("Failed to run map function: {e:?}");
+            error_tx
+                .send(Error::MapError(ErrorKind::InternalError(format!(
+                    "panicked: {e:?}"
+                ))))
+                .await
+                .expect("Sending error on channel");
+            return;
+        }
+    };
+
+    let Some(messages) = messages else {
+        // CancellationToken is cancelled
+        return;
+    };
+
+    let send_response_result = stream_response_tx
+        .send(Ok(MapResponse {
+            results: messages.into_iter().map(|msg| msg.into()).collect(),
+            id: message_id,
+            handshake: None,
+        }))
+        .await;
+
+    let Err(e) = send_response_result else {
+        return;
+    };
+
+    error_tx
+        .send(Error::MapError(ErrorKind::InternalError(format!(
+            "Failed to send response: {e:?}"
+        ))))
+        .await
+        .expect("Sending error on channel");
+}
+
+async fn perform_handshake(
+    stream: &mut Streaming<proto::MapRequest>,
+    stream_response_tx: &mpsc::Sender<Result<MapResponse, Status>>,
+) -> Result<(), Status> {
+    let handshake_request = stream
+        .message()
+        .await
+        .map_err(|e| Status::internal(format!("Handshake failed: {}", e)))?
+        .ok_or_else(|| Status::internal("Stream closed before handshake"))?;
+
+    if let Some(handshake) = handshake_request.handshake {
+        stream_response_tx
+            .send(Ok(MapResponse {
+                results: vec![],
+                id: "".to_string(),
+                handshake: Some(handshake),
+            }))
+            .await
+            .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
+        Ok(())
+    } else {
+        Err(Status::invalid_argument("Handshake not present"))
     }
 }
 
@@ -358,16 +546,18 @@ impl<C> Drop for Server<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::map;
-    use crate::map::proto::map_client::MapClient;
     use std::{error::Error, time::Duration};
 
     use tempfile::TempDir;
     use tokio::net::UnixStream;
-    use tokio::sync::oneshot;
-    use tokio::time::sleep;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio_stream::wrappers::ReceiverStream;
     use tonic::transport::Uri;
     use tower::service_fn;
+
+    use crate::map;
+    use crate::map::proto;
+    use crate::map::proto::map_client::MapClient;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {
@@ -415,21 +605,51 @@ mod tests {
             .await?;
 
         let mut client = MapClient::new(channel);
-        let request = tonic::Request::new(map::proto::MapRequest {
-            keys: vec!["first".into(), "second".into()],
-            value: "hello".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
-            headers: Default::default(),
-        });
+        let request = proto::MapRequest {
+            request: Some(proto::map_request::Request {
+                keys: vec!["first".into(), "second".into()],
+                value: "hello".into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                headers: Default::default(),
+            }),
+            id: "".to_string(),
+            handshake: None,
+        };
 
-        let resp = client.map_fn(request).await?;
-        let resp = resp.into_inner();
-        assert_eq!(resp.results.len(), 1, "Expected single message from server");
-        let msg = &resp.results[0];
+        let (tx, rx) = mpsc::channel(2);
+        let handshake_request = proto::MapRequest {
+            request: None,
+            id: "".to_string(),
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+
+        tx.send(handshake_request).await?;
+        tx.send(request).await?;
+
+        let resp = client.map_fn(ReceiverStream::new(rx)).await?;
+        let mut resp = resp.into_inner();
+
+        let handshake_response = resp.message().await?;
+        assert!(handshake_response.is_some());
+
+        let handshake_response = handshake_response.unwrap();
+        assert!(handshake_response.handshake.is_some());
+
+        let actual_response = resp.message().await?;
+        assert!(actual_response.is_some());
+
+        let actual_response = actual_response.unwrap();
+        assert_eq!(
+            actual_response.results.len(),
+            1,
+            "Expected single message from server"
+        );
+        let msg = &actual_response.results[0];
         assert_eq!(msg.keys.first(), Some(&"first".to_owned()));
         assert_eq!(msg.value, "hello".as_bytes());
 
+        drop(tx);
         shutdown_tx
             .send(())
             .expect("Sending shutdown signal to gRPC server");
@@ -440,11 +660,11 @@ mod tests {
 
     #[tokio::test]
     async fn map_server_panic() -> Result<(), Box<dyn Error>> {
-        struct PanicCat;
+        struct PanicMapper;
         #[tonic::async_trait]
-        impl map::Mapper for PanicCat {
-            async fn map(&self, _input: map::MapRequest) -> Vec<map::Message> {
-                panic!("PanicCat panicking");
+        impl map::Mapper for PanicMapper {
+            async fn map(&self, _: map::MapRequest) -> Vec<map::Message> {
+                panic!("Panic in mapper");
             }
         }
 
@@ -452,7 +672,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("map.sock");
         let server_info_file = tmp_dir.path().join("mapper-server-info");
 
-        let mut server = map::Server::new(PanicCat)
+        let mut server = map::Server::new(PanicMapper)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -466,8 +686,10 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
+                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
                 let sock_file = sock_file.clone();
                 async move {
                     Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
@@ -478,22 +700,41 @@ mod tests {
             .await?;
 
         let mut client = MapClient::new(channel);
-        let request = tonic::Request::new(map::proto::MapRequest {
-            keys: vec!["first".into(), "second".into()],
-            value: "hello".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
-            headers: Default::default(),
-        });
 
-        // server should return an error because of the panic.
-        let resp = client.map_fn(request).await;
-        assert!(resp.is_err(), "Expected error from server");
+        let (tx, rx) = mpsc::channel(2);
+        let handshake_request = proto::MapRequest {
+            request: None,
+            id: "".to_string(),
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+        tx.send(handshake_request).await.unwrap();
 
-        if let Err(e) = resp {
-            assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"));
-        }
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.map_fn(ReceiverStream::new(rx)),
+        )
+        .await
+        .map_err(|_| "timeout while getting stream for map_fn")??
+        .into_inner();
+
+        let handshake_resp = stream.message().await?.unwrap();
+        assert!(
+            handshake_resp.handshake.is_some(),
+            "Not a valid response for handshake request"
+        );
+
+        let request = proto::MapRequest {
+            request: Some(proto::map_request::Request {
+                keys: vec!["three".into(), "four".into()],
+                value: "hello".into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                headers: Default::default(),
+            }),
+            id: "".to_string(),
+            handshake: None,
+        };
+        tx.send(request).await.unwrap();
 
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
@@ -511,17 +752,11 @@ mod tests {
     // should shut down gracefully.
     #[tokio::test]
     async fn panic_with_multiple_requests() -> Result<(), Box<dyn Error>> {
-        struct PanicCat;
+        struct PanicMapper;
         #[tonic::async_trait]
-        impl map::Mapper for PanicCat {
-            async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-                if !input.keys.is_empty() && input.keys[0] == "key1" {
-                    sleep(Duration::from_millis(20)).await;
-                    panic!("Cat panicked");
-                }
-                // assume each request takes 100ms to process
-                sleep(Duration::from_millis(100)).await;
-                vec![]
+        impl map::Mapper for PanicMapper {
+            async fn map(&self, _: map::MapRequest) -> Vec<map::Message> {
+                panic!("Panic in mapper");
             }
         }
 
@@ -529,7 +764,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("map.sock");
         let server_info_file = tmp_dir.path().join("mapper-server-info");
 
-        let mut server = map::Server::new(PanicCat)
+        let mut server = map::Server::new(PanicMapper)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -543,6 +778,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
         let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
                 let sock_file = sock_file.clone();
@@ -556,47 +792,48 @@ mod tests {
 
         let mut client = MapClient::new(channel);
 
-        let mut client_one = client.clone();
-        tokio::spawn(async move {
-            let request = tonic::Request::new(map::proto::MapRequest {
-                keys: vec!["key2".into()],
+        let (tx, rx) = mpsc::channel(2);
+        let handshake_request = proto::MapRequest {
+            request: None,
+            id: "".to_string(),
+            handshake: Some(proto::Handshake { sot: true }),
+        };
+        tx.send(handshake_request).await.unwrap();
+
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.map_fn(ReceiverStream::new(rx)),
+        )
+        .await
+        .map_err(|_| "timeout while getting stream for map_fn")??
+        .into_inner();
+
+        let handshake_resp = stream.message().await?.unwrap();
+        assert!(
+            handshake_resp.handshake.is_some(),
+            "Not a valid response for handshake request"
+        );
+
+        let request = proto::MapRequest {
+            request: Some(proto::map_request::Request {
+                keys: vec!["five".into(), "six".into()],
                 value: "hello".into(),
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
-            });
+            }),
+            id: "".to_string(),
+            handshake: None,
+        };
+        tx.send(request).await.unwrap();
 
-            // panic is only for requests with key "key1", since we have graceful shutdown
-            // the request should get processed.
-            let resp = client_one.map_fn(request).await;
-            assert!(resp.is_ok(), "Expected ok from server");
-        });
-
-        let request = tonic::Request::new(map::proto::MapRequest {
-            keys: vec!["key1".into()],
-            value: "hello".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
-            headers: Default::default(),
-        });
-
-        // panic happens for the key1 request, so we should expect error on the client side.
-        let resp = client.map_fn(request).await;
-        assert!(resp.is_err(), "Expected error from server");
-
-        if let Err(e) = resp {
-            assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"));
-        }
-
-        // but since there is a panic, the server should shutdown.
+        // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             if task.is_finished() {
                 break;
             }
         }
-
         assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
