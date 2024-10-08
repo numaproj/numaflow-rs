@@ -2,14 +2,18 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - release-*
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
-    name: Unit Tests
+    name: Clippy and Unit Tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -19,13 +23,26 @@ jobs:
         with:
           cache-workspaces: |
             . -> target
+            ./examples/batchmap-cat -> target
+            ./examples/batchmap-flatmap -> target
+            ./examples/map-cat -> target
+            ./examples/map-tickgen-serde -> target
+            ./examples/mapt-event-time-filter -> target
+            ./examples/reduce-counter -> target
+            ./examples/sideinput -> target
+            ./examples/sideinput/udf -> target
+            ./examples/simple-source -> target
+            ./examples/sink-log -> target
+            ./examples/source-transformer-now -> target
 
       - name: Configure sccache
         run: |
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
+
       - name: Install dependencies
         run: sudo apt-get install -y protobuf-compiler
 
