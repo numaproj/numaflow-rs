@@ -35,5 +35,5 @@ jobs:
       - name: Run tests
         run: make test
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Dry run Cargo Publish
+        run: cargo publish --dry-run
