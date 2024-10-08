@@ -17,6 +17,8 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-24.04
     timeout-minutes: 12
+    # run workflow only on numaproj/numaflow-rs repository
+    if: ${{ github.repository }} == "numaproj/numaflow-rs"
     steps:
       - name: Check out code
         uses: actions/checkout@v4
