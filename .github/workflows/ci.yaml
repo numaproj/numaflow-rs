@@ -58,8 +58,3 @@ jobs:
 
       - name: Dry run Cargo Publish
         run: cargo publish --dry-run
-
-      - name: Dump GitHub context
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-        run: echo "$GITHUB_CONTEXT"

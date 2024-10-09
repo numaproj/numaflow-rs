@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - main
-      - dev-release*
 
 defaults:
   run:
@@ -37,8 +34,5 @@ jobs:
       - name: Run tests
         run: make test
 
-      - name: Cargo login
-        run: cargo login ${{ secrets.CARGO_PUBLISH }}
-
       - name: Dry run Cargo Publish
-        run: cargo publish --dry-run
+        run: CARGO_REGISTRY_TOKEN=${{ secrets.CARGO_PUBLISH }} cargo publish --dry-run

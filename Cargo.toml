@@ -11,6 +11,13 @@ homepage = "https://numaproj.github.io/numaflow/"
 repository = "https://github.com/numaproj/numaflow-rs"
 keywords = ["numaflow", "streaming", "messaging", "event-driven"]
 categories = ["network-programming", "api-bindings"]
+exclude = [
+    ".github/*",
+    ".gitignore",
+    ".dockerignore",
+    "hack/*",
+    "Makefile",
+]
 
 
 [lib]
