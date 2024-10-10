@@ -33,3 +33,9 @@ clippy:
 .PHONY: test
 test:
 	cargo test --workspace
+
+.PHONY: codegen
+codegen:
+	# Change timestamps so that tonic_build code generation will always be triggered.
+	touch proto/*
+	PROTO_CODE_GEN=1 cargo build

@@ -28,11 +28,20 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get install -y protobuf-compiler
 
+      - name: Code Generation
+        run: make codegen
+
+      - name: Ensure generated code is checked in
+        run: git diff --exit-code
+
       - name: Lint
         run: make lint
 
       - name: Run tests
         run: make test
+
+      - name: Documentation generation
+        run: RUSTFLAGS="-D warnings" cargo doc
 
       - name: Dry run Cargo Publish
         run: CARGO_REGISTRY_TOKEN=${{ secrets.CARGO_PUBLISH }} cargo publish --dry-run

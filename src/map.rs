@@ -12,8 +12,7 @@ use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
-use crate::map::proto::MapResponse;
-use crate::servers::map as proto;
+use crate::servers::map::{self as proto, MapResponse};
 use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_CHANNEL_SIZE: usize = 1000;

@@ -103,7 +103,7 @@ impl From<proto::BatchMapRequest> for Datum {
         }
     }
 }
-/// Message is the response struct from the [`Mapper::map`] .
+/// Message is the response struct from the [`Mapper::map`][`crate::map::Mapper::map`] .
 #[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can

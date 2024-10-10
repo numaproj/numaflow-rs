@@ -78,7 +78,7 @@ pub struct Message {
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
-    /// event_time from the [`Datum`].
+    /// event_time from the [`SourceTransformRequest`].
     pub event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
