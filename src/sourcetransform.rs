@@ -14,6 +14,7 @@ use tracing::{error, info};
 
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
+use crate::servers::sourcetransformer as proto;
 use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -22,11 +23,6 @@ const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-serv
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 const DROP: &str = "U+005C__DROP__";
-
-/// Numaflow SourceTransformer Proto definitions.
-pub mod proto {
-    tonic::include_proto!("sourcetransformer.v1");
-}
 
 struct SourceTransformerService<T> {
     handler: Arc<T>,

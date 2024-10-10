@@ -15,16 +15,13 @@ use crate::batchmap::proto::batch_map_server::BatchMap;
 use crate::error::Error;
 use crate::error::Error::BatchMapError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::batchmap as proto;
 use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 const DROP: &str = "U+005C__DROP__";
-/// Numaflow Batch Map Proto definitions.
-pub mod proto {
-    tonic::include_proto!("batchmap.v1");
-}
 
 struct BatchMapService<T: BatchMapper> {
     handler: Arc<T>,

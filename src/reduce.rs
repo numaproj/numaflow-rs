@@ -14,6 +14,7 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::error::Error;
 use crate::error::Error::ReduceError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::reduce as proto;
 use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 
 const KEY_JOIN_DELIMITER: &str = ":";
@@ -21,11 +22,6 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
 const DROP: &str = "U+005C__DROP__";
-
-/// Numaflow Reduce Proto definitions.
-pub mod proto {
-    tonic::include_proto!("reduce.v1");
-}
 
 struct ReduceService<C> {
     creator: Arc<C>,

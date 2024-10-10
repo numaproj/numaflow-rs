@@ -14,8 +14,8 @@ use tracing::{debug, info};
 use crate::error::Error;
 use crate::error::Error::SinkError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::sink::{self as sink_pb, SinkResponse};
 use crate::shared::{self, ContainerType};
-use crate::sink::sink_pb::SinkResponse;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -27,10 +27,6 @@ const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
-/// Numaflow Sink Proto definitions.
-pub mod sink_pb {
-    tonic::include_proto!("sink.v1");
-}
 
 struct SinkService<T: Sinker> {
     handler: Arc<T>,
