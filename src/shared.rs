@@ -1,10 +1,11 @@
-use chrono::{DateTime, TimeZone, Timelike, Utc};
-use prost_types::Timestamp;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 use std::{collections::HashMap, io};
+
+use chrono::{DateTime, TimeZone, Timelike, Utc};
+use prost_types::Timestamp;
+use serde::{Deserialize, Serialize};
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
@@ -177,10 +178,12 @@ pub(crate) async fn shutdown_signal(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs::File;
     use std::io::Read;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_utc_from_timestamp() {

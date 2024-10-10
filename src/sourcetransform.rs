@@ -255,26 +255,7 @@ where
             mpsc::channel::<Result<SourceTransformResponse, Status>>(DEFAULT_CHANNEL_SIZE);
 
         // do the handshake first to let the client know that we are ready to receive transformation requests.
-        let handshake_request = stream
-            .message()
-            .await
-            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
-
-        if let Some(handshake) = handshake_request.handshake {
-            stream_response_tx
-                .send(Ok(SourceTransformResponse {
-                    results: vec![],
-                    id: "".to_string(),
-                    handshake: Some(handshake),
-                }))
-                .await
-                .map_err(|e| {
-                    Status::internal(format!("failed to send handshake response {}", e))
-                })?;
-        } else {
-            return Err(Status::invalid_argument("Handshake not present"));
-        }
+        perform_handshake(&mut stream, &stream_response_tx).await?;
 
         let (error_tx, error_rx) = mpsc::channel::<Error>(1);
 
@@ -288,7 +269,7 @@ where
             self.cancellation_token.child_token(),
         ));
 
-        tokio::spawn(manage_gprc_stream(
+        tokio::spawn(manage_grpc_stream(
             handle,
             self.cancellation_token.clone(),
             stream_response_tx,
@@ -304,8 +285,33 @@ where
     }
 }
 
+async fn perform_handshake(
+    stream: &mut Streaming<proto::SourceTransformRequest>,
+    stream_response_tx: &mpsc::Sender<Result<SourceTransformResponse, Status>>,
+) -> Result<(), Status> {
+    let handshake_request = stream
+        .message()
+        .await
+        .map_err(|e| Status::internal(format!("Handshake failed: {}", e)))?
+        .ok_or_else(|| Status::internal("Stream closed before handshake"))?;
+
+    if let Some(handshake) = handshake_request.handshake {
+        stream_response_tx
+            .send(Ok(SourceTransformResponse {
+                results: vec![],
+                id: "".to_string(),
+                handshake: Some(handshake),
+            }))
+            .await
+            .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
+        Ok(())
+    } else {
+        Err(Status::invalid_argument("Handshake not present"))
+    }
+}
+
 // shutdown the gRPC server on first error
-async fn manage_gprc_stream(
+async fn manage_grpc_stream(
     request_handler: JoinHandle<()>,
     token: CancellationToken,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
@@ -335,8 +341,8 @@ async fn manage_gprc_stream(
         .expect("Writing to shutdown channel");
 }
 
-// Receives messages from the stream.
-// For each message received from the stream, a new task is spawned to call the transform function and send the response back to the client
+// Receives messages from the stream. For each message received from the stream,
+// a new task is spawned to call the transform function and send the response back to the client
 async fn handle_stream_requests<T>(
     handler: Arc<T>,
     mut stream: Streaming<proto::SourceTransformRequest>,
@@ -673,7 +679,7 @@ mod tests {
             "Not a valid response for handshake request"
         );
 
-        let request = sourcetransform::proto::SourceTransformRequest {
+        let request = proto::SourceTransformRequest {
             request: Some(proto::source_transform_request::Request {
                 id: "1".to_string(),
                 keys: vec!["first".into(), "second".into()],
@@ -772,7 +778,7 @@ mod tests {
 
         let request = proto::SourceTransformRequest {
             request: Some(proto::source_transform_request::Request {
-                id: "1".to_string(),
+                id: "2".to_string(),
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
                 watermark: Some(prost_types::Timestamp::default()),
