@@ -15,6 +15,7 @@ use tracing::{error, info};
 
 use crate::error::Error::SourceError;
 use crate::error::{Error, ErrorKind};
+use crate::servers::source as proto;
 use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 
@@ -23,11 +24,6 @@ const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
-
-/// Source Proto definitions.
-pub mod proto {
-    tonic::include_proto!("source.v1");
-}
 
 struct SourceService<T> {
     handler: Arc<T>,

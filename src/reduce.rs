@@ -14,6 +14,7 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::error::Error;
 use crate::error::Error::ReduceError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
+pub use crate::servers::reduce as proto;
 use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 
 const KEY_JOIN_DELIMITER: &str = ":";
@@ -21,11 +22,6 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
 const DROP: &str = "U+005C__DROP__";
-
-/// Numaflow Reduce Proto definitions.
-pub mod proto {
-    tonic::include_proto!("reduce.v1");
-}
 
 struct ReduceService<C> {
     creator: Arc<C>,
@@ -80,7 +76,7 @@ pub trait ReducerCreator {
 /// Reducer trait for implementing Reduce handler.
 #[async_trait]
 pub trait Reducer {
-    /// reduce_handle is provided with a set of keys, a channel of [`Datum`], and [`Metadata`]. It
+    /// reduce_handle is provided with a set of keys, a channel of [`ReduceRequest`], and [`Metadata`]. It
     /// returns 0, 1, or more results as a [`Vec`] of [`Message`]. Reduce is a stateful operation and
     /// the channel is for the collection of keys and for that time [Window].
     /// You can read more about reduce [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/).
@@ -103,7 +99,7 @@ pub trait Reducer {
     ///     use numaflow::reduce::{Reducer, Metadata};
     ///     use tokio::sync::mpsc::Receiver;
     ///     use tonic::async_trait;
-    /// use numaflow::reduce::proto::reduce_server::Reduce;
+    ///     use numaflow::reduce::proto::reduce_server::Reduce;
     ///     pub(crate) struct Counter {}
     ///
     ///     pub(crate) struct CounterCreator {}

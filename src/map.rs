@@ -12,7 +12,7 @@ use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
-use crate::map::proto::MapResponse;
+use crate::servers::map::{self as proto, MapResponse};
 use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
@@ -20,11 +20,6 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 const DROP: &str = "U+005C__DROP__";
-
-/// Numaflow Map Proto definitions.
-pub mod proto {
-    tonic::include_proto!("map.v1");
-}
 
 struct MapService<T> {
     handler: Arc<T>,

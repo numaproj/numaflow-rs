@@ -8,15 +8,12 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::error::Error::SideInputError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::sideinput as proto;
 use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sideinput-server-info";
-
-mod proto {
-    tonic::include_proto!("sideinput.v1");
-}
 
 struct SideInputService<T> {
     handler: Arc<T>,
