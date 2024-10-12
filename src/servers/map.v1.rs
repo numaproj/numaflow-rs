@@ -10,6 +10,8 @@ pub struct MapRequest {
     pub id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
     pub handshake: ::core::option::Option<Handshake>,
+    #[prost(message, optional, tag = "4")]
+    pub status: ::core::option::Option<map_request::Status>,
 }
 /// Nested message and enum types in `MapRequest`.
 pub mod map_request {
@@ -28,6 +30,11 @@ pub mod map_request {
             ::prost::alloc::string::String,
             ::prost::alloc::string::String,
         >,
+    }
+    #[derive(Clone, Copy, PartialEq, ::prost::Message)]
+    pub struct Status {
+        #[prost(bool, tag = "1")]
+        pub eot: bool,
     }
 }
 ///

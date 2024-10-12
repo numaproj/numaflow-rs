@@ -610,6 +610,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
 
         let (tx, rx) = mpsc::channel(2);
@@ -617,6 +618,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
 
         tx.send(handshake_request).await?;
@@ -701,6 +703,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
         tx.send(handshake_request).await.unwrap();
 
@@ -728,6 +731,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
         tx.send(request).await.unwrap();
 
@@ -792,6 +796,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
         tx.send(handshake_request).await.unwrap();
 
@@ -819,6 +824,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
         tx.send(request).await.unwrap();
 

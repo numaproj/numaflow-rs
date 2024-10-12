@@ -1,31 +1,32 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use crate::error::Error;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::map as proto;
+use crate::servers::map::map_server::Map;
+use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
+use crate::shared::{self, shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
-
-use crate::batchmap::proto::batch_map_server::BatchMap;
-use crate::error::Error;
-use crate::error::Error::BatchMapError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::batchmap as proto;
-use crate::shared::{self, shutdown_signal, ContainerType};
+use tracing::{debug, info};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 const DROP: &str = "U+005C__DROP__";
+const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 struct BatchMapService<T: BatchMapper> {
     handler: Arc<T>,
-    _shutdown_tx: mpsc::Sender<()>,
+    shutdown_tx: mpsc::Sender<()>,
     cancellation_token: CancellationToken,
 }
 
@@ -91,18 +92,25 @@ pub struct Datum {
     pub headers: HashMap<String, String>,
 }
 
-impl From<proto::BatchMapRequest> for Datum {
-    fn from(sr: proto::BatchMapRequest) -> Self {
-        Self {
-            keys: sr.keys,
-            value: sr.value,
-            watermark: shared::utc_from_timestamp(sr.watermark),
-            event_time: shared::utc_from_timestamp(sr.event_time),
+impl TryFrom<MapRequest> for Datum {
+    type Error = Status;
+
+    fn try_from(sr: MapRequest) -> Result<Self, Self::Error> {
+        let request = sr
+            .request
+            .ok_or_else(|| Status::invalid_argument("Invalid argument, request can't be None"))?;
+
+        Ok(Self {
+            keys: request.keys,
+            value: request.value,
+            watermark: shared::utc_from_timestamp(request.watermark),
+            event_time: shared::utc_from_timestamp(request.event_time),
             id: sr.id,
-            headers: sr.headers,
-        }
+            headers: request.headers,
+        })
     }
 }
+
 /// Message is the response struct from the [`Mapper::map`][`crate::map::Mapper::map`] .
 #[derive(Debug, PartialEq)]
 pub struct Message {
@@ -228,9 +236,9 @@ impl BatchResponse {
     }
 }
 
-impl From<Message> for proto::batch_map_response::Result {
+impl From<Message> for proto::map_response::Result {
     fn from(value: Message) -> Self {
-        proto::batch_map_response::Result {
+        proto::map_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
             tags: value.tags.unwrap_or_default(),
@@ -239,169 +247,209 @@ impl From<Message> for proto::batch_map_response::Result {
 }
 
 #[tonic::async_trait]
-impl<T> BatchMap for BatchMapService<T>
+impl<T> Map for BatchMapService<T>
 where
     T: BatchMapper + Send + Sync + 'static,
 {
-    async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
-        Ok(Response::new(proto::ReadyResponse { ready: true }))
+    type MapFnStream = ReceiverStream<Result<MapResponse, Status>>;
+
+    async fn map_fn(
+        &self,
+        request: Request<Streaming<MapRequest>>,
+    ) -> Result<Response<Self::MapFnStream>, Status> {
+        let mut map_stream = request.into_inner();
+        let map_handle = self.handler.clone();
+        let shutdown_tx = self.shutdown_tx.clone();
+        let cln_token = self.cancellation_token.clone();
+        let (resp_tx, resp_rx) = channel::<Result<MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+
+        self.perform_handshake(&mut map_stream, &resp_tx).await?;
+
+        let grpc_resp_tx = resp_tx.clone();
+        let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+            Self::process_map_stream(map_handle, map_stream, grpc_resp_tx).await
+        });
+
+        tokio::spawn(Self::handle_map_errors(
+            handle,
+            resp_tx,
+            shutdown_tx,
+            cln_token,
+        ));
+
+        Ok(Response::new(ReceiverStream::new(resp_rx)))
     }
 
-    type BatchMapFnStream = ReceiverStream<Result<proto::BatchMapResponse, Status>>;
+    async fn is_ready(&self, _: Request<()>) -> Result<Response<ReadyResponse>, Status> {
+        Ok(Response::new(ReadyResponse { ready: true }))
+    }
+}
 
-    async fn batch_map_fn(
-        &self,
-        request: Request<Streaming<proto::BatchMapRequest>>,
-    ) -> Result<Response<Self::BatchMapFnStream>, Status> {
-        let mut stream = request.into_inner();
+impl<T> BatchMapService<T>
+where
+    T: BatchMapper + Send + Sync + 'static,
+{
+    /// processes the stream of requests from the client
+    async fn process_map_stream(
+        map_handle: Arc<T>,
+        mut map_stream: Streaming<MapRequest>,
+        grpc_resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    ) -> Result<(), Error> {
+        // loop until the global stream has been shutdown.
+        let mut global_stream_ended = false;
+        while !global_stream_ended {
+            // for every batch, we need to read from the stream. The end-of-batch is
+            // encoded in the request.
+            global_stream_ended =
+                Self::process_map_batch(map_handle.clone(), &mut map_stream, grpc_resp_tx.clone())
+                    .await?;
+        }
+        Ok(())
+    }
 
-        // Create a channel to send the messages to the user defined function.
-        let (tx, rx) = channel::<Datum>(1);
+    /// Processes a batch of messages from the client, sends them to the batch map handler, and sends the
+    /// responses back to the client. Batches are separated by an EOT message.
+    ///
+    /// Returns `true` if the global bidi-stream has ended, otherwise `false`.
+    async fn process_map_batch(
+        batch_map_handle: Arc<T>,
+        map_stream: &mut Streaming<MapRequest>,
+        grpc_resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    ) -> Result<bool, Error> {
+        let (tx, rx) = channel::<Datum>(DEFAULT_CHANNEL_SIZE);
+        let resp_tx = grpc_resp_tx.clone();
+        let batch_map_handle = batch_map_handle.clone();
 
-        // Create a channel to send the response back to the grpc client.
-        let (grpc_response_tx, grpc_response_rx) =
-            channel::<Result<proto::BatchMapResponse, Status>>(1);
-
-        // clone the shutdown_tx to be used in the writer spawn
-        let shutdown_tx = self._shutdown_tx.clone();
-
-        // clone the cancellation token to be used in the writer spawn
-        let writer_cln_token = self.cancellation_token.clone();
-
-        // counter to keep track of the number of messages received
-        let total_messages_recvd = Arc::new(AtomicUsize::new(0));
-
-        // clone the counter to be used in the request spawn
-        let counter = Arc::clone(&total_messages_recvd);
-
-        // clone the shutdown_tx to be used in the request spawn
-        let read_shutdown_tx = shutdown_tx.clone();
-        // read the messages from the grpc client and send it to the user defined function
-        let read_handler = tokio::spawn(async move {
-            loop {
-                match stream.message().await {
-                    Ok(Some(message)) => {
-                        let datum = Datum::from(message);
-                        if let Err(e) = tx.send(datum).await {
-                            tracing::error!("Failed to send message: {}", e);
-                            break;
-                        }
-                        counter.fetch_add(1, Ordering::Relaxed);
-                    }
-                    // If there's an error or the stream ends, break the loop to stop the task.
-                    // and send a shutdown signal to the grpc server.
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::error!("Error reading message: {}", e);
-                        read_shutdown_tx
-                            .send(())
-                            .await
-                            .expect("shutdown_tx send failed");
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Create a channel for receiving the response from the user defined function.
-        let (response_tx, mut response_rx) = channel::<Result<proto::BatchMapResponse, Error>>(1);
-
-        let handler = Arc::clone(&self.handler);
-
-        let udf_response_tx = response_tx.clone();
-        // spawn a task to invoke the user defined function
-        let udf_task_handle = tokio::spawn(async move {
-            // wait for the messages to be received
-            let messages = handler.batchmap(rx).await;
-
-            let counter = total_messages_recvd.load(Ordering::Relaxed);
-            // check if the number of responses matches the number of messages received
-            // if not send an error back to the grpc client.
-            if counter != messages.len() {
-                let _ = udf_response_tx
-                    .send(Err(BatchMapError(InternalError(
-                        "number of responses does not match the number of messages received"
-                            .to_string(),
-                    ))))
-                    .await;
-                return;
-            }
-
-            // send the response back to the grpc client
-            for response in messages {
-                let send_result = udf_response_tx
-                    .send(Ok(proto::BatchMapResponse {
-                        results: response.message.into_iter().map(|m| m.into()).collect(),
+        let batch_mapper_handle = tokio::spawn(async move {
+            let responses = batch_map_handle.batchmap(rx).await;
+            for response in responses {
+                resp_tx
+                    .send(Ok(MapResponse {
+                        results: response
+                            .message
+                            .into_iter()
+                            .map(|m| m.into())
+                            .collect::<Vec<proto::map_response::Result>>(),
                         id: response.id,
+                        handshake: None,
                     }))
-                    .await;
-                // if there's an error sending the response back, send an error back to the grpc client.
-                if let Err(e) = send_result {
-                    let _ = udf_response_tx
-                        .send(Err(BatchMapError(InternalError(format!(
-                            "Failed to send response back: {}",
-                            e
-                        )))))
-                        .await;
-                    return;
+                    .await
+                    .expect("Sending response to channel");
+            }
+        });
+
+        let mut global_stream_ended = false;
+
+        // loop until eot happens or the stream is closed.
+        loop {
+            let message = match map_stream.message().await {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    info!("global bidi stream ended");
+                    global_stream_ended = true;
+                    break;
                 }
-            }
-        });
+                Err(e) => {
+                    return Err(Error::BatchMapError(InternalError(format!(
+                        "Error reading message from stream: {}",
+                        e
+                    ))))
+                }
+            };
 
-        // Spawn a task to handle the error from the user defined function
-        let error_handle = tokio::spawn(async move {
-            // if there was an error while executing the user defined function spawn,
-            // send an error back to the grpc client.
-            if let Err(e) = udf_task_handle.await {
-                let _ = response_tx
-                    .send(Err(BatchMapError(UserDefinedError(format!(" {}", e)))))
-                    .await;
+            // we are done with this batch because eot=true
+            if message.status.map_or(false, |status| status.eot) {
+                debug!("Batch Ended, received an EOT message");
+                break;
             }
-        });
 
-        // Spawn a task to write the response to the grpc client, we also need to check if the cancel token is set
-        // in that case we need to stop the task.
-        tokio::spawn(async move {
-            // wait for the batch map handle to respond
-            loop {
-                tokio::select! {
-                    response = response_rx.recv() => {
-                        match response {
-                            Some(Ok(response)) => {
-                               grpc_response_tx
-                                    .send(Ok(response))
-                                    .await
-                                    .expect("send to grpc response channel failed");
-                            },
-                            Some(Err(error)) => {
-                                tracing::error!("Error from UDF: {:?}", error);
-                                grpc_response_tx
-                                    .send(Err(Status::internal(error.to_string())))
-                                    .await
-                                    .expect("send to grpc response channel failed");
-                                // Send a shutdown signal to the grpc server.
-                                shutdown_tx.send(()).await.expect("shutdown_tx send failed");
-                            }
-                            None => {
-                                // TODO: What should be for None? Is this reachable
-                                break;
-                            }
-                        }
+            // write to the UDF's tx
+            tx.send(
+                message
+                    .try_into()
+                    .map_err(|e| Error::BatchMapError(InternalError(format!("{:?}", e))))?,
+            )
+            .await
+            .map_err(|e| {
+                Error::BatchMapError(InternalError(format!(
+                    "Error sending message to map handler: {}",
+                    e
+                )))
+            })?;
+        }
+
+        // drop the sender to signal the batch map handler that the batch has ended
+        drop(tx);
+
+        // wait for UDF task to return
+        batch_mapper_handle
+            .await
+            .map_err(|e| Error::BatchMapError(UserDefinedError(e.to_string())))?;
+
+        Ok(global_stream_ended)
+    }
+
+    async fn handle_map_errors(
+        handle: JoinHandle<Result<(), Error>>,
+        resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
+        shutdown_tx: mpsc::Sender<()>,
+        cln_token: CancellationToken,
+    ) {
+        tokio::select! {
+            resp = handle => {
+                match resp {
+                    Ok(Ok(_)) => {},
+                    Ok(Err(e)) => {
+                        resp_tx
+                            .send(Err(Status::internal(e.to_string())))
+                            .await
+                            .expect("Sending error to response channel");
+                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
-                    // If the cancellation token is set, stop the task.
-                    _ = writer_cln_token.cancelled() => {
-                        tracing::info!("token cancelled!, shutting down");
-                        // Send an abort signal to the task executor to abort all the tasks.
-                        error_handle.abort();
-                        read_handler.abort();
-                        break;
+                    Err(e) => {
+                        resp_tx
+                            .send(Err(Status::internal(format!("Map handler aborted: {}", e))))
+                            .await
+                            .expect("Sending error to response channel");
+                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
                 }
+            },
+            _ = cln_token.cancelled() => {
+                resp_tx
+                    .send(Err(Status::cancelled("Map handler cancelled")))
+                    .await
+                    .expect("Sending error to response channel");
             }
-        });
+        }
+    }
 
-        // Return the receiver stream to the client
-        Ok(Response::new(ReceiverStream::new(grpc_response_rx)))
+    async fn perform_handshake(
+        &self,
+        map_stream: &mut Streaming<MapRequest>,
+        resp_tx: &mpsc::Sender<Result<MapResponse, Status>>,
+    ) -> Result<(), Status> {
+        let handshake_request = map_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+
+        if let Some(handshake) = handshake_request.handshake {
+            resp_tx
+                .send(Ok(MapResponse {
+                    results: vec![],
+                    id: "".to_string(),
+                    handshake: Some(handshake),
+                }))
+                .await
+                .map_err(|e| {
+                    Status::internal(format!("failed to send handshake response {}", e))
+                })?;
+            Ok(())
+        } else {
+            Err(Status::invalid_argument("Handshake not present"))
+        }
     }
 }
 
@@ -476,11 +524,11 @@ impl<T> Server<T> {
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let map_svc = BatchMapService {
             handler: Arc::new(handler),
-            _shutdown_tx: internal_shutdown_tx,
+            shutdown_tx: internal_shutdown_tx,
             cancellation_token: cln_token.clone(),
         };
 
-        let map_svc = proto::batch_map_server::BatchMapServer::new(map_svc)
+        let map_svc = proto::map_server::MapServer::new(map_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
@@ -524,7 +572,7 @@ mod tests {
     use tower::service_fn;
 
     use crate::batchmap;
-    use crate::batchmap::proto::batch_map_client::BatchMapClient;
+    use crate::batchmap::proto::map_client::MapClient;
     use crate::batchmap::{BatchResponse, Datum, Message};
 
     #[tokio::test]
@@ -578,27 +626,54 @@ mod tests {
             }))
             .await?;
 
-        let mut client = BatchMapClient::new(channel);
-        let request = batchmap::proto::BatchMapRequest {
-            keys: vec!["first".into()],
-            value: "hello".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
-            id: "1".to_string(),
-            headers: Default::default(),
+        let mut client = MapClient::new(channel);
+        let handshake_request = batchmap::proto::MapRequest {
+            request: None,
+            id: "0".to_string(),
+            handshake: Some(batchmap::proto::Handshake { sot: true }),
+            status: None,
         };
 
-        let request2 = batchmap::proto::BatchMapRequest {
-            keys: vec!["second".into()],
-            value: "hello2".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
+        let request = batchmap::proto::MapRequest {
+            request: Some(batchmap::proto::map_request::Request {
+                keys: vec!["first".into()],
+                value: "hello".into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                headers: Default::default(),
+            }),
+            id: "1".to_string(),
+            handshake: None,
+            status: None,
+        };
+
+        let request2 = batchmap::proto::MapRequest {
+            request: Some(batchmap::proto::map_request::Request {
+                keys: vec!["second".into()],
+                value: "hello2".into(),
+                watermark: Some(prost_types::Timestamp::default()),
+                event_time: Some(prost_types::Timestamp::default()),
+                headers: Default::default(),
+            }),
             id: "2".to_string(),
-            headers: Default::default(),
+            handshake: None,
+            status: None,
+        };
+
+        let eot_request = batchmap::proto::MapRequest {
+            request: None,
+            id: "3".to_string(),
+            handshake: None,
+            status: Some(batchmap::proto::map_request::Status { eot: true }),
         };
 
         let resp = client
-            .batch_map_fn(tokio_stream::iter(vec![request, request2]))
+            .map_fn(tokio_stream::iter(vec![
+                handshake_request,
+                request,
+                request2,
+                eot_request,
+            ]))
             .await?;
         let mut r = resp.into_inner();
         let mut responses = Vec::new();
@@ -607,9 +682,10 @@ mod tests {
             responses.push(response);
         }
 
-        assert_eq!(responses.len(), 2, "Expected two message from server");
-        assert_eq!(&responses[0].id, "1");
-        assert_eq!(&responses[1].id, "2");
+        assert_eq!(responses.len(), 3, "Expected three message from server");
+        assert!(responses[0].handshake.is_some());
+        assert_eq!(&responses[1].id, "1");
+        assert_eq!(&responses[2].id, "2");
 
         shutdown_tx
             .send(())
@@ -619,78 +695,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn error_length() -> Result<(), Box<dyn Error>> {
-        struct Logger;
-        #[tonic::async_trait]
-        impl batchmap::BatchMapper for Logger {
-            async fn batchmap(&self, mut input: Receiver<Datum>) -> Vec<BatchResponse> {
-                let responses: Vec<BatchResponse> = Vec::new();
-                while let Some(_datum) = input.recv().await {}
-                responses
-            }
-        }
-
-        let tmp_dir = TempDir::new()?;
-        let sock_file = tmp_dir.path().join("batchmap.sock");
-        let server_info_file = tmp_dir.path().join("batchmapper-server-info");
-
-        let mut server = batchmap::Server::new(Logger)
-            .with_server_info_file(&server_info_file)
-            .with_socket_file(&sock_file)
-            .with_max_message_size(10240);
-
-        assert_eq!(server.max_message_size(), 10240);
-        assert_eq!(server.server_info_file(), server_info_file);
-        assert_eq!(server.socket_file(), sock_file);
-
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
-            .connect_with_connector(service_fn(move |_: Uri| {
-                // https://rust-lang.github.io/async-book/03_async_await/01_chapter.html#async-lifetimes
-                let sock_file = sock_file.clone();
-                async move {
-                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
-                        UnixStream::connect(sock_file).await?,
-                    ))
-                }
-            }))
-            .await?;
-
-        let mut client = BatchMapClient::new(channel);
-        let request = batchmap::proto::BatchMapRequest {
-            keys: vec!["first".into(), "second".into()],
-            value: "hello".into(),
-            watermark: Some(prost_types::Timestamp::default()),
-            event_time: Some(prost_types::Timestamp::default()),
-            id: "1".to_string(),
-            headers: Default::default(),
-        };
-
-        let resp = client
-            .batch_map_fn(tokio_stream::iter(vec![request]))
-            .await?;
-        let mut r = resp.into_inner();
-
-        let Err(server_err) = r.message().await else {
-            return Err("Expected error from server".into());
-        };
-
-        assert_eq!(server_err.code(), tonic::Code::Internal);
-        assert!(server_err.message().contains(
-            "number of responses does not \
-              match the number of messages received"
-        ));
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(task.is_finished(), "gRPC server is still running");
-        Ok(())
-    }
     #[tokio::test]
     async fn batchmap_panic() -> Result<(), Box<dyn Error>> {
         struct PanicBatch;
@@ -732,23 +736,45 @@ mod tests {
             }))
             .await?;
 
-        let mut client = BatchMapClient::new(channel);
+        let mut client = MapClient::new(channel);
         let mut requests = Vec::new();
 
+        let handshake_request = batchmap::proto::MapRequest {
+            request: None,
+            id: "0".to_string(),
+            handshake: Some(batchmap::proto::Handshake { sot: true }),
+            status: None,
+        };
+        requests.push(handshake_request);
         for i in 0..10 {
-            let request = batchmap::proto::BatchMapRequest {
-                keys: vec!["first".into(), "second".into()],
-                value: format!("hello {}", i).into(),
-                watermark: Some(prost_types::Timestamp::default()),
-                event_time: Some(prost_types::Timestamp::default()),
+            let request = batchmap::proto::MapRequest {
+                request: Some(batchmap::proto::map_request::Request {
+                    keys: vec!["first".into(), "second".into()],
+                    value: format!("hello {}", i).into(),
+                    watermark: Some(prost_types::Timestamp::default()),
+                    event_time: Some(prost_types::Timestamp::default()),
+                    headers: Default::default(),
+                }),
                 id: i.to_string(),
-                headers: Default::default(),
+                handshake: None,
+                status: None,
             };
             requests.push(request);
         }
+        let eot_request = batchmap::proto::MapRequest {
+            request: None,
+            id: "11".to_string(),
+            handshake: None,
+            status: Some(batchmap::proto::map_request::Status { eot: true }),
+        };
+        requests.push(eot_request);
 
-        let resp = client.batch_map_fn(tokio_stream::iter(requests)).await?;
+        let resp = client.map_fn(tokio_stream::iter(requests)).await?;
         let mut response_stream = resp.into_inner();
+
+        // handshake response
+        let response = response_stream.message().await.expect("handshake response");
+        assert!(response.unwrap().handshake.is_some());
 
         if let Err(e) = response_stream.message().await {
             println!("Error: {:?}", e);
