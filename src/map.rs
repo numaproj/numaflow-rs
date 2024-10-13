@@ -389,6 +389,7 @@ async fn run_map<T>(
             results: messages.into_iter().map(|msg| msg.into()).collect(),
             id: message_id,
             handshake: None,
+            status: None,
         }))
         .await;
 
@@ -420,6 +421,7 @@ async fn perform_handshake(
                 results: vec![],
                 id: "".to_string(),
                 handshake: Some(handshake),
+                status: None,
             }))
             .await
             .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
@@ -610,6 +612,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
 
         let (tx, rx) = mpsc::channel(2);
@@ -617,6 +620,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
 
         tx.send(handshake_request).await?;
@@ -701,6 +705,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
         tx.send(handshake_request).await.unwrap();
 
@@ -728,6 +733,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
         tx.send(request).await.unwrap();
 
@@ -792,6 +798,7 @@ mod tests {
             request: None,
             id: "".to_string(),
             handshake: Some(proto::Handshake { sot: true }),
+            status: None,
         };
         tx.send(handshake_request).await.unwrap();
 
@@ -819,6 +826,7 @@ mod tests {
             }),
             id: "".to_string(),
             handshake: None,
+            status: None,
         };
         tx.send(request).await.unwrap();
 

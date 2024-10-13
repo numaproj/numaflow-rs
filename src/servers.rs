@@ -1,7 +1,3 @@
-#[path = "servers/batchmap.v1.rs"]
-#[rustfmt::skip]
-pub mod batchmap;
-
 #[path = "servers/map.v1.rs"]
 #[rustfmt::skip]
 pub mod map;

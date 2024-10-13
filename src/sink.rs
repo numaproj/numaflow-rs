@@ -230,20 +230,16 @@ where
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<(), Error> {
         // loop until the global stream has been shutdown.
-        loop {
+        let mut global_stream_ended = false;
+        while !global_stream_ended {
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
-            let stream_ended = Self::process_sink_batch(
+            global_stream_ended = Self::process_sink_batch(
                 sink_handle.clone(),
                 &mut sink_stream,
                 grpc_resp_tx.clone(),
             )
             .await?;
-
-            if stream_ended {
-                // shutting down, hence exiting the loop
-                break;
-            }
         }
         Ok(())
     }
@@ -276,7 +272,7 @@ where
 
         let mut global_stream_ended = false;
 
-        // loop until eot happens on stream is closed.
+        // loop until eot happens or stream is closed.
         loop {
             let message = match sink_stream.message().await {
                 Ok(Some(m)) => m,
