@@ -332,10 +332,22 @@ where
                             .collect::<Vec<proto::map_response::Result>>(),
                         id: response.id,
                         handshake: None,
+                        status: None,
                     }))
                     .await
                     .expect("Sending response to channel");
             }
+
+            // send the eot message to the client
+            resp_tx
+                .send(Ok(MapResponse {
+                    results: vec![],
+                    id: "".to_string(),
+                    handshake: None,
+                    status: Some(proto::Status { eot: true }),
+                }))
+                .await
+                .expect("Sending response to channel");
         });
 
         let mut global_stream_ended = false;
@@ -441,6 +453,7 @@ where
                     results: vec![],
                     id: "".to_string(),
                     handshake: Some(handshake),
+                    status: None,
                 }))
                 .await
                 .map_err(|e| {
@@ -664,7 +677,7 @@ mod tests {
             request: None,
             id: "3".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::map_request::Status { eot: true }),
+            status: Some(batchmap::proto::Status { eot: true }),
         };
 
         let resp = client
@@ -682,7 +695,7 @@ mod tests {
             responses.push(response);
         }
 
-        assert_eq!(responses.len(), 3, "Expected three message from server");
+        assert_eq!(responses.len(), 5, "Expected five message from server");
         assert!(responses[0].handshake.is_some());
         assert_eq!(&responses[1].id, "1");
         assert_eq!(&responses[2].id, "2");
@@ -765,7 +778,7 @@ mod tests {
             request: None,
             id: "11".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::map_request::Status { eot: true }),
+            status: Some(batchmap::proto::Status { eot: true }),
         };
         requests.push(eot_request);
 

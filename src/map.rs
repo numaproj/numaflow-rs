@@ -389,6 +389,7 @@ async fn run_map<T>(
             results: messages.into_iter().map(|msg| msg.into()).collect(),
             id: message_id,
             handshake: None,
+            status: None,
         }))
         .await;
 
@@ -420,6 +421,7 @@ async fn perform_handshake(
                 results: vec![],
                 id: "".to_string(),
                 handshake: Some(handshake),
+                status: None,
             }))
             .await
             .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
