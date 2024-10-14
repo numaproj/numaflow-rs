@@ -344,7 +344,7 @@ where
                     results: vec![],
                     id: "".to_string(),
                     handshake: None,
-                    status: Some(proto::Status { eot: true }),
+                    status: Some(proto::TransmissionStatus { eot: true }),
                 }))
                 .await
                 .expect("Sending response to channel");
@@ -677,7 +677,7 @@ mod tests {
             request: None,
             id: "3".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::Status { eot: true }),
+            status: Some(batchmap::proto::TransmissionStatus { eot: true }),
         };
 
         let resp = client
@@ -778,7 +778,7 @@ mod tests {
             request: None,
             id: "11".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::Status { eot: true }),
+            status: Some(batchmap::proto::TransmissionStatus { eot: true }),
         };
         requests.push(eot_request);
 
