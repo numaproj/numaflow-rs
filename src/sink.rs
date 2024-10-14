@@ -264,10 +264,20 @@ where
                     .send(Ok(SinkResponse {
                         result: Some(response.into()),
                         handshake: None,
+                        status: None,
                     }))
                     .await
                     .expect("Sending response to channel");
             }
+            // send an EOT message to the client to indicate the end of transmission for this batch
+            resp_tx
+                .send(Ok(SinkResponse {
+                    result: None,
+                    handshake: None,
+                    status: Some(sink_pb::TransmissionStatus { eot: true }),
+                }))
+                .await
+                .expect("Sending EOT message to channel");
         });
 
         let mut global_stream_ended = false;
@@ -377,6 +387,7 @@ where
                 .send(Ok(SinkResponse {
                     result: None,
                     handshake: Some(handshake),
+                    status: None,
                 }))
                 .await
                 .map_err(|e| {
@@ -512,16 +523,16 @@ impl<C> Drop for Server<C> {
 mod tests {
     use std::{error::Error, time::Duration};
 
+    use crate::servers::sink::TransmissionStatus;
+    use crate::sink;
+    use crate::sink::sink_pb::sink_client::SinkClient;
+    use crate::sink::sink_pb::sink_request::Request;
+    use crate::sink::sink_pb::Handshake;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
     use tower::service_fn;
-
-    use crate::sink;
-    use crate::sink::sink_pb::sink_client::SinkClient;
-    use crate::sink::sink_pb::sink_request::{Request, Status};
-    use crate::sink::sink_pb::Handshake;
 
     #[tokio::test]
     async fn sink_server() -> Result<(), Box<dyn Error>> {
@@ -600,7 +611,7 @@ mod tests {
 
         let eot_request = sink::sink_pb::SinkRequest {
             request: None,
-            status: Some(Status { eot: true }),
+            status: Some(TransmissionStatus { eot: true }),
             handshake: None,
         };
 
@@ -621,8 +632,9 @@ mod tests {
             .sink_fn(tokio_stream::iter(vec![
                 handshake_request,
                 request,
-                eot_request,
+                eot_request.clone(),
                 request_two,
+                eot_request,
             ]))
             .await?;
 
@@ -638,12 +650,26 @@ mod tests {
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "1");
 
+        // eot for first request
+        let resp = resp_stream.message().await.unwrap().unwrap();
+        assert!(resp.result.is_none());
+        assert!(resp.handshake.is_none());
+        let msg = &resp.status.unwrap();
+        assert!(msg.eot);
+
         let resp = resp_stream.message().await.unwrap().unwrap();
         assert!(resp.result.is_some());
         assert!(resp.handshake.is_none());
         let msg = &resp.result.unwrap();
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "2");
+
+        // eot for second request
+        let resp = resp_stream.message().await.unwrap().unwrap();
+        assert!(resp.result.is_none());
+        assert!(resp.handshake.is_none());
+        let msg = &resp.status.unwrap();
+        assert!(msg.eot);
 
         shutdown_tx
             .send(())
@@ -735,7 +761,7 @@ mod tests {
 
         requests.push(sink::sink_pb::SinkRequest {
             request: None,
-            status: Some(Status { eot: true }),
+            status: Some(TransmissionStatus { eot: true }),
             handshake: None,
         });
 
