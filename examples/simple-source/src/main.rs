@@ -13,6 +13,7 @@ pub(crate) mod simple_source {
     use tokio::sync::mpsc::Sender;
 
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use tokio::sync::Notify;
 
     /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
     /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK
@@ -20,6 +21,7 @@ pub(crate) mod simple_source {
     pub(crate) struct SimpleSource {
         yet_to_ack: RwLock<HashSet<String>>,
         counter: AtomicUsize,
+        notify: Notify,
     }
 
     impl SimpleSource {
@@ -27,6 +29,7 @@ pub(crate) mod simple_source {
             Self {
                 yet_to_ack: RwLock::new(HashSet::new()),
                 counter: AtomicUsize::new(0),
+                notify: Notify::new(),
             }
         }
     }
@@ -61,9 +64,11 @@ pub(crate) mod simple_source {
             self.yet_to_ack.write().unwrap().extend(message_offsets)
         }
 
-        async fn ack(&self, offset: Offset) {
-            let x = &String::from_utf8(offset.offset).unwrap();
-            self.yet_to_ack.write().unwrap().remove(x);
+        async fn ack(&self, offset: Vec<Offset>) {
+            for offset in offset {
+                let x = &String::from_utf8(offset.offset).unwrap();
+                self.yet_to_ack.write().unwrap().remove(x);
+            }
         }
 
         async fn pending(&self) -> usize {
