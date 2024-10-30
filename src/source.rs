@@ -52,7 +52,7 @@ pub trait Sourcer {
     /// Reads the messages from the source and sends them to the transmitter.
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
     /// Acknowledges the message that has been processed by the user-defined source.
-    async fn ack(&self, offset: Offset);
+    async fn ack(&self, offset: Vec<Offset>);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     async fn pending(&self) -> usize;
     /// Returns the partitions associated with the source. This will be used by the platform to determine
@@ -275,14 +275,16 @@ where
                         let request = ack_request.request
                             .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
-                        let offset = request.offset
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, offset can't be empty".to_string())))?;
-
-                        handler_fn
-                            .ack(Offset {
-                                offset: offset.offset,
+                        let offsets = request.offsets
+                            .iter()
+                            .map(|offset| Offset {
+                                offset: offset.offset.clone(),
                                 partition_id: offset.partition_id,
                             })
+                            .collect();
+
+                        handler_fn
+                            .ack(offsets)
                             .await;
 
                         // the return of handler_fn implicitly means that the ack is successful; hence
@@ -602,11 +604,13 @@ mod tests {
             self.yet_to_ack.write().unwrap().extend(message_offsets)
         }
 
-        async fn ack(&self, offset: Offset) {
-            self.yet_to_ack
-                .write()
-                .unwrap()
-                .remove(&String::from_utf8(offset.offset).unwrap());
+        async fn ack(&self, offset: Vec<Offset>) {
+            for offset in offset {
+                self.yet_to_ack
+                    .write()
+                    .unwrap()
+                    .remove(&String::from_utf8(offset.offset).unwrap());
+            }
         }
 
         async fn pending(&self) -> usize {
@@ -705,10 +709,10 @@ mod tests {
         for resp in response_values.iter() {
             let ack_request = proto::AckRequest {
                 request: Some(proto::ack_request::Request {
-                    offset: Some(proto::Offset {
+                    offsets: vec![proto::Offset {
                         offset: resp.offset.clone().unwrap().offset,
                         partition_id: resp.offset.clone().unwrap().partition_id,
-                    }),
+                    }],
                 }),
                 handshake: None,
             };
