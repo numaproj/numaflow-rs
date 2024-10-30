@@ -232,6 +232,7 @@ where
         // loop until the global stream has been shutdown.
         let mut global_stream_ended = false;
         while !global_stream_ended {
+            let start = std::time::Instant::now();
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
             global_stream_ended = Self::process_sink_batch(
@@ -240,6 +241,7 @@ where
                 grpc_resp_tx.clone(),
             )
             .await?;
+            println!("Time taken for batch: {:?}", start.elapsed().as_micros());
         }
         Ok(())
     }
@@ -259,20 +261,19 @@ where
         // spawn the UDF
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
-            for response in responses {
-                resp_tx
-                    .send(Ok(SinkResponse {
-                        result: Some(response.into()),
-                        handshake: None,
-                        status: None,
-                    }))
-                    .await
-                    .expect("Sending response to channel");
-            }
+            resp_tx
+                .send(Ok(SinkResponse {
+                    results: responses.into_iter().map(|r| r.into()).collect(),
+                    handshake: None,
+                    status: None,
+                }))
+                .await
+                .expect("Sending response to channel");
+
             // send an EOT message to the client to indicate the end of transmission for this batch
             resp_tx
                 .send(Ok(SinkResponse {
-                    result: None,
+                    results: vec![],
                     handshake: None,
                     status: Some(sink_pb::TransmissionStatus { eot: true }),
                 }))
@@ -385,7 +386,7 @@ where
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
                 .send(Ok(SinkResponse {
-                    result: None,
+                    results: vec![],
                     handshake: Some(handshake),
                     status: None,
                 }))
@@ -641,32 +642,31 @@ mod tests {
         let mut resp_stream = resp.into_inner();
         // handshake response
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_none());
         assert!(resp.handshake.is_some());
 
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_some());
-        let msg = &resp.result.unwrap();
+        assert!(!resp.results.is_empty());
+        let msg = &resp.results.get(0).unwrap();
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "1");
 
         // eot for first request
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_none());
+        assert!(resp.results.is_empty());
         assert!(resp.handshake.is_none());
         let msg = &resp.status.unwrap();
         assert!(msg.eot);
 
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_some());
+        assert!(!resp.results.is_empty());
         assert!(resp.handshake.is_none());
-        let msg = &resp.result.unwrap();
+        let msg = &resp.results.get(0).unwrap();
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "2");
 
         // eot for second request
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_none());
+        assert!(resp.results.is_empty());
         assert!(resp.handshake.is_none());
         let msg = &resp.status.unwrap();
         assert!(msg.eot);
@@ -773,7 +773,7 @@ mod tests {
 
         // handshake response
         let resp = resp_stream.message().await.unwrap().unwrap();
-        assert!(resp.result.is_none());
+        assert!(resp.results.is_empty());
         assert!(resp.handshake.is_some());
 
         let err_resp = resp_stream.message().await;
