@@ -33,7 +33,7 @@ pub(crate) enum ContainerType {
 // 1. For release candidate (RC) versions, use the RC version string directly.
 //    Example: For version 1.3.1-rc1, enter "1.3.1-rc1"
 // 2. For stable versions, append "-z" to the stable version string.
-//    Example: For version 1.3.1, enter "1.3.1-z"
+//    Example: For version 1.3.1, enter "1.4.0-z"
 //
 // Why use "-z"?
 // The "-z" suffix allows validation of pre-release versions (e.g., rc1, rc2) against the minimum version.
@@ -47,13 +47,13 @@ pub(crate) enum ContainerType {
 pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
     LazyLock::new(|| {
         let mut m = HashMap::new();
-        m.insert(ContainerType::Source, "1.3.1-z");
-        m.insert(ContainerType::Map, "1.3.1-z");
-        m.insert(ContainerType::BatchMap, "1.3.1-z");
-        m.insert(ContainerType::Reduce, "1.3.1-z");
-        m.insert(ContainerType::Sink, "1.3.1-z");
-        m.insert(ContainerType::SourceTransformer, "1.3.1-z");
-        m.insert(ContainerType::SideInput, "1.3.1-z");
+        m.insert(ContainerType::Source, "1.4.0-z");
+        m.insert(ContainerType::Map, "1.4.0-z");
+        m.insert(ContainerType::BatchMap, "1.4.0-z");
+        m.insert(ContainerType::Reduce, "1.4.0-z");
+        m.insert(ContainerType::Sink, "1.4.0-z");
+        m.insert(ContainerType::SourceTransformer, "1.4.0-z");
+        m.insert(ContainerType::SideInput, "1.4.0-z");
         m
     });
 
@@ -247,7 +247,7 @@ mod tests {
         // Check if the contents of the file are as expected
         assert!(contents.contains(r#""protocol":"uds""#));
         assert!(contents.contains(r#""language":"rust""#));
-        assert!(contents.contains(r#""minimum_numaflow_version":"1.3.1-z""#));
+        assert!(contents.contains(r#""minimum_numaflow_version":"1.4.0-z""#));
         assert!(contents.contains(r#""metadata":{"MAP_MODE":"batch-map"}"#));
 
         Ok(())
