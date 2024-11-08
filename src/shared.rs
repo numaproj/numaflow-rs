@@ -31,9 +31,9 @@ pub(crate) enum ContainerType {
 //
 // Updating this value:
 // 1. For release candidate (RC) versions, use the RC version string directly.
-//    Example: For version 1.3.1-rc1, enter "1.3.1-rc1"
+//    Example: For version 1.4.1-rc1, enter "1.4.1-rc1"
 // 2. For stable versions, append "-z" to the stable version string.
-//    Example: For version 1.3.1, enter "1.4.0-z"
+//    Example: For version 1.4.1, enter "1.4.0-z"
 //
 // Why use "-z"?
 // The "-z" suffix allows validation of pre-release versions (e.g., rc1, rc2) against the minimum version.
