@@ -1,4 +1,4 @@
-FROM rust:1.80-bookworm AS build
+FROM rust:1.82-bullseye AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -11,10 +11,10 @@ WORKDIR /numaflow-rs/examples/mapt-event-time-filter
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm AS mapt-event-time-filter
+FROM debian:bullseye AS mapt-event-time-filter
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/mapt-event-time-filter/target/release/server .
+COPY --from=build /numaflow-rs/target/release/mapt-event-time-filter .
 
 # set the startup command to run your binary
-CMD ["./server"]
+CMD ["./mapt-event-time-filter"]
