@@ -27,17 +27,6 @@ jobs:
         with:
           cache-workspaces: |
             . -> target
-            ./examples/batchmap-cat -> target
-            ./examples/batchmap-flatmap -> target
-            ./examples/map-cat -> target
-            ./examples/map-tickgen-serde -> target
-            ./examples/mapt-event-time-filter -> target
-            ./examples/reduce-counter -> target
-            ./examples/sideinput -> target
-            ./examples/sideinput/udf -> target
-            ./examples/simple-source -> target
-            ./examples/sink-log -> target
-            ./examples/source-transformer-now -> target
 
       - name: Configure sccache
         run: |
@@ -65,5 +54,6 @@ jobs:
       - name: Documentation generation
         run: RUSTFLAGS="-D warnings" cargo doc
 
+      # To view the list of files included in the package: cargo package -p numaflow --list
       - name: Dry run Cargo Publish
-        run: cargo publish --dry-run
+        run: cargo publish -p numaflow --dry-run

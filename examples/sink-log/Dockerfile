@@ -1,4 +1,4 @@
-FROM rust:1.80-bookworm AS build
+FROM rust:1.82-bullseye AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -11,10 +11,10 @@ WORKDIR /numaflow-rs/examples/sink-log
 RUN cargo build --release
 
 # our final base
-FROM debian:bookworm AS sink-log
+FROM debian:bullseye AS sink-log
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/sink-log/target/release/server .
+COPY --from=build /numaflow-rs/target/release/sink-log .
 
 # set the startup command to run your binary
-CMD ["./server"]
+CMD ["./sink-log"]

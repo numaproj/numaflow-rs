@@ -3,13 +3,9 @@ name = "simple-source"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "server"
-path = "src/main.rs"
-
 [dependencies]
 tonic = "0.12.0"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
-numaflow = { path = "../../" }
+numaflow = { path = "../../numaflow" }
 chrono = "0.4.38"
 uuid = "1.2.0"

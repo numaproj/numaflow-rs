@@ -14,7 +14,3 @@ image: update
 	-f ${DOCKER_FILE_PATH}  \
 	-t ${IMAGE_REGISTRY} .
 	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
-
-.PHONY: clean
-clean:
-	-rm -rf target
