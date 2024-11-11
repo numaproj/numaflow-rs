@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 function show_help () {
     echo "Usage: $0 [-h|--help | -t|--tag <tag>] (-bpe|--build-push-example <path>)"

@@ -1,4 +1,4 @@
-FROM rust:1.80 AS build
+FROM rust:1.82-bullseye AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -14,7 +14,7 @@ RUN cargo build --release
 FROM rust AS sideinput
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/sideinput/target/release/server .
+COPY --from=build /numaflow-rs/target/release/sideinput .
 
 # set the startup command to run your binary
-CMD ["./server"]
+CMD ["./sideinput"]
