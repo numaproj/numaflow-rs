@@ -1,4 +1,4 @@
-FROM rust:1.80-bookworm AS build
+FROM rust:1.82-bullseye AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -14,9 +14,9 @@ RUN cargo build --release
 FROM debian:bookworm AS sideinput-udf
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/examples/sideinput/udf/target/release/server .
+COPY --from=build /numaflow-rs/target/release/sideinput-udf .
 
 RUN mkdir -p /var/numaflow/sideinputs
 
 # set the startup command to run your binary
-CMD ["./server"]
+CMD ["./sideinput-udf"]

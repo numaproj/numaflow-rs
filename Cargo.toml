@@ -1,5 +1,5 @@
 [workspace]
-members = ["numaflow", "examples/*"]
+members = ["numaflow", "examples/*", "examples/sideinput/udf"]
 # Only check / build main crate by default (check all with `--workspace`)
 default-members = ["numaflow"]
 resolver = "2"
