@@ -11,7 +11,7 @@ WORKDIR /numaflow-rs/examples/sideinput
 RUN cargo build --release
 
 # our final base
-FROM rust AS sideinput
+FROM debian:bullseye AS sideinput
 
 # copy the build artifact from the build stage
 COPY --from=build /numaflow-rs/target/release/sideinput .
