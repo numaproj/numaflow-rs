@@ -2,7 +2,7 @@ name: Docker Publish
 
 on:
   push:
-    branches: [ main, fix-image-builds ]
+    branches: [ main ]
     tags:
       - '*'
 
