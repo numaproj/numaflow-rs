@@ -14,7 +14,7 @@ RUN cargo build --release
 FROM debian:bullseye AS mapt-event-time-filter
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/target/release/mapt-event-time-filter .
+COPY --from=build /numaflow-rs/target/release/source-transformer-event-time-filter .
 
 # set the startup command to run your binary
-CMD ["./mapt-event-time-filter"]
+CMD ["./source-transformer-event-time-filter"]
