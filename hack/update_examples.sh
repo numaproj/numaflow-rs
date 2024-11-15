@@ -78,7 +78,7 @@ fi
 
 if (( usingBuildPushExample )); then
    cd "./$directoryPath" || exit
-   if ! make image TAG="$tag" PUSH=true; then
+   if ! make image TAG="$tag"; then
      echo "Error: failed to run make image in $directoryPath" >&2
      exit 1
    fi
