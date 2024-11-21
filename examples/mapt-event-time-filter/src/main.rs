@@ -58,7 +58,7 @@ mod tests {
 
         let messages = filter_event_time(source_request);
 
-        assert_eq!((&messages).len(), 1);
+        assert_eq!(messages.len(), 1);
         assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "within_year_2022")
     }
 
@@ -76,7 +76,7 @@ mod tests {
 
         let messages = filter_event_time(source_request);
 
-        assert_eq!((&messages).len(), 1);
+        assert_eq!(messages.len(), 1);
         assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "after_year_2022")
     }
 
@@ -94,7 +94,10 @@ mod tests {
 
         let messages = filter_event_time(source_request);
 
-        assert_eq!((&messages).len(), 1);
-        assert_eq!((&messages)[0].tags.as_ref().unwrap()[0], "U+005C__DROP__")
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages.first().unwrap().tags.as_ref().unwrap()[0],
+            "U+005C__DROP__"
+        )
     }
 }
