@@ -646,7 +646,7 @@ mod tests {
 
         let resp = resp_stream.message().await.unwrap().unwrap();
         assert!(!resp.results.is_empty());
-        let msg = &resp.results.get(0).unwrap();
+        let msg = resp.results.first().unwrap();
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "1");
 
@@ -660,7 +660,7 @@ mod tests {
         let resp = resp_stream.message().await.unwrap().unwrap();
         assert!(!resp.results.is_empty());
         assert!(resp.handshake.is_none());
-        let msg = &resp.results.get(0).unwrap();
+        let msg = resp.results.first().unwrap();
         assert_eq!(msg.err_msg, "");
         assert_eq!(msg.id, "2");
 

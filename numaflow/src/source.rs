@@ -54,7 +54,8 @@ pub trait Sourcer {
     /// Acknowledges the message that has been processed by the user-defined source.
     async fn ack(&self, offset: Vec<Offset>);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
-    async fn pending(&self) -> usize;
+    /// The None value can be returned if source doesn't support detecting the backlog.
+    async fn pending(&self) -> Option<usize>;
     /// Returns the partitions associated with the source. This will be used by the platform to determine
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
@@ -324,12 +325,13 @@ where
 
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
-        let pending = self.handler.pending().await;
+        let pending = match self.handler.pending().await {
+            None => -1,
+            Some(val) => i64::try_from(val).unwrap_or(i64::MAX),
+        };
 
         Ok(Response::new(proto::PendingResponse {
-            result: Some(proto::pending_response::Result {
-                count: pending as i64,
-            }),
+            result: Some(proto::pending_response::Result { count: pending }),
         }))
     }
 
@@ -613,11 +615,11 @@ mod tests {
             }
         }
 
-        async fn pending(&self) -> usize {
+        async fn pending(&self) -> Option<usize> {
             // The pending function should return the number of pending messages that can be read from the source.
             // However, for this source the pending messages will always be 0.
             // For testing purposes, we return the number of messages that are not yet acknowledged as pending.
-            self.yet_to_ack.read().unwrap().len()
+            self.yet_to_ack.read().unwrap().len().into()
         }
 
         async fn partitions(&self) -> Option<Vec<i32>> {
