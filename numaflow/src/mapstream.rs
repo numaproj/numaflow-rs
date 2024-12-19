@@ -14,6 +14,7 @@ use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::servers::map as proto;
+use crate::servers::map::TransmissionStatus;
 use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
@@ -356,8 +357,8 @@ async fn run_map_stream<T>(
         }
     });
 
-    // spawn a task to catch the panics from the map_stream task
-    tokio::spawn({
+    // Wait for the map_stream_task to complete and handle any errors
+    let panic_listener = tokio::spawn({
         let error_tx = error_tx.clone();
         async move {
             if let Err(e) = map_stream_task.await {
@@ -367,9 +368,12 @@ async fn run_map_stream<T>(
                     ))))
                     .await
                     .expect("Sending error on channel");
+                return Err(e);
             }
+            Ok(())
         }
-    });
+    })
+    .await;
 
     while let Some(message) = rx.recv().await {
         let send_response_result = stream_response_tx
@@ -391,6 +395,22 @@ async fn run_map_stream<T>(
             return;
         }
     }
+
+    // we should not end eof message if the map stream panicked
+    if panic_listener.is_err() {
+        return;
+    }
+
+    // send eof message to indicate end of stream
+    stream_response_tx
+        .send(Ok(proto::MapResponse {
+            results: vec![],
+            id: message_id,
+            handshake: None,
+            status: Some(TransmissionStatus { eot: true }),
+        }))
+        .await
+        .expect("Sending eof message to gRPC response channel");
 }
 
 /// Manages the gRPC stream. If the request handler is finished, it cancels the token.
@@ -758,6 +778,11 @@ mod tests {
             let msg = &actual_response.results[0];
             assert_eq!(msg.value, expected_value.as_bytes());
         }
+
+        // read eof response
+        let eof_response = resp.message().await?;
+        assert!(eof_response.is_some());
+        assert!(eof_response.unwrap().status.is_some());
 
         drop(tx);
         shutdown_tx
