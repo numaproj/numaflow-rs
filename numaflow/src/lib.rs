@@ -37,6 +37,9 @@ pub mod sideinput;
 /// batchmap is for writing the [batch map mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/batchmap/) handlers.
 pub mod batchmap;
 
+/// mapstream is for writing the [mapstream](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/mapstream/) handlers.
+pub mod mapstream;
+
 mod servers;
 
 // Error handling on Numaflow SDKs!

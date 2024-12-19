@@ -20,6 +20,7 @@ pub(crate) const BATCH_MAP: &str = "batch-map";
 pub(crate) enum ContainerType {
     Map,
     BatchMap,
+    MapStream,
     Reduce,
     Sink,
     Source,
