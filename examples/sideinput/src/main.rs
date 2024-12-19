@@ -1,7 +1,7 @@
-use numaflow::sideinput::{self, SideInputer};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use numaflow::sideinput::{self, SideInputer};
 use tonic::async_trait;
 
 struct SideInputHandler {

@@ -167,7 +167,6 @@ impl Message {
     /// let now = Utc::now();
     /// let message = Message::new(vec![1, 2, 3], now).tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self

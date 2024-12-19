@@ -255,7 +255,6 @@ impl Message {
     ///  use numaflow::reduce::Message;
     /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self
