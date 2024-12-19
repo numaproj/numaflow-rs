@@ -34,10 +34,10 @@ pub mod sink;
 /// building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/)
 pub mod sideinput;
 
-/// batchmap is for writing the [batch map mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/batchmap/) handlers.
+/// batchmap is for writing the map in [batch mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#batch-map-mode) handlers.
 pub mod batchmap;
 
-/// mapstream is for writing the [mapstream](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/mapstream/) handlers.
+/// mapstream is for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
 pub mod mapstream;
 
 mod servers;
