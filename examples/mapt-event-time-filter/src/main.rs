@@ -1,7 +1,8 @@
+use std::error::Error;
+
 use filter_impl::filter_event_time;
 use numaflow::sourcetransform;
 use numaflow::sourcetransform::{Message, SourceTransformRequest};
-use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -41,9 +42,10 @@ mod filter_impl {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter_impl::filter_event_time;
     use chrono::{TimeZone, Utc};
     use numaflow::sourcetransform::SourceTransformRequest;
+
+    use crate::filter_impl::filter_event_time;
     /// Tests that events from 2022 are tagged as within the year 2022.
     #[test]
     fn test_filter_event_time_should_return_within_year_2022() {

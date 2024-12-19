@@ -524,16 +524,17 @@ impl<C> Drop for Server<C> {
 mod tests {
     use std::{error::Error, time::Duration};
 
-    use crate::servers::sink::TransmissionStatus;
-    use crate::sink;
-    use crate::sink::sink_pb::sink_client::SinkClient;
-    use crate::sink::sink_pb::sink_request::Request;
-    use crate::sink::sink_pb::Handshake;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::oneshot;
     use tonic::transport::Uri;
     use tower::service_fn;
+
+    use crate::servers::sink::TransmissionStatus;
+    use crate::sink;
+    use crate::sink::sink_pb::sink_client::SinkClient;
+    use crate::sink::sink_pb::sink_request::Request;
+    use crate::sink::sink_pb::Handshake;
 
     #[tokio::test]
     async fn sink_server() -> Result<(), Box<dyn Error>> {
