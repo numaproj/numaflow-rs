@@ -3,12 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::error::Error;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::map as proto;
-use crate::servers::map::map_server::Map;
-use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
-use crate::shared::{self, shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
@@ -17,6 +11,13 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
+
+use crate::error::Error;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::map as proto;
+use crate::servers::map::map_server::Map;
+use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
+use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
