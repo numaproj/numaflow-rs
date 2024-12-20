@@ -398,6 +398,7 @@ async fn run_map_stream<T>(
 
     // we should not end eof message if the map stream panicked
     if panic_listener.is_err() {
+        error!(err=?panic_listener, "there was a panic invoked");
         return;
     }
 
@@ -491,13 +492,13 @@ impl<T> Server<T> {
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    /// Default value is `/var/run/numaflow/map.sock`
+    /// Default value is `/var/run/numaflow/mapstream.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.sock_addr = file.into();
         self
     }
 
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/map.sock`
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/mapstream.sock`
     pub fn socket_file(&self) -> &std::path::Path {
         self.sock_addr.as_path()
     }
