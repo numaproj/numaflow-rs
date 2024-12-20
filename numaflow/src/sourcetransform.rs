@@ -171,25 +171,6 @@ impl Message {
         self.tags = Some(tags);
         self
     }
-
-    /// Replaces the value of the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A new vector of bytes that replaces the current message value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::sourcetransform::Message;
-    /// use chrono::Utc;
-    /// let now = Utc::now();
-    /// let message = Message::new(vec![1, 2, 3], now).with_value(vec![4, 5, 6]);
-    /// ```
-    pub fn with_value(mut self, value: Vec<u8>) -> Self {
-        self.value = value;
-        self
-    }
 }
 
 /// Incoming request to the Source Transformer.

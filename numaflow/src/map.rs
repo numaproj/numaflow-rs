@@ -145,23 +145,6 @@ impl Message {
         self.tags = Some(tags);
         self
     }
-
-    /// Replaces the value of the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A new vector of bytes that replaces the current message value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).with_value(vec![4, 5, 6]);
-    /// ```
-    pub fn with_value(mut self, value: Vec<u8>) -> Self {
-        self.value = value;
-        self
-    }
 }
 
 impl From<Message> for proto::map_response::Result {
