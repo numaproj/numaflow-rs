@@ -15,6 +15,7 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
+pub(crate) const STREAM_MAP: &str = "stream-map";
 
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
@@ -83,6 +84,7 @@ impl ServerInfo {
                 match container_type {
                     ContainerType::Map => UNARY_MAP.to_string(),
                     ContainerType::BatchMap => BATCH_MAP.to_string(),
+                    ContainerType::MapStream => STREAM_MAP.to_string(),
                     _ => "".to_string(),
                 },
             );

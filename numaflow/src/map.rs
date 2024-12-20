@@ -370,7 +370,7 @@ async fn run_map<T>(
         Err(e) => {
             error!("Failed to run map function: {e:?}");
             error_tx
-                .send(Error::MapError(ErrorKind::InternalError(format!(
+                .send(Error::MapError(ErrorKind::UserDefinedError(format!(
                     "panicked: {e:?}"
                 ))))
                 .await

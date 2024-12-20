@@ -363,8 +363,8 @@ async fn run_map_stream<T>(
         async move {
             if let Err(e) = map_stream_task.await {
                 error_tx
-                    .send(Error::MapError(ErrorKind::InternalError(format!(
-                        "Task panicked: {e:?}"
+                    .send(Error::MapError(ErrorKind::UserDefinedError(format!(
+                        "panicked: {e:?}"
                     ))))
                     .await
                     .expect("Sending error on channel");
