@@ -44,7 +44,7 @@ mod counter {
             while input.recv().await.is_some() {
                 counter += 1;
             }
-            vec![Message::new(counter.to_string().into_bytes()).keys(keys.clone())]
+            vec![Message::new(counter.to_string().into_bytes()).with_keys(keys.clone())]
         }
     }
 }

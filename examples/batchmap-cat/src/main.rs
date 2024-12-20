@@ -14,7 +14,7 @@ impl batchmap::BatchMapper for Cat {
         let mut responses: Vec<BatchResponse> = Vec::new();
         while let Some(datum) = input.recv().await {
             let mut response = BatchResponse::from_id(datum.id);
-            response.append(Message::new(datum.value).keys(datum.keys.clone()));
+            response.append(Message::new(datum.value).with_keys(datum.keys.clone()));
             responses.push(response);
         }
         responses

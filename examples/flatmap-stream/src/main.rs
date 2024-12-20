@@ -17,8 +17,8 @@ impl mapstream::MapStreamer for Cat {
 
         for split in splits {
             let message = Message::new(split.as_bytes().to_vec())
-                .keys(input.keys.clone())
-                .tags(vec![]);
+                .with_keys(input.keys.clone())
+                .with_tags(vec![]);
             if tx.send(message).await.is_err() {
                 break;
             }

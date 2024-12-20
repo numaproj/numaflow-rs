@@ -53,7 +53,7 @@ pub trait Mapper {
     /// impl map::Mapper for Cat {
     ///     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
     ///       use numaflow::map::Message;
-    ///       let message=Message::new(input.value).keys(input.keys).tags(vec![]);
+    ///       let message=Message::new(input.value).with_keys(input.keys).with_tags(vec![]);
     ///         vec![message]
     ///     }
     /// }
@@ -122,9 +122,9 @@ impl Message {
     ///
     /// ```
     ///  use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
-    pub fn keys(mut self, keys: Vec<String>) -> Self {
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
@@ -139,9 +139,9 @@ impl Message {
     ///
     /// ```
     /// use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-    pub fn tags(mut self, tags: Vec<String>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self
     }
@@ -156,9 +156,9 @@ impl Message {
     ///
     /// ```
     /// use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// let message = Message::new(vec![1, 2, 3]).with_value(vec![4, 5, 6]);
     /// ```
-    pub fn value(mut self, value: Vec<u8>) -> Self {
+    pub fn with_value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
     }

@@ -45,7 +45,7 @@ impl map::Mapper for TickGen {
             })
             .unwrap_or_default(),
         )
-        .keys(input.keys.clone());
+        .with_keys(input.keys.clone());
         vec![message]
     }
 }

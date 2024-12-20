@@ -54,8 +54,8 @@ pub trait MapStreamer {
     ///
     ///         for split in splits {
     ///             let message = Message::new(split.as_bytes().to_vec())
-    ///                 .keys(input.keys.clone())
-    ///                 .tags(vec![]);
+    ///                 .with_keys(input.keys.clone())
+    ///                 .with_tags(vec![]);
     ///             if tx.send(message).await.is_err() {
     ///                 break;
     ///             }
@@ -106,7 +106,7 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use numaflow::map::Message;
+    /// use numaflow::mapstream::Message;
     /// let dropped_message = Message::message_to_drop();
     /// ```
     pub fn message_to_drop() -> Message {
@@ -126,10 +126,10 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    ///  use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    ///  use numaflow::mapstream::Message;
+    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
-    pub fn keys(mut self, keys: Vec<String>) -> Self {
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
@@ -143,10 +143,10 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// use numaflow::mapstream::Message;
+    /// let message = Message::new(vec![1, 2, 3]).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-    pub fn tags(mut self, tags: Vec<String>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self
     }
@@ -160,10 +160,10 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use numaflow::map::Message;
-    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
+    /// use numaflow::mapstream::Message;
+    /// let message = Message::new(vec![1, 2, 3]).with_value(vec![4, 5, 6]);
     /// ```
-    pub fn value(mut self, value: Vec<u8>) -> Self {
+    pub fn with_value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
         self
     }
@@ -598,7 +598,9 @@ mod tests {
         #[async_trait]
         impl MapStreamer for Cat {
             async fn map_stream(&self, input: MapStreamRequest, tx: Sender<Message>) {
-                let message = Message::new(input.value).keys(input.keys).tags(vec![]);
+                let message = Message::new(input.value)
+                    .with_keys(input.keys)
+                    .with_value(vec![]);
                 tx.send(message).await.unwrap();
             }
         }

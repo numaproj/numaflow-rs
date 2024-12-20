@@ -32,10 +32,10 @@ mod filter_impl {
             vec![Message::message_to_drop(input.eventtime)]
         } else if input.eventtime < jan_first_2023 {
             vec![Message::new(input.value, jan_first_2022)
-                .tags(vec![String::from("within_year_2022")])]
+                .with_tags(vec![String::from("within_year_2022")])]
         } else {
             vec![Message::new(input.value, jan_first_2023)
-                .tags(vec![String::from("after_year_2022")])]
+                .with_tags(vec![String::from("after_year_2022")])]
         }
     }
 }
