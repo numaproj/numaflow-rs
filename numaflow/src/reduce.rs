@@ -130,7 +130,7 @@ pub trait Reducer {
     ///             while input.recv().await.is_some() {
     ///                 counter += 1;
     ///             }
-    ///             let message=Message::new(counter.to_string().into_bytes()).tags(vec![]).keys(keys.clone());
+    ///             let message=Message::new(counter.to_string().into_bytes()).with_tags(vec![]).with_keys(keys.clone());
     ///             vec![message]
     ///         }
     ///     }
@@ -236,9 +236,9 @@ impl Message {
     ///
     /// ```
     ///  use numaflow::reduce::Message;
-    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
-    pub fn keys(mut self, keys: Vec<String>) -> Self {
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
@@ -253,28 +253,10 @@ impl Message {
     ///
     /// ```
     ///  use numaflow::reduce::Message;
-    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-
-    pub fn tags(mut self, tags: Vec<String>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
-        self
-    }
-
-    /// Replaces the value of the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A new vector of bytes that replaces the current message value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::reduce::Message;
-    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
-    /// ```
-    pub fn value(mut self, value: Vec<u8>) -> Self {
-        self.value = value;
         self
     }
 }

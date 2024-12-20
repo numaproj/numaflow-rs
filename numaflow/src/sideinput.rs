@@ -81,7 +81,6 @@ pub trait SideInputer {
     /// ```
     ///
     /// The `retrieve_sideinput` method is implemented to return an `Option<Vec<u8>>`. In this example, the method returns a message containing the current time if the counter is odd, and `None` if the counter is even.
-
     async fn retrieve_sideinput(&self) -> Option<Vec<u8>>;
 }
 

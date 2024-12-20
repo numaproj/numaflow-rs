@@ -17,7 +17,7 @@ impl sourcetransform::SourceTransformer for NowCat {
     ) -> Vec<sourcetransform::Message> {
         vec![
             sourcetransform::Message::new(input.value, chrono::offset::Utc::now())
-                .keys(input.keys.clone()),
+                .with_keys(input.keys.clone()),
         ]
     }
 }

@@ -61,7 +61,7 @@ pub trait SourceTransformer {
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
     ///     use numaflow::sourcetransform::Message;
-    /// let message=Message::new(input.value, chrono::offset::Utc::now()).keys(input.keys).tags(vec![]);
+    /// let message=Message::new(input.value, chrono::offset::Utc::now()).with_keys(input.keys).with_tags(vec![]);
     ///         vec![message]
     ///     }
     /// }
@@ -147,9 +147,9 @@ impl Message {
     /// use numaflow::sourcetransform::Message;
     /// use chrono::Utc;
     /// let now = Utc::now();
-    /// let message = Message::new(vec![1, 2, 3], now).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3], now).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
-    pub fn keys(mut self, keys: Vec<String>) -> Self {
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
@@ -165,30 +165,10 @@ impl Message {
     /// use numaflow::sourcetransform::Message;
     /// use chrono::Utc;
     /// let now = Utc::now();
-    /// let message = Message::new(vec![1, 2, 3], now).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3], now).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-
-    pub fn tags(mut self, tags: Vec<String>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
-        self
-    }
-
-    /// Replaces the value of the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A new vector of bytes that replaces the current message value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::sourcetransform::Message;
-    /// use chrono::Utc;
-    /// let now = Utc::now();
-    /// let message = Message::new(vec![1, 2, 3], now).value(vec![4, 5, 6]);
-    /// ```
-    pub fn value(mut self, value: Vec<u8>) -> Self {
-        self.value = value;
         self
     }
 }

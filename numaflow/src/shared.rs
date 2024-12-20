@@ -15,11 +15,13 @@ use tracing::info;
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
+pub(crate) const STREAM_MAP: &str = "stream-map";
 
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
     Map,
     BatchMap,
+    MapStream,
     Reduce,
     Sink,
     Source,
@@ -76,12 +78,16 @@ pub(crate) struct ServerInfo {
 impl ServerInfo {
     pub fn new(container_type: ContainerType) -> Self {
         let mut metadata: HashMap<String, String> = HashMap::new();
-        if container_type == ContainerType::Map || container_type == ContainerType::BatchMap {
+        if container_type == ContainerType::Map
+            || container_type == ContainerType::BatchMap
+            || container_type == ContainerType::MapStream
+        {
             metadata.insert(
                 MAP_MODE_KEY.to_string(),
                 match container_type {
                     ContainerType::Map => UNARY_MAP.to_string(),
                     ContainerType::BatchMap => BATCH_MAP.to_string(),
+                    ContainerType::MapStream => STREAM_MAP.to_string(),
                     _ => "".to_string(),
                 },
             );

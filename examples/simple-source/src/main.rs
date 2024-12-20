@@ -7,12 +7,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub(crate) mod simple_source {
-    use chrono::Utc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{collections::HashSet, sync::RwLock};
-    use tokio::sync::mpsc::Sender;
 
+    use chrono::Utc;
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use tokio::sync::mpsc::Sender;
 
     /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
     /// or Atomics to provide concurrent access. Numaflow actually does not require concurrent access but we are forced to do this because the SDK

@@ -3,12 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::error::Error;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::map as proto;
-use crate::servers::map::map_server::Map;
-use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
-use crate::shared::{self, shutdown_signal, ContainerType};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
@@ -17,6 +11,13 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
+
+use crate::error::Error;
+use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::servers::map as proto;
+use crate::servers::map::map_server::Map;
+use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
+use crate::shared::{self, shutdown_signal, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -172,9 +173,9 @@ impl Message {
     ///
     /// ```
     ///  use numaflow::batchmap::Message;
-    /// let message = Message::new(vec![1, 2, 3]).keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
-    pub fn keys(mut self, keys: Vec<String>) -> Self {
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
@@ -189,27 +190,10 @@ impl Message {
     ///
     /// ```
     /// use numaflow::batchmap::Message;
-    /// let message = Message::new(vec![1, 2, 3]).tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// let message = Message::new(vec![1, 2, 3]).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
-    pub fn tags(mut self, tags: Vec<String>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
-        self
-    }
-
-    /// Replaces the value of the message.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - A new vector of bytes that replaces the current message value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use numaflow::batchmap::Message;
-    /// let message = Message::new(vec![1, 2, 3]).value(vec![4, 5, 6]);
-    /// ```
-    pub fn value(mut self, value: Vec<u8>) -> Self {
-        self.value = value;
         self
     }
 }

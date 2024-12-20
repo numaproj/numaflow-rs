@@ -10,6 +10,6 @@ struct Cat;
 #[tonic::async_trait]
 impl map::Mapper for Cat {
     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
-        vec![map::Message::new(input.value).keys(input.keys.clone())]
+        vec![map::Message::new(input.value).with_keys(input.keys.clone())]
     }
 }
