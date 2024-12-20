@@ -78,7 +78,10 @@ pub(crate) struct ServerInfo {
 impl ServerInfo {
     pub fn new(container_type: ContainerType) -> Self {
         let mut metadata: HashMap<String, String> = HashMap::new();
-        if container_type == ContainerType::Map || container_type == ContainerType::BatchMap {
+        if container_type == ContainerType::Map
+            || container_type == ContainerType::BatchMap
+            || container_type == ContainerType::MapStream
+        {
             metadata.insert(
                 MAP_MODE_KEY.to_string(),
                 match container_type {
