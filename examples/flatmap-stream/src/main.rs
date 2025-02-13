@@ -12,12 +12,12 @@ struct Cat;
 #[tonic::async_trait]
 impl mapstream::MapStreamer for Cat {
     async fn map_stream(&self, input: mapstream::MapStreamRequest, tx: Sender<Message>) {
-        let payload_str = String::from_utf8(input.value).unwrap_or_default();
-        let splits: Vec<&str> = payload_str.split(',').collect();
+        // let payload_str = String::from_utf8(input.value).unwrap_or_default();
+        // let splits: Vec<&str> = payload_str.split(',').collect();
 
-        for split in splits {
-            let message = Message::new(split.as_bytes().to_vec())
-                .with_keys(input.keys.clone())
+        for i in 0..2 {
+            let message = Message::new(input.value.clone())
+                .with_keys(vec![format!("key-{}", i)])
                 .with_tags(vec![]);
             if tx.send(message).await.is_err() {
                 break;

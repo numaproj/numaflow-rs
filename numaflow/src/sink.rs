@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 use std::{env, fs};
-
-use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -92,9 +91,9 @@ pub struct SinkRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: DateTime<Utc>,
+    pub watermark: SystemTime,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub event_time: DateTime<Utc>,
+    pub event_time: SystemTime,
     /// ID is the unique id of the message to be sent to the Sink.
     pub id: String,
     /// Headers for the message.
@@ -106,8 +105,8 @@ impl From<sink_pb::sink_request::Request> for SinkRequest {
         Self {
             keys: sr.keys,
             value: sr.value,
-            watermark: shared::utc_from_timestamp(sr.watermark),
-            event_time: shared::utc_from_timestamp(sr.event_time),
+            watermark: shared::prost_timestamp_to_system_time(sr.watermark.unwrap_or_default()),
+            event_time: shared::prost_timestamp_to_system_time(sr.event_time.unwrap_or_default()),
             id: sr.id,
             headers: sr.headers,
         }

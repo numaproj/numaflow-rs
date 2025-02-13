@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
+use std::time::SystemTime;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -40,7 +39,6 @@ pub trait MapStreamer {
     /// use tokio::sync::mpsc;
     /// use tonic::async_trait;
     /// use std::collections::HashMap;
-    /// use chrono::{DateTime, Utc};
     /// use tokio::sync::mpsc::Sender;
     /// use numaflow::mapstream::{MapStreamRequest, MapStreamer, Message};
     ///
@@ -169,9 +167,9 @@ pub struct MapStreamRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: DateTime<Utc>,
+    pub watermark: SystemTime,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub eventtime: DateTime<Utc>,
+    pub eventtime: SystemTime,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
 }
@@ -181,8 +179,8 @@ impl From<proto::map_request::Request> for MapStreamRequest {
         Self {
             keys: value.keys,
             value: value.value,
-            watermark: shared::utc_from_timestamp(value.watermark),
-            eventtime: shared::utc_from_timestamp(value.event_time),
+            watermark: shared::prost_timestamp_to_system_time(value.watermark.unwrap_or_default()),
+            eventtime: shared::prost_timestamp_to_system_time(value.event_time.unwrap_or_default()),
             headers: value.headers,
         }
     }
@@ -190,7 +188,7 @@ impl From<proto::map_request::Request> for MapStreamRequest {
 
 struct MapStreamService<T> {
     handler: Arc<T>,
-    shutdown_tx: mpsc::Sender<()>,
+    shutdown_tx: Sender<()>,
     cancellation_token: CancellationToken,
 }
 
@@ -276,8 +274,8 @@ async fn handle_stream_requests<T>(
 async fn handle_request<T>(
     handler: Arc<T>,
     map_request: Result<Option<proto::MapRequest>, Status>,
-    stream_response_tx: mpsc::Sender<Result<proto::MapResponse, Status>>,
-    error_tx: mpsc::Sender<Error>,
+    stream_response_tx: Sender<Result<proto::MapResponse, Status>>,
+    error_tx: Sender<Error>,
     token: CancellationToken,
 ) -> bool
 where
@@ -431,7 +429,7 @@ async fn manage_grpc_stream(
 /// Performs the handshake with the client.
 async fn perform_handshake(
     stream: &mut Streaming<proto::MapRequest>,
-    stream_response_tx: &mpsc::Sender<Result<proto::MapResponse, Status>>,
+    stream_response_tx: &Sender<Result<proto::MapResponse, Status>>,
 ) -> Result<(), Status> {
     let handshake_request = stream
         .message()

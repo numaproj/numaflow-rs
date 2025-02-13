@@ -1,4 +1,5 @@
 use numaflow::sourcetransform;
+use std::time::SystemTime;
 
 /// A simple source transformer which assigns event time to the current time in utc.
 
@@ -16,7 +17,7 @@ impl sourcetransform::SourceTransformer for NowCat {
         input: sourcetransform::SourceTransformRequest,
     ) -> Vec<sourcetransform::Message> {
         vec![
-            sourcetransform::Message::new(input.value, chrono::offset::Utc::now())
+            sourcetransform::Message::new(input.value, SystemTime::now())
                 .with_keys(input.keys.clone()),
         ]
     }

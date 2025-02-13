@@ -7,11 +7,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub(crate) mod simple_source {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::{collections::HashSet, sync::RwLock};
-
-    use chrono::Utc;
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{collections::HashSet, sync::RwLock};
     use tokio::sync::mpsc::Sender;
 
     /// SimpleSource is a data generator which generates monotonically increasing offsets and data. It is a shared state which is protected using Locks
@@ -38,10 +37,14 @@ pub(crate) mod simple_source {
                 return;
             }
 
-            let event_time = Utc::now();
+            let event_time = SystemTime::now();
             let mut message_offsets = Vec::with_capacity(request.count);
             for i in 0..request.count {
-                let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+                let offset = format!(
+                    "{}-{}",
+                    event_time.duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+                    i
+                );
                 let payload = self.counter.fetch_add(1, Ordering::Relaxed).to_string();
                 transmitter
                     .send(Message {
