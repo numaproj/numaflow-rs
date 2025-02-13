@@ -44,7 +44,7 @@ mod filter_impl {
 #[cfg(test)]
 mod tests {
     use numaflow::sourcetransform::SourceTransformRequest;
-    use std::time::{Duration, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use crate::filter_impl::filter_event_time;
 
@@ -55,7 +55,7 @@ mod tests {
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
-            watermark: Default::default(),
+            watermark: SystemTime::now(),
             eventtime: time,
             headers: Default::default(),
         };
@@ -73,7 +73,7 @@ mod tests {
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
-            watermark: Default::default(),
+            watermark: SystemTime::now(),
             eventtime: time,
             headers: Default::default(),
         };
@@ -91,7 +91,7 @@ mod tests {
         let source_request = SourceTransformRequest {
             keys: vec![],
             value: vec![],
-            watermark: Default::default(),
+            watermark: SystemTime::now(),
             eventtime: time,
             headers: Default::default(),
         };
