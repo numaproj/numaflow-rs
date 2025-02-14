@@ -12,8 +12,6 @@ struct Cat;
 #[tonic::async_trait]
 impl mapstream::MapStreamer for Cat {
     async fn map_stream(&self, input: mapstream::MapStreamRequest, tx: Sender<Message>) {
-        // let payload_str = String::from_utf8(input.value).unwrap_or_default();
-        // let splits: Vec<&str> = payload_str.split(',').collect();
 
         for i in 0..2 {
             let message = Message::new(input.value.clone())
