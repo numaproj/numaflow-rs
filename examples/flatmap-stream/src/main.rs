@@ -12,7 +12,6 @@ struct Cat;
 #[tonic::async_trait]
 impl mapstream::MapStreamer for Cat {
     async fn map_stream(&self, input: mapstream::MapStreamRequest, tx: Sender<Message>) {
-
         for i in 0..2 {
             let message = Message::new(input.value.clone())
                 .with_keys(vec![format!("key-{}", i)])
