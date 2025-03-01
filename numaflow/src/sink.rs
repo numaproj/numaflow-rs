@@ -125,6 +125,7 @@ pub struct Response {
     pub fallback: bool,
     /// err string is used to describe the error if [`Response::success`]  was `false`.
     pub err: Option<String>,
+    pub serve_response: Option<Vec<u8>>,
 }
 
 impl Response {
@@ -135,6 +136,7 @@ impl Response {
             success: true,
             fallback: false,
             err: None,
+            serve_response: None,
         }
     }
 
@@ -145,6 +147,7 @@ impl Response {
             success: false,
             fallback: false,
             err: Some(err),
+            serve_response: None,
         }
     }
 
@@ -156,6 +159,17 @@ impl Response {
             success: false,
             fallback: true,
             err: None,
+            serve_response: None,
+        }
+    }
+
+    pub fn serve(id: String, payload: Vec<u8>) -> Self {
+        Self {
+            id,
+            success: true,
+            fallback: false,
+            err: None,
+            serve_response: Some(payload),
         }
     }
 }
@@ -172,6 +186,7 @@ impl From<Response> for sink_pb::sink_response::Result {
                 sink_pb::Status::Failure as i32
             },
             err_msg: r.err.unwrap_or_default(),
+            serve_response: r.serve_response,
         }
     }
 }

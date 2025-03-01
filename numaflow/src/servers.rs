@@ -21,3 +21,7 @@ pub mod source;
 #[path = "servers/sourcetransformer.v1.rs"]
 #[rustfmt::skip]
 pub mod sourcetransformer;
+
+#[path = "servers/serving.v1.rs"]
+#[rustfmt::skip]
+pub mod serving;

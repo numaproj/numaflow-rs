@@ -27,6 +27,7 @@ pub(crate) enum ContainerType {
     Source,
     SourceTransformer,
     SideInput,
+    Serving,
 }
 
 // Minimum version of Numaflow required by the current SDK version
@@ -56,6 +57,7 @@ pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'st
         m.insert(ContainerType::Sink, "1.4.0-z");
         m.insert(ContainerType::SourceTransformer, "1.4.0-z");
         m.insert(ContainerType::SideInput, "1.4.0-z");
+        m.insert(ContainerType::Serving, "1.5.0-z");
         m
     });
 

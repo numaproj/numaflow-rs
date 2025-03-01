@@ -40,6 +40,8 @@ pub mod batchmap;
 /// mapstream is for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
 pub mod mapstream;
 
+pub mod serving_store;
+
 mod servers;
 
 // Error handling on Numaflow SDKs!
