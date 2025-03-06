@@ -35,11 +35,13 @@ struct ServingService<T: ServingStore> {
     cancellation_token: CancellationToken,
 }
 
+#[derive(Debug, Clone)]
 pub struct Data {
     pub id: String,
     pub payloads: Vec<Payload>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Payload {
     pub origin: String,
     pub value: Vec<u8>,
@@ -82,6 +84,38 @@ impl<T> serving_pb::serving_store_server::ServingStore for ServingService<T>
 where
     T: ServingStore + Send + Sync + 'static,
 {
+    async fn put(
+        &self,
+        request: Request<PutRequest>,
+    ) -> Result<tonic::Response<PutResponse>, Status> {
+        let request = request.into_inner();
+        let handler = Arc::clone(&self.handler);
+        let handle = tokio::spawn(async move { handler.put(request.into()).await });
+        let shutdown_tx = self.shutdown_tx.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        tokio::select! {
+            result = handle => {
+                match result {
+                    Ok(_) => Ok(tonic::Response::new(PutResponse { success: true })),
+                    Err(e) => {
+                        tracing::error!("Error in ServingStore put handler: {:?}", e);
+                        // Send a shutdown signal to the server to do a graceful shutdown because there was
+                        // a panic in the handler.
+                        shutdown_tx
+                            .send(())
+                            .await
+                            .expect("Sending shutdown signal to gRPC server");
+                        Err(Status::internal(ServingStoreError(UserDefinedError(e.to_string())).to_string()))
+                    }
+                }
+            },
+
+            _ = cancellation_token.cancelled() => {
+                Err(Status::internal(ServingStoreError(InternalError("Server is shutting down".to_string())).to_string()))
+            },
+        }
+    }
+
     async fn get(
         &self,
         request: tonic::Request<GetRequest>,
@@ -100,38 +134,6 @@ where
                     Ok(result) => Ok(tonic::Response::new(result.into())),
                     Err(e) => {
                         tracing::error!("Error in ServingStore handler: {:?}", e);
-                        // Send a shutdown signal to the server to do a graceful shutdown because there was
-                        // a panic in the handler.
-                        shutdown_tx
-                            .send(())
-                            .await
-                            .expect("Sending shutdown signal to gRPC server");
-                        Err(Status::internal(ServingStoreError(UserDefinedError(e.to_string())).to_string()))
-                    }
-                }
-            },
-
-            _ = cancellation_token.cancelled() => {
-                Err(Status::internal(ServingStoreError(InternalError("Server is shutting down".to_string())).to_string()))
-            },
-        }
-    }
-
-    async fn put(
-        &self,
-        request: tonic::Request<PutRequest>,
-    ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
-        let request = request.into_inner();
-        let handler = Arc::clone(&self.handler);
-        let handle = tokio::spawn(async move { handler.put(request.into()).await });
-        let shutdown_tx = self.shutdown_tx.clone();
-        let cancellation_token = self.cancellation_token.clone();
-        tokio::select! {
-            result = handle => {
-                match result {
-                    Ok(_) => Ok(tonic::Response::new(PutResponse { success: true })),
-                    Err(e) => {
-                        tracing::error!("Error in ServingStore put handler: {:?}", e);
                         // Send a shutdown signal to the server to do a graceful shutdown because there was
                         // a panic in the handler.
                         shutdown_tx
@@ -268,5 +270,256 @@ impl<C> Drop for Server<C> {
     // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.sock_addr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::{error::Error, time::Duration};
+    use tempfile::TempDir;
+    use tokio::net::UnixStream;
+    use tokio::sync::oneshot;
+    use tonic::transport::Uri;
+    use tower::service_fn;
+
+    use crate::serving_store::serving_pb::serving_store_client::ServingStoreClient;
+    use crate::serving_store::{self, serving_pb, Payload};
+
+    struct TestStore {
+        store: Arc<Mutex<HashMap<String, Vec<Payload>>>>,
+    }
+
+    #[tonic::async_trait]
+    impl serving_store::ServingStore for TestStore {
+        async fn put(&self, data: serving_store::Data) {
+            let mut data_map = self.store.lock().unwrap();
+            // Implement the put logic for testing
+            data_map.insert(data.id, data.payloads);
+        }
+
+        async fn get(&self, id: String) -> serving_store::Data {
+            let data_map = self.store.lock().unwrap();
+            // Implement the get logic for testing
+            let payloads = data_map.get(&id).cloned().unwrap_or_default();
+            serving_store::Data { id, payloads }
+        }
+    }
+
+    #[tokio::test]
+    async fn serving_store_server() -> Result<(), Box<dyn Error>> {
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("serving.sock");
+        let server_info_file = tmp_dir.path().join("serving-server-info");
+
+        let mut server = serving_store::Server::new(TestStore {
+            store: Arc::new(Mutex::new(HashMap::new())),
+        })
+        .with_server_info_file(&server_info_file)
+        .with_socket_file(&sock_file)
+        .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = ServingStoreClient::new(channel);
+
+        let put_request = serving_pb::PutRequest {
+            id: "test_id".to_string(),
+            payloads: vec![serving_pb::Payload {
+                origin: "test_origin".to_string(),
+                value: vec![1, 2, 3],
+            }],
+        };
+
+        let put_response = client.put(tonic::Request::new(put_request)).await?;
+        assert!(put_response.into_inner().success);
+
+        let get_request = serving_pb::GetRequest {
+            id: "test_id".to_string(),
+        };
+
+        let get_response = client.get(tonic::Request::new(get_request)).await?;
+        let get_response = get_response.into_inner();
+        assert_eq!(get_response.id, "test_id");
+        assert_eq!(get_response.payloads.len(), 1);
+        assert_eq!(get_response.payloads[0].origin, "test_origin");
+        assert_eq!(get_response.payloads[0].value, vec![1, 2, 3]);
+
+        drop(shutdown_tx);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serving_store_server_panic_put() -> Result<(), Box<dyn Error>> {
+        struct PanicStore;
+        #[tonic::async_trait]
+        impl serving_store::ServingStore for PanicStore {
+            async fn put(&self, _: serving_store::Data) {
+                panic!("Panic in put handler");
+            }
+
+            async fn get(&self, id: String) -> serving_store::Data {
+                serving_store::Data {
+                    id,
+                    payloads: vec![],
+                }
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("serving.sock");
+        let server_info_file = tmp_dir.path().join("serving-server-info");
+
+        let mut server = serving_store::Server::new(PanicStore)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = ServingStoreClient::new(channel);
+
+        let put_request = serving_pb::PutRequest {
+            id: "test_id".to_string(),
+            payloads: vec![serving_pb::Payload {
+                origin: "test_origin".to_string(),
+                value: vec![1, 2, 3],
+            }],
+        };
+
+        let put_response = client.put(tonic::Request::new(put_request)).await;
+        assert!(
+            put_response.is_err(),
+            "Expected error response due to panic"
+        );
+
+        if let Err(status) = put_response {
+            assert!(
+                status.message().contains("Panic in put handler"),
+                "Panic message not found"
+            );
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serving_store_server_panic_get() -> Result<(), Box<dyn Error>> {
+        struct PanicStore;
+        #[tonic::async_trait]
+        impl serving_store::ServingStore for PanicStore {
+            async fn put(&self, _: serving_store::Data) {
+                // Implement the put logic for testing
+            }
+
+            async fn get(&self, _: String) -> serving_store::Data {
+                panic!("Panic in get handler");
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("serving.sock");
+        let server_info_file = tmp_dir.path().join("serving-server-info");
+
+        let mut server = serving_store::Server::new(PanicStore)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        let mut client = ServingStoreClient::new(channel);
+
+        let get_request = serving_pb::GetRequest {
+            id: "test_id".to_string(),
+        };
+
+        let get_response = client.get(tonic::Request::new(get_request)).await;
+        assert!(
+            get_response.is_err(),
+            "Expected error response due to panic"
+        );
+
+        if let Err(status) = get_response {
+            assert!(
+                status.message().contains("Panic in get handler"),
+                "Panic message not found"
+            );
+        }
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
     }
 }

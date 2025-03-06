@@ -354,7 +354,7 @@ where
             };
 
             // we are done with this batch because eot=true
-            if message.status.map_or(false, |status| status.eot) {
+            if message.status.is_some_and(|status| status.eot) {
                 debug!("Batch Ended, received an EOT message");
                 break;
             }
