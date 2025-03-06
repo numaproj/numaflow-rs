@@ -17,7 +17,9 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
 
-/// ServingStore trait for implementing user defined stores.
+/// ServingStore trait for implementing user defined stores. This Store has to be
+/// a shared Store between the Source and the Sink vertices. [put] happens in Sink
+/// while the [get] gets called at the Source.
 ///
 /// Types implementing this trait can be passed as user-defined store handle.
 #[tonic::async_trait]
@@ -35,15 +37,21 @@ struct ServingService<T: ServingStore> {
     cancellation_token: CancellationToken,
 }
 
+/// The processed data from the Pipeline to be stored in the Store.
 #[derive(Debug, Clone)]
 pub struct Data {
+    /// The unique request ID, the result stored in the store will be index using this ID.
     pub id: String,
+    /// FlatMap of results that will be stored in the Store.
     pub payloads: Vec<Payload>,
 }
 
 #[derive(Debug, Clone)]
+/// Each individual result of the processing.
 pub struct Payload {
+    /// The Sink vertex that wrote this result.
     pub origin: String,
+    /// The raw result.
     pub value: Vec<u8>,
 }
 
@@ -90,6 +98,7 @@ where
     ) -> Result<tonic::Response<PutResponse>, Status> {
         let request = request.into_inner();
         let handler = Arc::clone(&self.handler);
+        // this tokio::spawn is to capture the panic in the UDF code.
         let handle = tokio::spawn(async move { handler.put(request.into()).await });
         let shutdown_tx = self.shutdown_tx.clone();
         let cancellation_token = self.cancellation_token.clone();
@@ -122,6 +131,7 @@ where
     ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
         let request = request.into_inner();
         let handler = Arc::clone(&self.handler);
+        /// capture panic
         let handle = tokio::spawn(async move { handler.get(request.id).await });
         let shutdown_tx = self.shutdown_tx.clone();
         let cancellation_token = self.cancellation_token.clone();
