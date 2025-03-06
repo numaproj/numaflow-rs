@@ -131,7 +131,7 @@ where
     ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
         let request = request.into_inner();
         let handler = Arc::clone(&self.handler);
-        /// capture panic
+        // capture panic
         let handle = tokio::spawn(async move { handler.get(request.id).await });
         let shutdown_tx = self.shutdown_tx.clone();
         let cancellation_token = self.cancellation_token.clone();
