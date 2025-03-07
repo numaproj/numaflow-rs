@@ -33,4 +33,7 @@ pub enum Error {
 
     #[error("SideInput Error: {0}")]
     SideInputError(ErrorKind),
+
+    #[error("ServingStore Error: {0}")]
+    ServingStoreError(ErrorKind),
 }

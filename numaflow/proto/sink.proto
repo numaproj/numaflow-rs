@@ -3,6 +3,7 @@ syntax = "proto3";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
+
 package sink.v1;
 
 service Sink {
@@ -63,6 +64,7 @@ enum Status {
   SUCCESS = 0;
   FAILURE = 1;
   FALLBACK = 2;
+  SERVE = 3;
 }
 
 /**
@@ -76,6 +78,7 @@ message SinkResponse {
     Status status = 2;
     // err_msg is the error message, set it if success is set to false.
     string err_msg = 3;
+    optional bytes serve_response = 4;
   }
   repeated Result results = 1;
   optional Handshake handshake = 2;

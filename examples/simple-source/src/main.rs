@@ -1,4 +1,5 @@
-///! An example for simple User Defined Source. It generates a continuous increasing sequence of offsets and some data for each call to [`numaflow::source::sourcer::read`].
+//! An example for simple User Defined Source. It generates a continuous increasing sequence of offsets
+//! and some data for each call to [`numaflow::source::sourcer::read`].
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
