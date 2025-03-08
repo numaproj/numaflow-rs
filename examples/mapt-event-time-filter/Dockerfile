@@ -1,4 +1,4 @@
-FROM rust:1.82-bullseye AS build
+FROM rust:1.84-bullseye AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
