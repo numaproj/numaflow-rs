@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
+use std::time::SystemTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -164,9 +163,9 @@ pub struct MapRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: DateTime<Utc>,
+    pub watermark: SystemTime,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub eventtime: DateTime<Utc>,
+    pub eventtime: SystemTime,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
 }
@@ -176,8 +175,8 @@ impl From<proto::map_request::Request> for MapRequest {
         Self {
             keys: value.keys,
             value: value.value,
-            watermark: shared::utc_from_timestamp(value.watermark),
-            eventtime: shared::utc_from_timestamp(value.event_time),
+            watermark: shared::prost_timestamp_to_system_time(value.watermark.unwrap_or_default()),
+            eventtime: shared::prost_timestamp_to_system_time(value.event_time.unwrap_or_default()),
             headers: value.headers,
         }
     }

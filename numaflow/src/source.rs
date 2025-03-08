@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -16,7 +15,7 @@ use tracing::{error, info};
 use crate::error::Error::SourceError;
 use crate::error::{Error, ErrorKind};
 use crate::servers::source as proto;
-use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
+use crate::shared::{self, prost_timestamp_from_system_time, ContainerType};
 use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -100,7 +99,7 @@ where
                             offset: resp.offset.offset,
                             partition_id: resp.offset.partition_id,
                         }),
-                        event_time: prost_timestamp_from_utc(resp.event_time),
+                        event_time: Some(prost_timestamp_from_system_time(resp.event_time)),
                         keys: resp.keys,
                         headers: Default::default(),
                     }),
@@ -234,7 +233,7 @@ where
                     .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
-                // if there are any failures, we propagate those failures so that the server can shutdown.
+                // if there are any failures, we propagate those failures so that the server can shut down.
                 shutdown_tx
                     .send(())
                     .await
@@ -424,7 +423,7 @@ pub struct Message {
     /// Offset of the message. When the message is acked, the offset is passed to the user's [`Sourcer::ack`].
     pub offset: Offset,
     /// The time at which the message was generated.
-    pub event_time: DateTime<Utc>,
+    pub event_time: SystemTime,
     /// Keys of the message.
     pub keys: Vec<String>,
     /// Headers of the message.
@@ -545,10 +544,9 @@ impl<C> Drop for Server<C> {
 mod tests {
     use std::collections::{HashMap, HashSet};
     use std::error::Error;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
 
-    use chrono::Utc;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::mpsc::Sender;
@@ -580,14 +578,18 @@ mod tests {
     #[tonic::async_trait]
     impl source::Sourcer for Repeater {
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
-            let event_time = Utc::now();
+            let event_time = SystemTime::now();
             let mut message_offsets = Vec::with_capacity(request.count);
 
             for i in 0..request.count {
                 let mut headers = HashMap::new();
                 headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
                 // we assume timestamp in nanoseconds would be unique on each read operation from our source
-                let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+                let offset = format!(
+                    "{}-{}",
+                    event_time.duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+                    i
+                );
                 transmitter
                     .send(Message {
                         value: self.num.to_le_bytes().to_vec(),
