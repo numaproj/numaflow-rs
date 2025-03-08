@@ -1,7 +1,7 @@
-use chrono::{SecondsFormat, TimeZone, Utc};
 use numaflow::map;
 use numaflow::map::Message;
 use serde::Serialize;
+use std::time::UNIX_EPOCH;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -35,13 +35,11 @@ impl map::Mapper for TickGen {
         let Ok(payload) = serde_json::from_slice::<Payload>(&input.value) else {
             return vec![];
         };
-        let ts = Utc
-            .timestamp_nanos(payload.created_ts)
-            .to_rfc3339_opts(SecondsFormat::Nanos, true);
+        let ts = UNIX_EPOCH + std::time::Duration::from_nanos(payload.created_ts as u64);
         let message = map::Message::new(
             serde_json::to_vec(&ResultPayload {
                 value: payload.data.value,
-                time: ts,
+                time: format!("{:?}", ts),
             })
             .unwrap_or_default(),
         )
