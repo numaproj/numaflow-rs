@@ -3,7 +3,6 @@ use numaflow::batchmap::{BatchResponse, Datum, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Starting Flatmap server");
     batchmap::Server::new(Flatmap).start().await
 }
 

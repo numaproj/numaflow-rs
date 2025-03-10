@@ -1,5 +1,5 @@
 TAG ?= stable
-PUSH ?= false
+PUSH ?= true
 IMAGE_REGISTRY = quay.io/numaio/numaflow-rs/batchmap-flatmap:${TAG}
 DOCKER_FILE_PATH = examples/batchmap-flatmap/Dockerfile
 
