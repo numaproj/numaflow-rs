@@ -46,7 +46,6 @@ mod tests {
     use crate::filter_impl::filter_event_time;
     use chrono::{TimeZone, Utc};
     use numaflow::sourcetransform::SourceTransformRequest;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     /// Tests that events from 2022 are tagged as within the year 2022.
     #[test]
