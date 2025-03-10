@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use std::{env, fs};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -91,9 +91,9 @@ pub struct SinkRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: SystemTime,
+    pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub event_time: SystemTime,
+    pub event_time: DateTime<Utc>,
     /// ID is the unique id of the message to be sent to the Sink.
     pub id: String,
     /// Headers for the message.
@@ -105,24 +105,33 @@ impl From<sink_pb::sink_request::Request> for SinkRequest {
         Self {
             keys: sr.keys,
             value: sr.value,
-            watermark: shared::prost_timestamp_to_system_time(sr.watermark.unwrap_or_default()),
-            event_time: shared::prost_timestamp_to_system_time(sr.event_time.unwrap_or_default()),
+            watermark: shared::utc_from_timestamp(sr.watermark),
+            event_time: shared::utc_from_timestamp(sr.event_time),
             id: sr.id,
             headers: sr.headers,
         }
     }
 }
 
+/// Type of response from the sink handler.
+pub enum ResponseType {
+    /// write to the sink was successful.
+    Success,
+    /// write to the sink failed.
+    Failure,
+    /// message should be forwarded to the fallback sink.
+    FallBack,
+    /// message should be written to the serving store.
+    Serve,
+}
+
 /// The result of the call to [`Sinker::sink`] method.
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,
-    /// success indicates whether to write to the sink was successful. If set to `false`, it will be
-    /// retried, hence it is better to try till it is successful.
-    pub success: bool,
-    /// fallback is used to indicate that the message should be forwarded to the fallback sink.
-    pub fallback: bool,
-    /// err string is used to describe the error if [`Response::success`]  was `false`.
+    /// response_type indicates the type of the response.
+    pub response_type: ResponseType,
+    /// err string is used to describe the error if [`ResponseType::Failure`]  is set.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
 }
@@ -132,8 +141,7 @@ impl Response {
     pub fn ok(id: String) -> Self {
         Self {
             id,
-            success: true,
-            fallback: false,
+            response_type: ResponseType::Success,
             err: None,
             serve_response: None,
         }
@@ -143,8 +151,7 @@ impl Response {
     pub fn failure(id: String, err: String) -> Self {
         Self {
             id,
-            success: false,
-            fallback: false,
+            response_type: ResponseType::Failure,
             err: Some(err),
             serve_response: None,
         }
@@ -155,8 +162,7 @@ impl Response {
     pub fn fallback(id: String) -> Self {
         Self {
             id,
-            success: false,
-            fallback: true,
+            response_type: ResponseType::FallBack,
             err: None,
             serve_response: None,
         }
@@ -165,8 +171,7 @@ impl Response {
     pub fn serve(id: String, payload: Vec<u8>) -> Self {
         Self {
             id,
-            success: true,
-            fallback: false,
+            response_type: ResponseType::Serve,
             err: None,
             serve_response: Some(payload),
         }
@@ -177,12 +182,11 @@ impl From<Response> for sink_pb::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
-            status: if r.fallback {
-                sink_pb::Status::Fallback as i32
-            } else if r.success {
-                sink_pb::Status::Success as i32
-            } else {
-                sink_pb::Status::Failure as i32
+            status: match r.response_type {
+                ResponseType::Success => sink_pb::Status::Success as i32,
+                ResponseType::Failure => sink_pb::Status::Failure as i32,
+                ResponseType::FallBack => sink_pb::Status::Fallback as i32,
+                ResponseType::Serve => sink_pb::Status::Serve as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
@@ -246,7 +250,6 @@ where
         // loop until the global stream has been shutdown.
         let mut global_stream_ended = false;
         while !global_stream_ended {
-            let start = std::time::Instant::now();
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
             global_stream_ended = Self::process_sink_batch(
@@ -255,7 +258,6 @@ where
                 grpc_resp_tx.clone(),
             )
             .await?;
-            println!("Time taken for batch: {:?}", start.elapsed().as_micros());
         }
         Ok(())
     }

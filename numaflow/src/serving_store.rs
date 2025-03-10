@@ -18,8 +18,8 @@ const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
 const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
 
 /// ServingStore trait for implementing user defined stores. This Store has to be
-/// a shared Store between the Source and the Sink vertices. [put] happens in Sink
-/// while the [get] gets called at the Source.
+/// a shared Store between the Source and the Sink vertices. [ServingStore::put] happens in Sink
+/// while the [ServingService::get] gets called at the serving layer.
 ///
 /// Types implementing this trait can be passed as user-defined store handle.
 #[tonic::async_trait]
