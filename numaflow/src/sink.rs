@@ -131,7 +131,7 @@ pub struct Response {
     pub id: String,
     /// response_type indicates the type of the response.
     pub response_type: ResponseType,
-    /// err string is used to describe the error if [`Response::success`]  was `false`.
+    /// err string is used to describe the error if [`ResponseType::Failure`]  is set.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
 }
@@ -259,7 +259,6 @@ where
                 grpc_resp_tx.clone(),
             )
             .await?;
-            println!("Time taken for batch: {:?}", start.elapsed().as_micros());
         }
         Ok(())
     }
