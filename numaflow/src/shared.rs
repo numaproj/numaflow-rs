@@ -187,7 +187,6 @@ pub(crate) async fn shutdown_signal(
 mod tests {
     use std::fs::File;
     use std::io::Read;
-    use std::time::{Duration, UNIX_EPOCH};
 
     use tempfile::NamedTempFile;
 
