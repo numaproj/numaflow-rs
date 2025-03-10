@@ -113,15 +113,24 @@ impl From<sink_pb::sink_request::Request> for SinkRequest {
     }
 }
 
+/// Type of response from the sink handler.
+pub enum ResponseType {
+    /// write to the sink was successful.
+    Success,
+    /// write to the sink failed.
+    Failure,
+    /// message should be forwarded to the fallback sink.
+    FallBack,
+    /// message should be written to the serving store.
+    Serve,
+}
+
 /// The result of the call to [`Sinker::sink`] method.
 pub struct Response {
     /// id is the unique ID of the message.
     pub id: String,
-    /// success indicates whether to write to the sink was successful. If set to `false`, it will be
-    /// retried, hence it is better to try till it is successful.
-    pub success: bool,
-    /// fallback is used to indicate that the message should be forwarded to the fallback sink.
-    pub fallback: bool,
+    /// response_type indicates the type of the response.
+    pub response_type: ResponseType,
     /// err string is used to describe the error if [`Response::success`]  was `false`.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
@@ -132,8 +141,7 @@ impl Response {
     pub fn ok(id: String) -> Self {
         Self {
             id,
-            success: true,
-            fallback: false,
+            response_type: ResponseType::Success,
             err: None,
             serve_response: None,
         }
@@ -143,8 +151,7 @@ impl Response {
     pub fn failure(id: String, err: String) -> Self {
         Self {
             id,
-            success: false,
-            fallback: false,
+            response_type: ResponseType::Failure,
             err: Some(err),
             serve_response: None,
         }
@@ -155,8 +162,7 @@ impl Response {
     pub fn fallback(id: String) -> Self {
         Self {
             id,
-            success: false,
-            fallback: true,
+            response_type: ResponseType::FallBack,
             err: None,
             serve_response: None,
         }
@@ -165,8 +171,7 @@ impl Response {
     pub fn serve(id: String, payload: Vec<u8>) -> Self {
         Self {
             id,
-            success: true,
-            fallback: false,
+            response_type: ResponseType::Serve,
             err: None,
             serve_response: Some(payload),
         }
@@ -177,12 +182,11 @@ impl From<Response> for sink_pb::sink_response::Result {
     fn from(r: Response) -> Self {
         Self {
             id: r.id,
-            status: if r.fallback {
-                sink_pb::Status::Fallback as i32
-            } else if r.success {
-                sink_pb::Status::Success as i32
-            } else {
-                sink_pb::Status::Failure as i32
+            status: match r.response_type {
+                ResponseType::Success => sink_pb::Status::Success as i32,
+                ResponseType::Failure => sink_pb::Status::Failure as i32,
+                ResponseType::FallBack => sink_pb::Status::Fallback as i32,
+                ResponseType::Serve => sink_pb::Status::Serve as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
