@@ -3,6 +3,7 @@ use numaflow::batchmap::{BatchResponse, Datum, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("Starting Flatmap server");
     batchmap::Server::new(Flatmap).start().await
 }
 
@@ -21,7 +22,7 @@ impl batchmap::BatchMapper for Flatmap {
             // Split the string by ","
             let parts: Vec<&str> = s.split(',').collect();
 
-            // return the resulting parts
+            // return the resulting parts as a Vec<Message>
             for part in parts {
                 response.append(Message::new(Vec::from(part)).with_keys(datum.keys.clone()));
             }

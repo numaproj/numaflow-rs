@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -14,9 +14,7 @@ use crate::error::Error;
 use crate::error::Error::ReduceError;
 use crate::error::ErrorKind::{InternalError, UserDefinedError};
 pub use crate::servers::reduce as proto;
-use crate::shared::{
-    self, prost_timestamp_from_system_time, prost_timestamp_to_system_time, ContainerType,
-};
+use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
@@ -147,25 +145,16 @@ pub trait Reducer {
 }
 
 /// IntervalWindow is the start and end boundary of the window.
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct IntervalWindow {
     // start time of the window
-    pub start_time: SystemTime,
+    pub start_time: DateTime<Utc>,
     // end time of the window
-    pub end_time: SystemTime,
-}
-
-impl Default for IntervalWindow {
-    fn default() -> Self {
-        Self {
-            start_time: SystemTime::UNIX_EPOCH,
-            end_time: SystemTime::UNIX_EPOCH,
-        }
-    }
+    pub end_time: DateTime<Utc>,
 }
 
 impl IntervalWindow {
-    fn new(start_time: SystemTime, end_time: SystemTime) -> Self {
+    fn new(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Self {
         Self {
             start_time,
             end_time,
@@ -278,9 +267,9 @@ pub struct ReduceRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.    /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: SystemTime,
+    pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub eventtime: SystemTime,
+    pub eventtime: DateTime<Utc>,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
 }
@@ -444,12 +433,8 @@ impl Task {
                             tags: message.tags.unwrap_or_default(),
                         }),
                         window: Some(proto::Window {
-                            start: Some(prost_timestamp_from_system_time(
-                                md.interval_window.start_time,
-                            )),
-                            end: Some(prost_timestamp_from_system_time(
-                                md.interval_window.end_time,
-                            )),
+                            start: prost_timestamp_from_utc(md.interval_window.start_time),
+                            end: prost_timestamp_from_utc(md.interval_window.end_time),
                             slot: SLOT_0.to_string(),
                         }),
                         eof: false,
@@ -682,8 +667,8 @@ where
         // Extract the start and end time from the window
         let window = &windows[0];
         let (start_time, end_time) = (
-            prost_timestamp_to_system_time(window.start.expect("start time not found")),
-            prost_timestamp_to_system_time(window.end.expect("end time not found")),
+            shared::utc_from_timestamp(window.start),
+            shared::utc_from_timestamp(window.end),
         );
 
         // Create the IntervalWindow
@@ -693,8 +678,8 @@ where
         let reduce_request = ReduceRequest {
             keys: payload.keys,
             value: payload.value,
-            watermark: prost_timestamp_to_system_time(payload.watermark.unwrap_or_default()),
-            eventtime: prost_timestamp_to_system_time(payload.event_time.unwrap_or_default()),
+            watermark: shared::utc_from_timestamp(payload.watermark),
+            eventtime: shared::utc_from_timestamp(payload.event_time),
             headers: payload.headers,
         };
 
@@ -713,8 +698,8 @@ where
             .send(Ok(proto::ReduceResponse {
                 result: None,
                 window: Some(proto::Window {
-                    start: Some(prost_timestamp_from_system_time(self.window.start_time)),
-                    end: Some(prost_timestamp_from_system_time(self.window.end_time)),
+                    start: prost_timestamp_from_utc(self.window.start_time),
+                    end: prost_timestamp_from_utc(self.window.end_time),
                     slot: "slot-0".to_string(),
                 }),
                 eof: true,

@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
 use proto::SourceTransformResponse;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -14,9 +14,7 @@ use tracing::{error, info};
 use crate::error::Error::{self, SourceTransformerError};
 use crate::error::ErrorKind;
 use crate::servers::sourcetransformer as proto;
-use crate::shared::{
-    self, prost_timestamp_from_system_time, prost_timestamp_to_system_time, ContainerType,
-};
+use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType};
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
@@ -61,10 +59,9 @@ pub trait SourceTransformer {
     ///         &self,
     ///         input: sourcetransform::SourceTransformRequest,
     ///     ) -> Vec<sourcetransform::Message> {
-    ///     use std::time::SystemTime;
-    /// use numaflow::sourcetransform::Message;
-    /// let message=Message::new(input.value, SystemTime::now()).with_keys(input.keys).with_tags(vec![]);
-    ///         vec![message]
+    ///         use numaflow::sourcetransform::Message;
+    ///         let message=Message::new(input.value, chrono::offset::Utc::now()).with_keys(input.keys).with_tags(vec![]);
+    ///        vec![message]
     ///     }
     /// }
     /// ```
@@ -81,7 +78,7 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Time for the given event. This will be used for tracking watermarks. If cannot be derived, set it to the incoming
     /// event_time from the [`SourceTransformRequest`].
-    pub event_time: SystemTime,
+    pub event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
 }
@@ -100,12 +97,12 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use std::time::SystemTime;
     /// use numaflow::sourcetransform::Message;
-    /// let now = SystemTime::now();
+    /// use chrono::Utc;
+    /// let now = Utc::now();
     /// let message = Message::new(vec![1, 2, 3, 4], now);
     /// ```
-    pub fn new(value: Vec<u8>, event_time: SystemTime) -> Self {
+    pub fn new(value: Vec<u8>, event_time: DateTime<Utc>) -> Self {
         Self {
             value,
             event_time,
@@ -123,12 +120,12 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use std::time::SystemTime;
     /// use numaflow::sourcetransform::Message;
-    /// let now = SystemTime::now();
+    /// use chrono::Utc;
+    /// let now = Utc::now();
     /// let dropped_message = Message::message_to_drop(now);
     /// ```
-    pub fn message_to_drop(event_time: SystemTime) -> Message {
+    pub fn message_to_drop(event_time: DateTime<Utc>) -> Message {
         Message {
             keys: None,
             value: vec![],
@@ -146,9 +143,9 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use std::time::SystemTime;
     /// use numaflow::sourcetransform::Message;
-    /// let now = SystemTime::now();
+    /// use chrono::Utc;
+    /// let now = Utc::now();
     /// let message = Message::new(vec![1, 2, 3], now).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
     pub fn with_keys(mut self, keys: Vec<String>) -> Self {
@@ -164,9 +161,9 @@ impl Message {
     /// # Examples
     ///
     /// ```
-    /// use std::time::SystemTime;
     /// use numaflow::sourcetransform::Message;
-    /// let now = SystemTime::now();
+    /// use chrono::Utc;
+    /// let now = Utc::now();
     /// let message = Message::new(vec![1, 2, 3], now).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
@@ -185,9 +182,9 @@ pub struct SourceTransformRequest {
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
-    pub watermark: SystemTime,
+    pub watermark: DateTime<Utc>,
     /// event_time is the time of the element as seen at source or aligned after a reduce operation.
-    pub eventtime: SystemTime,
+    pub eventtime: DateTime<Utc>,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
 }
@@ -197,7 +194,7 @@ impl From<Message> for proto::source_transform_response::Result {
         proto::source_transform_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
-            event_time: Some(prost_timestamp_from_system_time(value.event_time)),
+            event_time: prost_timestamp_from_utc(value.event_time),
             tags: value.tags.unwrap_or_default(),
         }
     }
@@ -208,8 +205,8 @@ impl From<proto::source_transform_request::Request> for SourceTransformRequest {
         SourceTransformRequest {
             keys: request.keys,
             value: request.value,
-            watermark: prost_timestamp_to_system_time(request.watermark.unwrap_or_default()),
-            eventtime: prost_timestamp_to_system_time(request.event_time.unwrap_or_default()),
+            watermark: utc_from_timestamp(request.watermark),
+            eventtime: utc_from_timestamp(request.event_time),
             headers: request.headers,
         }
     }
@@ -562,7 +559,7 @@ impl<C> Drop for Server<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use chrono::Utc;
     use std::{error::Error, time::Duration};
     use tempfile::TempDir;
     use tokio::net::UnixStream;
@@ -589,7 +586,7 @@ mod tests {
                     keys: Some(input.keys),
                     value: input.value,
                     tags: Some(vec![]),
-                    event_time: SystemTime::now(),
+                    event_time: Utc::now(),
                 }]
             }
         }

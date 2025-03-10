@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -83,9 +83,9 @@ pub struct Datum {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: SystemTime,
+    pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub event_time: SystemTime,
+    pub event_time: DateTime<Utc>,
     /// ID is the unique id of the message to be sent to the Batch Map.
     pub id: String,
     /// Headers for the message.
@@ -103,12 +103,8 @@ impl TryFrom<MapRequest> for Datum {
         Ok(Self {
             keys: request.keys,
             value: request.value,
-            watermark: shared::prost_timestamp_to_system_time(
-                request.watermark.unwrap_or_default(),
-            ),
-            event_time: shared::prost_timestamp_to_system_time(
-                request.event_time.unwrap_or_default(),
-            ),
+            watermark: shared::utc_from_timestamp(request.watermark),
+            event_time: shared::utc_from_timestamp(request.event_time),
             id: sr.id,
             headers: request.headers,
         })

@@ -1,9 +1,9 @@
+use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
 use tokio::signal;
@@ -130,16 +130,17 @@ pub(crate) fn create_listener_stream(
     Ok(UnixListenerStream::new(uds_stream))
 }
 
-pub(crate) fn prost_timestamp_from_system_time(t: SystemTime) -> Timestamp {
-    let duration = t.duration_since(UNIX_EPOCH).expect("Time went backwards");
-    Timestamp {
-        seconds: duration.as_secs() as i64,
-        nanos: duration.subsec_nanos() as i32,
-    }
+pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+    t.map_or(Utc.timestamp_nanos(-1), |t| {
+        DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
+    })
 }
 
-pub(crate) fn prost_timestamp_to_system_time(timestamp: Timestamp) -> SystemTime {
-    UNIX_EPOCH + Duration::new(timestamp.seconds as u64, timestamp.nanos as u32)
+pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
+    Some(Timestamp {
+        seconds: t.timestamp(),
+        nanos: t.nanosecond() as i32,
+    })
 }
 
 /// shuts downs the gRPC server. This happens in 2 cases
@@ -193,32 +194,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_prost_timestamp_from_system_time() {
-        let specific_time = UNIX_EPOCH + Duration::new(1_656_732_000, 0); // 2022-07-02 02:00:00 UTC
+    fn test_utc_from_timestamp() {
+        let specific_date = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
 
         let timestamp = Timestamp {
-            seconds: specific_time.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
-            nanos: specific_time
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos() as i32,
+            seconds: specific_date.timestamp(),
+            nanos: specific_date.timestamp_subsec_nanos() as i32,
         };
 
-        let prost_ts = prost_timestamp_from_system_time(specific_time);
-        assert_eq!(prost_ts, timestamp);
+        let utc_ts = utc_from_timestamp(Some(timestamp));
+        assert_eq!(utc_ts, specific_date)
     }
 
     #[test]
-    fn test_prost_timestamp_from_system_time_epoch_0() {
-        let specific_time = UNIX_EPOCH;
+    fn test_utc_from_timestamp_epoch_0() {
+        let specific_date = Utc.timestamp_nanos(-1);
 
+        let utc_ts = utc_from_timestamp(None);
+        assert_eq!(utc_ts, specific_date)
+    }
+
+    #[test]
+    fn test_prost_timestamp_from_utc() {
+        let specific_date = Utc.with_ymd_and_hms(2022, 7, 2, 2, 0, 0).unwrap();
+        let timestamp = Timestamp {
+            seconds: specific_date.timestamp(),
+            nanos: specific_date.timestamp_subsec_nanos() as i32,
+        };
+        let prost_ts = prost_timestamp_from_utc(specific_date);
+        assert_eq!(prost_ts, Some(timestamp))
+    }
+
+    #[test]
+    fn test_prost_timestamp_from_utc_epoch_0() {
+        let specific_date = Utc.timestamp_nanos(0);
         let timestamp = Timestamp {
             seconds: 0,
             nanos: 0,
         };
-
-        let prost_ts = prost_timestamp_from_system_time(specific_time);
-        assert_eq!(prost_ts, timestamp);
+        let prost_ts = prost_timestamp_from_utc(specific_date);
+        assert_eq!(prost_ts, Some(timestamp));
     }
 
     #[tokio::test]

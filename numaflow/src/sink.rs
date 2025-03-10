@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 use std::{env, fs};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -91,9 +91,9 @@ pub struct SinkRequest {
     /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
-    pub watermark: SystemTime,
+    pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
-    pub event_time: SystemTime,
+    pub event_time: DateTime<Utc>,
     /// ID is the unique id of the message to be sent to the Sink.
     pub id: String,
     /// Headers for the message.
@@ -105,8 +105,8 @@ impl From<sink_pb::sink_request::Request> for SinkRequest {
         Self {
             keys: sr.keys,
             value: sr.value,
-            watermark: shared::prost_timestamp_to_system_time(sr.watermark.unwrap_or_default()),
-            event_time: shared::prost_timestamp_to_system_time(sr.event_time.unwrap_or_default()),
+            watermark: shared::utc_from_timestamp(sr.watermark),
+            event_time: shared::utc_from_timestamp(sr.event_time),
             id: sr.id,
             headers: sr.headers,
         }
@@ -250,7 +250,6 @@ where
         // loop until the global stream has been shutdown.
         let mut global_stream_ended = false;
         while !global_stream_ended {
-            let start = std::time::Instant::now();
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
             global_stream_ended = Self::process_sink_batch(
