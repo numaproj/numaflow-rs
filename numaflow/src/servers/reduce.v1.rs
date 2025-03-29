@@ -45,9 +45,9 @@ pub mod reduce_request {
             /// (if the ProtoBuf definition does not change) and safe for programmatic use.
             pub fn as_str_name(&self) -> &'static str {
                 match self {
-                    Event::Open => "OPEN",
-                    Event::Close => "CLOSE",
-                    Event::Append => "APPEND",
+                    Self::Open => "OPEN",
+                    Self::Close => "CLOSE",
+                    Self::Append => "APPEND",
                 }
             }
             /// Creates an enum from field names used in the ProtoBuf definition.

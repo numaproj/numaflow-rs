@@ -111,8 +111,8 @@ pub mod read_response {
             /// (if the ProtoBuf definition does not change) and safe for programmatic use.
             pub fn as_str_name(&self) -> &'static str {
                 match self {
-                    Code::Success => "SUCCESS",
-                    Code::Failure => "FAILURE",
+                    Self::Success => "SUCCESS",
+                    Self::Failure => "FAILURE",
                 }
             }
             /// Creates an enum from field names used in the ProtoBuf definition.
@@ -148,8 +148,8 @@ pub mod read_response {
             /// (if the ProtoBuf definition does not change) and safe for programmatic use.
             pub fn as_str_name(&self) -> &'static str {
                 match self {
-                    Error::Unacked => "UNACKED",
-                    Error::Other => "OTHER",
+                    Self::Unacked => "UNACKED",
+                    Self::Other => "OTHER",
                 }
             }
             /// Creates an enum from field names used in the ProtoBuf definition.

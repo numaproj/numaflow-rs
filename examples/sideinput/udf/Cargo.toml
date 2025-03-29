@@ -6,8 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tonic = "0.10.2"
+tonic = "0.13.0"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 numaflow = { path = "../../../numaflow" }
-chrono = "0.4.30"
-notify = "6.1.1"
+notify = "8.0.0"

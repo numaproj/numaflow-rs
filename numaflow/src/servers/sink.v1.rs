@@ -102,10 +102,10 @@ impl Status {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            Status::Success => "SUCCESS",
-            Status::Failure => "FAILURE",
-            Status::Fallback => "FALLBACK",
-            Status::Serve => "SERVE",
+            Self::Success => "SUCCESS",
+            Self::Failure => "FAILURE",
+            Self::Fallback => "FALLBACK",
+            Self::Serve => "SERVE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
