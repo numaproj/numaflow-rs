@@ -6,5 +6,5 @@ edition = "2021"
 [dependencies]
 numaflow = { path = "../../numaflow" }
 tokio = "1.38.0"
-tonic = "0.12.0"
+tonic = "0.13.0"
 chrono = "0.4.38"

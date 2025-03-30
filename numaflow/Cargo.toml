@@ -25,9 +25,9 @@ name = "numaflow"
 path = "src/lib.rs"
 
 [dependencies]
-tonic = "0.12.3"
-prost = "0.13.3"
-prost-types = "0.13.3"
+tonic = "0.13.0"
+prost = "0.13.5"
+prost-types = "0.13.5"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-util = "0.7.12"
 tokio-stream = { version = "0.1.16", features = ["net"] }
@@ -36,12 +36,12 @@ serde_json = "1.0.128"
 tracing = "0.1.40"
 uuid = { version = "1.10.0", features = ["v4"] }
 thiserror = "2.0.12"
-hyper-util = "0.1.7"
+hyper-util = "0.1.10"
 chrono = "0.4.38"
 
 [build-dependencies]
-tonic-build = "0.12.3"
+tonic-build = "0.13.0"
 
 [dev-dependencies]
 tempfile = "3.9.0"
-tower = { version = "0.5.0", features = ["util"] }
+tower = { version = "0.5.2", features = ["util"] }
