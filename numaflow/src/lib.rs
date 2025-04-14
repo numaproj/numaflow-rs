@@ -42,7 +42,7 @@ pub mod mapstream;
 
 pub mod serving_store;
 
-mod servers;
+pub mod servers;
 
 // Error handling on Numaflow SDKs!
 //
