@@ -1,9 +1,9 @@
 pub use crate::servers::sessionreduce as proto;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::panic;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -223,7 +223,9 @@ impl SessionReduceTask {
             });
 
             // Run the user's session reduce function
-            task_session_reducer.session_reduce(keys, input_rx, output_tx).await;
+            task_session_reducer
+                .session_reduce(keys, input_rx, output_tx)
+                .await;
 
             // Wait for output task to complete
             let _ = output_handle.await;
@@ -235,7 +237,10 @@ impl SessionReduceTask {
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
-                    .send(Err(SessionReduceError(UserDefinedError(format!("Task error: {}", e)))))
+                    .send(Err(SessionReduceError(UserDefinedError(format!(
+                        "Task error: {}",
+                        e
+                    )))))
                     .await;
             }
 
@@ -255,8 +260,9 @@ impl SessionReduceTask {
 
     /// Send data to the task
     async fn send(&self, request: SessionReduceRequest) -> Result<(), Error> {
-        self.input_tx.send(request).await
-            .map_err(|e| SessionReduceError(InternalError(format!("Failed to send to task: {}", e))))
+        self.input_tx.send(request).await.map_err(|e| {
+            SessionReduceError(InternalError(format!("Failed to send to task: {}", e)))
+        })
     }
 
     /// Close the task input (blocking)
@@ -331,22 +337,34 @@ where
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
-                    TaskManagerCommand::CreateTask { request, response_tx } => {
+                    TaskManagerCommand::CreateTask {
+                        request,
+                        response_tx,
+                    } => {
                         let result = manager.handle_create_task(request).await;
                         let _ = response_tx.send(result);
                     }
-                    TaskManagerCommand::AppendToTask { request, response_tx } => {
+                    TaskManagerCommand::AppendToTask {
+                        request,
+                        response_tx,
+                    } => {
                         let result = manager.handle_append_to_task(request).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::CloseTask { request } => {
                         manager.handle_close_task(request).await;
                     }
-                    TaskManagerCommand::MergeTasks { request, response_tx } => {
+                    TaskManagerCommand::MergeTasks {
+                        request,
+                        response_tx,
+                    } => {
                         let result = manager.handle_merge_tasks(request).await;
                         let _ = response_tx.send(result);
                     }
-                    TaskManagerCommand::ExpandTask { request, response_tx } => {
+                    TaskManagerCommand::ExpandTask {
+                        request,
+                        response_tx,
+                    } => {
                         let result = manager.handle_expand_task(request).await;
                         let _ = response_tx.send(result);
                     }
@@ -365,38 +383,44 @@ where
         cmd_tx
     }
 
-    async fn handle_create_task(&mut self, request: proto::SessionReduceRequest) -> Result<(), Error> {
+    async fn handle_create_task(
+        &mut self,
+        request: proto::SessionReduceRequest,
+    ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError("Task manager is shutdown".to_string())));
+            return Err(SessionReduceError(InternalError(
+                "Task manager is shutdown".to_string(),
+            )));
         }
 
-        let operation = request.operation.as_ref()
+        let operation = request
+            .operation
+            .as_ref()
             .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
 
         if operation.keyed_windows.len() != 1 {
-            return Err(SessionReduceError(InternalError(
-                format!("Create operation requires exactly one window, got {}", operation.keyed_windows.len())
-            )));
+            return Err(SessionReduceError(InternalError(format!(
+                "Create operation requires exactly one window, got {}",
+                operation.keyed_windows.len()
+            ))));
         }
 
         let keyed_window = operation.keyed_windows[0].clone();
         let key = generate_key(&keyed_window);
 
         if self.tasks.contains_key(&key) {
-            return Err(SessionReduceError(InternalError(
-                format!("Task already exists for key: {}", key)
-            )));
+            return Err(SessionReduceError(InternalError(format!(
+                "Task already exists for key: {}",
+                key
+            ))));
         }
 
         // Create new session reducer
         let session_reducer = self.creator.create();
 
         // Create new task
-        let task = SessionReduceTask::new(
-            keyed_window,
-            session_reducer,
-            self.response_tx.clone(),
-        ).await;
+        let task =
+            SessionReduceTask::new(keyed_window, session_reducer, self.response_tx.clone()).await;
 
         // Send payload if present
         if let Some(payload) = request.payload {
@@ -408,18 +432,26 @@ where
         Ok(())
     }
 
-    async fn handle_append_to_task(&mut self, request: proto::SessionReduceRequest) -> Result<(), Error> {
+    async fn handle_append_to_task(
+        &mut self,
+        request: proto::SessionReduceRequest,
+    ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError("Task manager is shutdown".to_string())));
+            return Err(SessionReduceError(InternalError(
+                "Task manager is shutdown".to_string(),
+            )));
         }
 
-        let operation = request.operation.as_ref()
+        let operation = request
+            .operation
+            .as_ref()
             .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
 
         if operation.keyed_windows.len() != 1 {
-            return Err(SessionReduceError(InternalError(
-                format!("Append operation requires exactly one window, got {}", operation.keyed_windows.len())
-            )));
+            return Err(SessionReduceError(InternalError(format!(
+                "Append operation requires exactly one window, got {}",
+                operation.keyed_windows.len()
+            ))));
         }
 
         let keyed_window = &operation.keyed_windows[0];
@@ -458,16 +490,25 @@ where
         }
     }
 
-    async fn handle_merge_tasks(&mut self, request: proto::SessionReduceRequest) -> Result<(), Error> {
+    async fn handle_merge_tasks(
+        &mut self,
+        request: proto::SessionReduceRequest,
+    ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError("Task manager is shutdown".to_string())));
+            return Err(SessionReduceError(InternalError(
+                "Task manager is shutdown".to_string(),
+            )));
         }
 
-        let operation = request.operation.as_ref()
+        let operation = request
+            .operation
+            .as_ref()
             .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
 
         if operation.keyed_windows.is_empty() {
-            return Err(SessionReduceError(InternalError("Merge operation requires at least one window".to_string())));
+            return Err(SessionReduceError(InternalError(
+                "Merge operation requires at least one window".to_string(),
+            )));
         }
 
         // Collect tasks to merge and their accumulators
@@ -480,17 +521,22 @@ where
             let key = generate_key(keyed_window);
             if let Some(task) = self.tasks.remove(&key) {
                 // Update merged window bounds
-                if let (Some(start), Some(merged_start)) = (&keyed_window.start, &merged_window.start) {
-                    if start.seconds < merged_start.seconds ||
-                       (start.seconds == merged_start.seconds && start.nanos < merged_start.nanos) {
-                        merged_window.start = keyed_window.start.clone();
+                if let (Some(start), Some(merged_start)) =
+                    (&keyed_window.start, &merged_window.start)
+                {
+                    if start.seconds < merged_start.seconds
+                        || (start.seconds == merged_start.seconds
+                            && start.nanos < merged_start.nanos)
+                    {
+                        merged_window.start = keyed_window.start;
                     }
                 }
 
                 if let (Some(end), Some(merged_end)) = (&keyed_window.end, &merged_window.end) {
-                    if end.seconds > merged_end.seconds ||
-                       (end.seconds == merged_end.seconds && end.nanos > merged_end.nanos) {
-                        merged_window.end = keyed_window.end.clone();
+                    if end.seconds > merged_end.seconds
+                        || (end.seconds == merged_end.seconds && end.nanos > merged_end.nanos)
+                    {
+                        merged_window.end = keyed_window.end;
                     }
                 }
 
@@ -503,9 +549,10 @@ where
 
                 tasks_to_merge.push(task);
             } else {
-                return Err(SessionReduceError(InternalError(
-                    format!("Task not found for merge operation: {}", key)
-                )));
+                return Err(SessionReduceError(InternalError(format!(
+                    "Task not found for merge operation: {}",
+                    key
+                ))));
             }
         }
 
@@ -521,7 +568,8 @@ where
             merged_window.clone(),
             session_reducer,
             self.response_tx.clone(),
-        ).await;
+        )
+        .await;
 
         // Merge all accumulators into the new task
         for accumulator in accumulators {
@@ -539,17 +587,24 @@ where
         Ok(())
     }
 
-    async fn handle_expand_task(&mut self, request: proto::SessionReduceRequest) -> Result<(), Error> {
+    async fn handle_expand_task(
+        &mut self,
+        request: proto::SessionReduceRequest,
+    ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError("Task manager is shutdown".to_string())));
+            return Err(SessionReduceError(InternalError(
+                "Task manager is shutdown".to_string(),
+            )));
         }
 
-        let operation = request.operation.as_ref()
+        let operation = request
+            .operation
+            .as_ref()
             .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
 
         if operation.keyed_windows.len() != 2 {
             return Err(SessionReduceError(InternalError(
-                "Expand operation requires exactly two windows (old and new)".to_string()
+                "Expand operation requires exactly two windows (old and new)".to_string(),
             )));
         }
 
@@ -572,9 +627,10 @@ where
             // Re-insert with new key
             self.tasks.insert(new_key, task);
         } else {
-            return Err(SessionReduceError(InternalError(
-                format!("Task not found for expand operation: {}", old_key)
-            )));
+            return Err(SessionReduceError(InternalError(format!(
+                "Task not found for expand operation: {}",
+                old_key
+            ))));
         }
 
         Ok(())
@@ -620,13 +676,16 @@ where
         let cancellation_token = self.cancellation_token.clone();
 
         // Create response channel for gRPC client
-        let (grpc_response_tx, grpc_response_rx) = mpsc::channel::<Result<proto::SessionReduceResponse, Status>>(100);
+        let (grpc_response_tx, grpc_response_rx) =
+            mpsc::channel::<Result<proto::SessionReduceResponse, Status>>(100);
 
         // Internal response channel for task manager
-        let (response_tx, mut response_rx) = mpsc::channel::<Result<proto::SessionReduceResponse, Error>>(100);
+        let (response_tx, mut response_rx) =
+            mpsc::channel::<Result<proto::SessionReduceResponse, Error>>(100);
 
         // Start task manager
-        let task_manager_tx = SessionReduceTaskManager::start(creator, response_tx, shutdown_tx.clone());
+        let task_manager_tx =
+            SessionReduceTaskManager::start(creator, response_tx, shutdown_tx.clone());
 
         // Spawn task to handle incoming requests
         let request_task_manager_tx = task_manager_tx.clone();
@@ -636,15 +695,21 @@ where
             while let Some(result) = tokio_stream::StreamExt::next(&mut stream).await {
                 match result {
                     Ok(req) => {
-                        if let Err(e) = handle_session_reduce_request(req, &request_task_manager_tx).await {
+                        if let Err(e) =
+                            handle_session_reduce_request(req, &request_task_manager_tx).await
+                        {
                             error!("Error handling request: {}", e);
-                            let _ = request_task_manager_tx.send(TaskManagerCommand::Shutdown).await;
+                            let _ = request_task_manager_tx
+                                .send(TaskManagerCommand::Shutdown)
+                                .await;
                             break;
                         }
                     }
                     Err(e) => {
                         error!("Error receiving request: {}", e);
-                        let _ = request_task_manager_tx.send(TaskManagerCommand::Shutdown).await;
+                        let _ = request_task_manager_tx
+                            .send(TaskManagerCommand::Shutdown)
+                            .await;
                         break;
                     }
                 }
@@ -652,7 +717,11 @@ where
 
             // End of stream - wait for all tasks to complete
             let (wait_tx, wait_rx) = oneshot::channel();
-            let _ = request_task_manager_tx.send(TaskManagerCommand::WaitAll { response_tx: wait_tx }).await;
+            let _ = request_task_manager_tx
+                .send(TaskManagerCommand::WaitAll {
+                    response_tx: wait_tx,
+                })
+                .await;
             let _ = wait_rx.await;
         });
 
@@ -666,7 +735,7 @@ where
                         match result {
                             Some(Ok(response)) => {
                                 let eof = response.eof;
-                                if let Err(_) = grpc_response_tx.send(Ok(response)).await {
+                                if grpc_response_tx.send(Ok(response)).await.is_err() {
                                     break;
                                 }
                                 if eof {
@@ -705,72 +774,151 @@ async fn handle_session_reduce_request(
     request: proto::SessionReduceRequest,
     task_manager_tx: &mpsc::Sender<TaskManagerCommand>,
 ) -> Result<(), Error> {
-    let operation = request.operation.as_ref()
+    let operation = request
+        .operation
+        .as_ref()
         .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
 
     match Event::try_from(operation.event) {
         Ok(Event::Open) => {
             let (response_tx, response_rx) = oneshot::channel();
-            task_manager_tx.send(TaskManagerCommand::CreateTask { request, response_tx }).await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to send create task command: {}", e))))?;
-            response_rx.await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to receive create task response: {}", e))))?
+            task_manager_tx
+                .send(TaskManagerCommand::CreateTask {
+                    request,
+                    response_tx,
+                })
+                .await
+                .map_err(|e| {
+                    SessionReduceError(InternalError(format!(
+                        "Failed to send create task command: {}",
+                        e
+                    )))
+                })?;
+            response_rx.await.map_err(|e| {
+                SessionReduceError(InternalError(format!(
+                    "Failed to receive create task response: {}",
+                    e
+                )))
+            })?
         }
         Ok(Event::Append) => {
             let (response_tx, response_rx) = oneshot::channel();
-            task_manager_tx.send(TaskManagerCommand::AppendToTask { request, response_tx }).await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to send append task command: {}", e))))?;
-            response_rx.await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to receive append task response: {}", e))))?
+            task_manager_tx
+                .send(TaskManagerCommand::AppendToTask {
+                    request,
+                    response_tx,
+                })
+                .await
+                .map_err(|e| {
+                    SessionReduceError(InternalError(format!(
+                        "Failed to send append task command: {}",
+                        e
+                    )))
+                })?;
+            response_rx.await.map_err(|e| {
+                SessionReduceError(InternalError(format!(
+                    "Failed to receive append task response: {}",
+                    e
+                )))
+            })?
         }
         Ok(Event::Close) => {
-            task_manager_tx.send(TaskManagerCommand::CloseTask { request }).await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to send close task command: {}", e))))?;
+            task_manager_tx
+                .send(TaskManagerCommand::CloseTask { request })
+                .await
+                .map_err(|e| {
+                    SessionReduceError(InternalError(format!(
+                        "Failed to send close task command: {}",
+                        e
+                    )))
+                })?;
             Ok(())
         }
         Ok(Event::Merge) => {
             let (response_tx, response_rx) = oneshot::channel();
-            task_manager_tx.send(TaskManagerCommand::MergeTasks { request, response_tx }).await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to send merge tasks command: {}", e))))?;
-            response_rx.await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to receive merge tasks response: {}", e))))?
+            task_manager_tx
+                .send(TaskManagerCommand::MergeTasks {
+                    request,
+                    response_tx,
+                })
+                .await
+                .map_err(|e| {
+                    SessionReduceError(InternalError(format!(
+                        "Failed to send merge tasks command: {}",
+                        e
+                    )))
+                })?;
+            response_rx.await.map_err(|e| {
+                SessionReduceError(InternalError(format!(
+                    "Failed to receive merge tasks response: {}",
+                    e
+                )))
+            })?
         }
         Ok(Event::Expand) => {
             let (response_tx, response_rx) = oneshot::channel();
-            task_manager_tx.send(TaskManagerCommand::ExpandTask { request, response_tx }).await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to send expand task command: {}", e))))?;
-            response_rx.await
-                .map_err(|e| SessionReduceError(InternalError(format!("Failed to receive expand task response: {}", e))))?
+            task_manager_tx
+                .send(TaskManagerCommand::ExpandTask {
+                    request,
+                    response_tx,
+                })
+                .await
+                .map_err(|e| {
+                    SessionReduceError(InternalError(format!(
+                        "Failed to send expand task command: {}",
+                        e
+                    )))
+                })?;
+            response_rx.await.map_err(|e| {
+                SessionReduceError(InternalError(format!(
+                    "Failed to receive expand task response: {}",
+                    e
+                )))
+            })?
         }
-        Err(_) => {
-            Err(SessionReduceError(InternalError(format!("Unknown operation event: {}", operation.event))))
-        }
+        Err(_) => Err(SessionReduceError(InternalError(format!(
+            "Unknown operation event: {}",
+            operation.event
+        )))),
     }
 }
 
 /// Generate unique key for a keyed window
 fn generate_key(keyed_window: &proto::KeyedWindow) -> String {
-    let start_millis = keyed_window.start.as_ref()
+    let start_millis = keyed_window
+        .start
+        .as_ref()
         .map(|t| t.seconds * 1000 + (t.nanos / 1_000_000) as i64)
         .unwrap_or(0);
-    let end_millis = keyed_window.end.as_ref()
+    let end_millis = keyed_window
+        .end
+        .as_ref()
         .map(|t| t.seconds * 1000 + (t.nanos / 1_000_000) as i64)
         .unwrap_or(0);
 
-    format!("{}:{}:{}", start_millis, end_millis, keyed_window.keys.join(KEY_JOIN_DELIMITER))
+    format!(
+        "{}:{}:{}",
+        start_millis,
+        end_millis,
+        keyed_window.keys.join(KEY_JOIN_DELIMITER)
+    )
 }
 
 /// Build SessionReduceRequest from proto payload
-fn build_session_reduce_request(payload: proto::session_reduce_request::Payload) -> Result<SessionReduceRequest, Error> {
+fn build_session_reduce_request(
+    payload: proto::session_reduce_request::Payload,
+) -> Result<SessionReduceRequest, Error> {
     Ok(SessionReduceRequest {
         keys: payload.keys,
         value: payload.value,
-        watermark: payload.watermark
+        watermark: payload
+            .watermark
             .map(|ts| shared::utc_from_timestamp(Some(ts)))
-            .unwrap_or_else(|| Utc::now()),
-        event_time: payload.event_time
+            .unwrap_or_else(Utc::now),
+        event_time: payload
+            .event_time
             .map(|ts| shared::utc_from_timestamp(Some(ts)))
-            .unwrap_or_else(|| Utc::now()),
+            .unwrap_or_else(Utc::now),
         headers: payload.headers,
     })
 }
@@ -842,7 +990,8 @@ impl<C> Server<C> {
         use crate::shared::{self, ContainerType, ServerInfo};
 
         let info = ServerInfo::new(ContainerType::SessionReduce);
-        let listener = shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener =
+            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cancellation_token = CancellationToken::new();
@@ -853,9 +1002,10 @@ impl<C> Server<C> {
             cancellation_token: cancellation_token.clone(),
         };
 
-        let session_reduce_svc = proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+        let session_reduce_svc =
+            proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
+                .max_encoding_message_size(self.max_message_size)
+                .max_decoding_message_size(self.max_message_size);
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
 
@@ -924,10 +1074,9 @@ mod tests {
                     .parse::<i32>()
                     .unwrap();
             }
-            let _ = output.send(
-                session_reduce::Message::new(sum.to_string().into_bytes())
-                    .with_keys(keys)
-            ).await;
+            let _ = output
+                .send(session_reduce::Message::new(sum.to_string().into_bytes()).with_keys(keys))
+                .await;
         }
 
         async fn accumulator(&self) -> Vec<u8> {
