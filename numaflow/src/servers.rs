@@ -25,3 +25,7 @@ pub mod sourcetransformer;
 #[path = "servers/serving.v1.rs"]
 #[rustfmt::skip]
 pub mod serving;
+
+#[path = "servers/sessionreduce.v1.rs"]
+#[rustfmt::skip]
+pub mod sessionreduce;

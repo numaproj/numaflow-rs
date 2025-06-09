@@ -16,6 +16,7 @@ fn main() {
                 "proto/sink.proto",
                 "proto/sideinput.proto",
                 "proto/store.proto",
+                "proto/sessionreduce.proto",
             ],
             &["proto"],
         )
