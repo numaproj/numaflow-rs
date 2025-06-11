@@ -190,6 +190,7 @@ impl SessionReduceTask {
 
             let output_handle = tokio::spawn(async move {
                 while let Some(message) = output_rx.recv().await {
+                    println!("Sending message: {:?}", message);
                     if !output_task_merged.load(Ordering::Relaxed) {
                         let window = output_task_window.read().await;
                         let response = proto::SessionReduceResponse {
@@ -211,6 +212,7 @@ impl SessionReduceTask {
 
                 // Send EOF if not merged
                 if !output_task_merged.load(Ordering::Relaxed) {
+                    println!("Sending EOF");
                     let window = output_task_window.read().await;
                     let eof_response = proto::SessionReduceResponse {
                         result: None,
@@ -734,11 +736,7 @@ where
                     result = response_rx.recv() => {
                         match result {
                             Some(Ok(response)) => {
-                                let eof = response.eof;
                                 if grpc_response_tx.send(Ok(response)).await.is_err() {
-                                    break;
-                                }
-                                if eof {
                                     break;
                                 }
                             }
