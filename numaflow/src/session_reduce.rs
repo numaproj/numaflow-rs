@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::error::Error;
 use crate::error::Error::SessionReduceError;
@@ -190,7 +190,6 @@ impl SessionReduceTask {
 
             let output_handle = tokio::spawn(async move {
                 while let Some(message) = output_rx.recv().await {
-                    println!("Sending message: {:?}", message);
                     if !output_task_merged.load(Ordering::Relaxed) {
                         let window = output_task_window.read().await;
                         let response = proto::SessionReduceResponse {
@@ -212,7 +211,6 @@ impl SessionReduceTask {
 
                 // Send EOF if not merged
                 if !output_task_merged.load(Ordering::Relaxed) {
-                    println!("Sending EOF");
                     let window = output_task_window.read().await;
                     let eof_response = proto::SessionReduceResponse {
                         result: None,
@@ -328,13 +326,8 @@ where
     }
 
     /// Start the task manager actor
-    fn start(
-        creator: Arc<C>,
-        response_tx: mpsc::Sender<Result<proto::SessionReduceResponse, Error>>,
-        shutdown_tx: mpsc::Sender<()>,
-    ) -> mpsc::Sender<TaskManagerCommand> {
+    fn start(mut self) -> mpsc::Sender<TaskManagerCommand> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<TaskManagerCommand>(100);
-        let mut manager = Self::new(creator, response_tx, shutdown_tx);
 
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -343,39 +336,39 @@ where
                         request,
                         response_tx,
                     } => {
-                        let result = manager.handle_create_task(request).await;
+                        let result = self.handle_create_task(request).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::AppendToTask {
                         request,
                         response_tx,
                     } => {
-                        let result = manager.handle_append_to_task(request).await;
+                        let result = self.handle_append_to_task(request).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::CloseTask { request } => {
-                        manager.handle_close_task(request).await;
+                        self.handle_close_task(request).await;
                     }
                     TaskManagerCommand::MergeTasks {
                         request,
                         response_tx,
                     } => {
-                        let result = manager.handle_merge_tasks(request).await;
+                        let result = self.handle_merge_tasks(request).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::ExpandTask {
                         request,
                         response_tx,
                     } => {
-                        let result = manager.handle_expand_task(request).await;
+                        let result = self.handle_expand_task(request).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::WaitAll { response_tx } => {
-                        manager.handle_wait_all().await;
+                        self.handle_wait_all().await;
                         let _ = response_tx.send(());
                     }
                     TaskManagerCommand::Shutdown => {
-                        manager.handle_shutdown().await;
+                        self.handle_shutdown().await;
                         break;
                     }
                 }
@@ -686,49 +679,59 @@ where
             mpsc::channel::<Result<proto::SessionReduceResponse, Error>>(100);
 
         // Start task manager
-        let task_manager_tx =
-            SessionReduceTaskManager::start(creator, response_tx, shutdown_tx.clone());
+        let task_manager = SessionReduceTaskManager::new(creator, response_tx, shutdown_tx.clone());
 
+        let request_cancellation_token = cancellation_token.clone();
         // Spawn task to handle incoming requests
-        let request_task_manager_tx = task_manager_tx.clone();
-        let request_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut stream = request.into_inner();
 
-            while let Some(result) = tokio_stream::StreamExt::next(&mut stream).await {
-                match result {
-                    Ok(req) => {
-                        if let Err(e) =
-                            handle_session_reduce_request(req, &request_task_manager_tx).await
-                        {
-                            error!("Error handling request: {}", e);
-                            let _ = request_task_manager_tx
-                                .send(TaskManagerCommand::Shutdown)
-                                .await;
-                            break;
+            let task_manager_tx = task_manager.start();
+
+            loop {
+                tokio::select! {
+                    // Listen for incoming requests
+                    result = tokio_stream::StreamExt::next(&mut stream) => {
+                        match result {
+                            Some(Ok(req)) => {
+                                if let Err(e) = handle_session_reduce_request(req, &task_manager_tx).await {
+                                    error!("Error handling request: {}", e);
+                                    let _ = task_manager_tx.send(TaskManagerCommand::Shutdown).await;
+                                    break;
+                                }
+                            }
+                            Some(Err(e)) => {
+                                error!("Error receiving request: {}", e);
+                                let _ = task_manager_tx.send(TaskManagerCommand::Shutdown).await;
+                                break;
+                            }
+                            None => {
+                                // End of stream
+                                break;
+                            }
                         }
                     }
-                    Err(e) => {
-                        error!("Error receiving request: {}", e);
-                        let _ = request_task_manager_tx
-                            .send(TaskManagerCommand::Shutdown)
-                            .await;
+                    // Listen for cancellation from the main cancellation token
+                    _ = request_cancellation_token.cancelled() => {
+                        info!("Request task cancelled by main cancellation token");
                         break;
                     }
                 }
             }
 
+            info!("Request stream closed, waiting for all tasks to finish");
             // End of stream - wait for all tasks to complete
             let (wait_tx, wait_rx) = oneshot::channel();
-            let _ = request_task_manager_tx
+            let _ = task_manager_tx
                 .send(TaskManagerCommand::WaitAll {
                     response_tx: wait_tx,
                 })
                 .await;
             let _ = wait_rx.await;
+            info!("All tasks finished");
         });
 
         // Spawn task to forward responses and handle errors
-        let request_task_manager_tx = task_manager_tx.clone();
         let response_cancellation_token = cancellation_token.clone();
         tokio::spawn(async move {
             loop {
@@ -737,22 +740,22 @@ where
                         match result {
                             Some(Ok(response)) => {
                                 if grpc_response_tx.send(Ok(response)).await.is_err() {
+                                    // Client disconnected, signal request task to stop
+                                    response_cancellation_token.cancel();
                                     break;
                                 }
                             }
                             Some(Err(error)) => {
                                 error!("Error from task manager: {}", error);
                                 let _ = grpc_response_tx.send(Err(Status::internal(error.to_string()))).await;
-                                request_handle.abort();
-                                let _ = request_task_manager_tx.send(TaskManagerCommand::Shutdown).await;
+                                // Signal request task to stop due to error
+                                response_cancellation_token.cancel();
                                 break;
                             }
                             None => break,
                         }
                     }
                     _ = response_cancellation_token.cancelled() => {
-                        request_handle.abort();
-                        let _ = request_task_manager_tx.send(TaskManagerCommand::Shutdown).await;
                         break;
                     }
                 }
@@ -1285,7 +1288,7 @@ mod tests {
         let mut responses = Vec::new();
 
         while let Some(response) = response_stream.message().await? {
-            responses.push(response);
+            responses.push(response.clone());
         }
 
         // We should get at least one response with the sum (5 + 10 = 15) and one EOF
@@ -1318,6 +1321,8 @@ mod tests {
 
         assert!(found_result, "Should have received a result");
         assert!(found_eof, "Should have received EOF");
+
+        sleep(Duration::from_secs(1)).await;
 
         shutdown_tx
             .send(())
@@ -1492,8 +1497,15 @@ mod tests {
                 }),
             };
 
-            for _ in 0..10 {
-                tx.send(rr.clone()).await.unwrap();
+            // Send the first request which will cause a panic
+            let _ = tx.send(rr.clone()).await;
+
+            // Try to send more requests, but expect them to fail after the panic
+            for _ in 1..10 {
+                if tx.send(rr.clone()).await.is_err() {
+                    // Channel closed due to panic, which is expected
+                    break;
+                }
                 sleep(Duration::from_millis(10)).await;
             }
         });
