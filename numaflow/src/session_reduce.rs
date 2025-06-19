@@ -112,9 +112,9 @@ impl Message {
 pub struct SessionReduceRequest {
     /// Set of keys in the (key, value) terminology of map/reduce paradigm.
     pub keys: Vec<String>,
-    /// The value in the (key, value) terminology of map/reduce paradigm.    /// The value in the (key, value) terminology of map/reduce paradigm.
+    /// The value in the (key, value) terminology of map/reduce paradigm.
     pub value: Vec<u8>,
-    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
+    /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this time.
     pub watermark: DateTime<Utc>,
     /// Time of the element as seen at source or aligned after a reduce operation.
     pub event_time: DateTime<Utc>,
@@ -126,22 +126,27 @@ pub struct SessionReduceRequest {
 #[derive(Debug)]
 enum TaskManagerCommand {
     CreateTask {
-        request: proto::SessionReduceRequest,
+        keyed_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
         response_tx: oneshot::Sender<Result<(), Error>>,
     },
     AppendToTask {
-        request: proto::SessionReduceRequest,
+        keyed_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
         response_tx: oneshot::Sender<Result<(), Error>>,
     },
     CloseTask {
-        request: proto::SessionReduceRequest,
+        keyed_windows: Vec<proto::KeyedWindow>,
     },
     MergeTasks {
-        request: proto::SessionReduceRequest,
+        keyed_windows: Vec<proto::KeyedWindow>,
+        payload: Option<proto::session_reduce_request::Payload>,
         response_tx: oneshot::Sender<Result<(), Error>>,
     },
     ExpandTask {
-        request: proto::SessionReduceRequest,
+        old_window: proto::KeyedWindow,
+        new_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
         response_tx: oneshot::Sender<Result<(), Error>>,
     },
     WaitAll {
@@ -222,7 +227,7 @@ impl SessionReduceTask {
                 }
             });
 
-            // Run the user's session reduce function
+            // execute the users session reduce function
             task_session_reducer
                 .session_reduce(keys, input_rx, output_tx)
                 .await;
@@ -281,7 +286,7 @@ impl SessionReduceTask {
         self.merged.store(true, Ordering::Relaxed);
     }
 
-    /// Update the keyed window
+    /// Update the keyed window (used during expand operation)
     async fn update_keyed_window(&self, new_window: proto::KeyedWindow) {
         let mut window = self.keyed_window.write().await;
         *window = new_window;
@@ -333,34 +338,39 @@ where
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
                     TaskManagerCommand::CreateTask {
-                        request,
+                        keyed_window,
+                        payload,
                         response_tx,
                     } => {
-                        let result = self.handle_create_task(request).await;
+                        let result = self.handle_create_task(keyed_window, payload).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::AppendToTask {
-                        request,
+                        keyed_window,
+                        payload,
                         response_tx,
                     } => {
-                        let result = self.handle_append_to_task(request).await;
+                        let result = self.handle_append_to_task(keyed_window, payload).await;
                         let _ = response_tx.send(result);
                     }
-                    TaskManagerCommand::CloseTask { request } => {
-                        self.handle_close_task(request).await;
+                    TaskManagerCommand::CloseTask { keyed_windows } => {
+                        self.handle_close_task(keyed_windows).await;
                     }
                     TaskManagerCommand::MergeTasks {
-                        request,
+                        keyed_windows,
+                        payload,
                         response_tx,
                     } => {
-                        let result = self.handle_merge_tasks(request).await;
+                        let result = self.handle_merge_tasks(keyed_windows, payload).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::ExpandTask {
-                        request,
+                        old_window,
+                        new_window,
+                        payload,
                         response_tx,
                     } => {
-                        let result = self.handle_expand_task(request).await;
+                        let result = self.handle_expand_task(old_window, new_window, payload).await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::WaitAll { response_tx } => {
@@ -378,9 +388,11 @@ where
         cmd_tx
     }
 
+    /// Creates and starts a new session reduce task
     async fn handle_create_task(
         &mut self,
-        request: proto::SessionReduceRequest,
+        keyed_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
             return Err(SessionReduceError(InternalError(
@@ -388,19 +400,6 @@ where
             )));
         }
 
-        let operation = request
-            .operation
-            .as_ref()
-            .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
-
-        if operation.keyed_windows.len() != 1 {
-            return Err(SessionReduceError(InternalError(format!(
-                "Create operation requires exactly one window, got {}",
-                operation.keyed_windows.len()
-            ))));
-        }
-
-        let keyed_window = operation.keyed_windows[0].clone();
         let key = generate_key(&keyed_window);
 
         if self.tasks.contains_key(&key) {
@@ -418,7 +417,7 @@ where
             SessionReduceTask::new(keyed_window, session_reducer, self.response_tx.clone()).await;
 
         // Send payload if present
-        if let Some(payload) = request.payload {
+        if let Some(payload) = payload {
             let session_request = build_session_reduce_request(payload)?;
             task.send(session_request).await?;
         }
@@ -429,7 +428,8 @@ where
 
     async fn handle_append_to_task(
         &mut self,
-        request: proto::SessionReduceRequest,
+        keyed_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
             return Err(SessionReduceError(InternalError(
@@ -437,28 +437,15 @@ where
             )));
         }
 
-        let operation = request
-            .operation
-            .as_ref()
-            .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
-
-        if operation.keyed_windows.len() != 1 {
-            return Err(SessionReduceError(InternalError(format!(
-                "Append operation requires exactly one window, got {}",
-                operation.keyed_windows.len()
-            ))));
-        }
-
-        let keyed_window = &operation.keyed_windows[0];
-        let key = generate_key(keyed_window);
+        let key = generate_key(&keyed_window);
 
         // If task doesn't exist, create it
         if !self.tasks.contains_key(&key) {
-            return self.handle_create_task(request).await;
+            return self.handle_create_task(keyed_window, payload).await;
         }
 
         // Send payload if present
-        if let Some(payload) = request.payload {
+        if let Some(payload) = payload {
             let session_request = build_session_reduce_request(payload)?;
             if let Some(task) = self.tasks.get(&key) {
                 task.send(session_request).await?;
@@ -468,16 +455,8 @@ where
         Ok(())
     }
 
-    async fn handle_close_task(&mut self, request: proto::SessionReduceRequest) {
-        let operation = match request.operation.as_ref() {
-            Some(op) => op,
-            None => {
-                error!("Missing operation in close task request");
-                return;
-            }
-        };
-
-        for keyed_window in &operation.keyed_windows {
+    async fn handle_close_task(&mut self, keyed_windows: Vec<proto::KeyedWindow>) {
+        for keyed_window in &keyed_windows {
             let key = generate_key(keyed_window);
             if let Some(task) = self.tasks.remove(&key) {
                 task.close().await;
@@ -487,7 +466,8 @@ where
 
     async fn handle_merge_tasks(
         &mut self,
-        request: proto::SessionReduceRequest,
+        keyed_windows: Vec<proto::KeyedWindow>,
+        payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
             return Err(SessionReduceError(InternalError(
@@ -495,12 +475,7 @@ where
             )));
         }
 
-        let operation = request
-            .operation
-            .as_ref()
-            .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
-
-        if operation.keyed_windows.is_empty() {
+        if keyed_windows.is_empty() {
             return Err(SessionReduceError(InternalError(
                 "Merge operation requires at least one window".to_string(),
             )));
@@ -509,10 +484,10 @@ where
         // Collect tasks to merge and their accumulators
         let mut tasks_to_merge = Vec::new();
         let mut accumulators = Vec::new();
-        let mut merged_window = operation.keyed_windows[0].clone();
+        let mut merged_window = keyed_windows[0].clone();
 
         // Find the largest window that contains all windows and collect accumulators
-        for keyed_window in &operation.keyed_windows {
+        for keyed_window in &keyed_windows {
             let key = generate_key(keyed_window);
             if let Some(task) = self.tasks.remove(&key) {
                 // Update merged window bounds
@@ -572,7 +547,7 @@ where
         }
 
         // Send payload if present
-        if let Some(payload) = request.payload {
+        if let Some(payload) = payload {
             let session_request = build_session_reduce_request(payload)?;
             merged_task.send(session_request).await?;
         }
@@ -584,7 +559,9 @@ where
 
     async fn handle_expand_task(
         &mut self,
-        request: proto::SessionReduceRequest,
+        old_window: proto::KeyedWindow,
+        new_window: proto::KeyedWindow,
+        payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
             return Err(SessionReduceError(InternalError(
@@ -592,29 +569,15 @@ where
             )));
         }
 
-        let operation = request
-            .operation
-            .as_ref()
-            .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
-
-        if operation.keyed_windows.len() != 2 {
-            return Err(SessionReduceError(InternalError(
-                "Expand operation requires exactly two windows (old and new)".to_string(),
-            )));
-        }
-
-        let old_window = &operation.keyed_windows[0];
-        let new_window = &operation.keyed_windows[1];
-
-        let old_key = generate_key(old_window);
-        let new_key = generate_key(new_window);
+        let old_key = generate_key(&old_window);
+        let new_key = generate_key(&new_window);
 
         if let Some(task) = self.tasks.remove(&old_key) {
             // Update the task's keyed window
             task.update_keyed_window(new_window.clone()).await;
 
             // Send payload if present
-            if let Some(payload) = request.payload {
+            if let Some(payload) = payload {
                 let session_request = build_session_reduce_request(payload)?;
                 task.send(session_request).await?;
             }
@@ -782,10 +745,19 @@ async fn handle_session_reduce_request(
 
     match Event::try_from(operation.event) {
         Ok(Event::Open) => {
+            // Validate operation has exactly one window
+            if operation.keyed_windows.len() != 1 {
+                return Err(SessionReduceError(InternalError(format!(
+                    "Open operation requires exactly one window, got {}",
+                    operation.keyed_windows.len()
+                ))));
+            }
+
             let (response_tx, response_rx) = oneshot::channel();
             task_manager_tx
                 .send(TaskManagerCommand::CreateTask {
-                    request,
+                    keyed_window: operation.keyed_windows[0].clone(),
+                    payload: request.payload,
                     response_tx,
                 })
                 .await
@@ -803,10 +775,19 @@ async fn handle_session_reduce_request(
             })?
         }
         Ok(Event::Append) => {
+            // Validate operation has exactly one window
+            if operation.keyed_windows.len() != 1 {
+                return Err(SessionReduceError(InternalError(format!(
+                    "Append operation requires exactly one window, got {}",
+                    operation.keyed_windows.len()
+                ))));
+            }
+
             let (response_tx, response_rx) = oneshot::channel();
             task_manager_tx
                 .send(TaskManagerCommand::AppendToTask {
-                    request,
+                    keyed_window: operation.keyed_windows[0].clone(),
+                    payload: request.payload,
                     response_tx,
                 })
                 .await
@@ -825,7 +806,9 @@ async fn handle_session_reduce_request(
         }
         Ok(Event::Close) => {
             task_manager_tx
-                .send(TaskManagerCommand::CloseTask { request })
+                .send(TaskManagerCommand::CloseTask {
+                    keyed_windows: operation.keyed_windows.clone(),
+                })
                 .await
                 .map_err(|e| {
                     SessionReduceError(InternalError(format!(
@@ -836,10 +819,18 @@ async fn handle_session_reduce_request(
             Ok(())
         }
         Ok(Event::Merge) => {
+            // Validate operation has at least one window
+            if operation.keyed_windows.is_empty() {
+                return Err(SessionReduceError(InternalError(
+                    "Merge operation requires at least one window".to_string(),
+                )));
+            }
+
             let (response_tx, response_rx) = oneshot::channel();
             task_manager_tx
                 .send(TaskManagerCommand::MergeTasks {
-                    request,
+                    keyed_windows: operation.keyed_windows.clone(),
+                    payload: request.payload,
                     response_tx,
                 })
                 .await
@@ -857,10 +848,19 @@ async fn handle_session_reduce_request(
             })?
         }
         Ok(Event::Expand) => {
+            // Validate operation has exactly two windows (old and new)
+            if operation.keyed_windows.len() != 2 {
+                return Err(SessionReduceError(InternalError(
+                    "Expand operation requires exactly two windows (old and new)".to_string(),
+                )));
+            }
+
             let (response_tx, response_rx) = oneshot::channel();
             task_manager_tx
                 .send(TaskManagerCommand::ExpandTask {
-                    request,
+                    old_window: operation.keyed_windows[0].clone(),
+                    new_window: operation.keyed_windows[1].clone(),
+                    payload: request.payload,
                     response_tx,
                 })
                 .await
