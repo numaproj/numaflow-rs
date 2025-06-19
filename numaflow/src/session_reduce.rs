@@ -370,7 +370,9 @@ where
                         payload,
                         response_tx,
                     } => {
-                        let result = self.handle_expand_task(old_window, new_window, payload).await;
+                        let result = self
+                            .handle_expand_task(old_window, new_window, payload)
+                            .await;
                         let _ = response_tx.send(result);
                     }
                     TaskManagerCommand::WaitAll { response_tx } => {
@@ -464,6 +466,7 @@ where
         }
     }
 
+    /// Merge multiple tasks into a single task
     async fn handle_merge_tasks(
         &mut self,
         keyed_windows: Vec<proto::KeyedWindow>,
@@ -481,65 +484,20 @@ where
             )));
         }
 
-        // Collect tasks to merge and their accumulators
-        let mut tasks_to_merge = Vec::new();
-        let mut accumulators = Vec::new();
-        let mut merged_window = keyed_windows[0].clone();
-
-        // Find the largest window that contains all windows and collect accumulators
-        for keyed_window in &keyed_windows {
-            let key = generate_key(keyed_window);
-            if let Some(task) = self.tasks.remove(&key) {
-                // Update merged window bounds
-                if let (Some(start), Some(merged_start)) =
-                    (&keyed_window.start, &merged_window.start)
-                {
-                    if start.seconds < merged_start.seconds
-                        || (start.seconds == merged_start.seconds
-                            && start.nanos < merged_start.nanos)
-                    {
-                        merged_window.start = keyed_window.start;
-                    }
-                }
-
-                if let (Some(end), Some(merged_end)) = (&keyed_window.end, &merged_window.end) {
-                    if end.seconds > merged_end.seconds
-                        || (end.seconds == merged_end.seconds && end.nanos > merged_end.nanos)
-                    {
-                        merged_window.end = keyed_window.end;
-                    }
-                }
-
-                // Get accumulator BEFORE marking as merged and closing
-                let accumulator = task.get_accumulator().await;
-                accumulators.push(accumulator);
-
-                // Mark as merged to prevent further output
-                task.mark_merged();
-
-                tasks_to_merge.push(task);
-            } else {
-                return Err(SessionReduceError(InternalError(format!(
-                    "Task not found for merge operation: {}",
-                    key
-                ))));
-            }
-        }
+        // Collect tasks and accumulators, and determine the merged window bounds
+        let (tasks_to_merge, accumulators, merged_window) =
+            self.collect_merge_data(&keyed_windows).await?;
+        let merged_key = generate_key(&merged_window);
 
         // Close all tasks being merged
         for task in tasks_to_merge {
             task.close().await;
         }
 
-        // Create new merged task
+        // Create and initialize the merged task
         let session_reducer = self.creator.create();
-        let merged_key = generate_key(&merged_window);
-        let merged_task = SessionReduceTask::new(
-            merged_window.clone(),
-            session_reducer,
-            self.response_tx.clone(),
-        )
-        .await;
+        let merged_task =
+            SessionReduceTask::new(merged_window, session_reducer, self.response_tx.clone()).await;
 
         // Merge all accumulators into the new task
         for accumulator in accumulators {
@@ -553,10 +511,67 @@ where
         }
 
         self.tasks.insert(merged_key, merged_task);
-
         Ok(())
     }
 
+    /// Creates the window to be created after a merge operation, and collects the tasks and accumulators
+    /// to be merged with the newly created window.
+    async fn collect_merge_data(
+        &mut self,
+        keyed_windows: &[proto::KeyedWindow],
+    ) -> Result<(Vec<SessionReduceTask>, Vec<Vec<u8>>, proto::KeyedWindow), Error> {
+        let mut tasks_to_merge = Vec::new();
+        let mut accumulators = Vec::new();
+        let mut merged_window = keyed_windows[0].clone();
+
+        for keyed_window in keyed_windows {
+            let key = generate_key(keyed_window);
+            if let Some(task) = self.tasks.remove(&key) {
+                // Update merged window bounds
+                self.update_window_bounds(&mut merged_window, keyed_window);
+
+                // Collect accumulator before marking as merged
+                accumulators.push(task.get_accumulator().await);
+
+                // Mark task as merged and add to the list
+                task.mark_merged();
+                tasks_to_merge.push(task);
+            } else {
+                return Err(SessionReduceError(InternalError(format!(
+                    "Task not found for merge operation: {}",
+                    key
+                ))));
+            }
+        }
+
+        Ok((tasks_to_merge, accumulators, merged_window))
+    }
+
+    /// Update the bounds of the merged window
+    fn update_window_bounds(
+        &self,
+        merged_window: &mut proto::KeyedWindow,
+        keyed_window: &proto::KeyedWindow,
+    ) {
+        let start = keyed_window.start.unwrap();
+        let end = keyed_window.end.unwrap();
+        let merged_start = merged_window.start.unwrap();
+        let merged_end = merged_window.end.unwrap();
+
+        if start.seconds < merged_start.seconds
+            || (start.seconds == merged_start.seconds && start.nanos < merged_start.nanos)
+        {
+            merged_window.start = keyed_window.start;
+        }
+
+        if end.seconds > merged_end.seconds
+            || (end.seconds == merged_end.seconds && end.nanos > merged_end.nanos)
+        {
+            merged_window.end = keyed_window.end;
+        }
+    }
+
+    /// Expands the keyed window of a task
     async fn handle_expand_task(
         &mut self,
         old_window: proto::KeyedWindow,
@@ -572,28 +587,29 @@ where
         let old_key = generate_key(&old_window);
         let new_key = generate_key(&new_window);
 
-        if let Some(task) = self.tasks.remove(&old_key) {
-            // Update the task's keyed window
-            task.update_keyed_window(new_window.clone()).await;
-
-            // Send payload if present
-            if let Some(payload) = payload {
-                let session_request = build_session_reduce_request(payload)?;
-                task.send(session_request).await?;
-            }
-
-            // Re-insert with new key
-            self.tasks.insert(new_key, task);
-        } else {
+        let Some(task) = self.tasks.remove(&old_key) else {
             return Err(SessionReduceError(InternalError(format!(
                 "Task not found for expand operation: {}",
                 old_key
             ))));
+        };
+
+        // Update the task's keyed window
+        task.update_keyed_window(new_window.clone()).await;
+
+        // Send payload if present
+        if let Some(payload) = payload {
+            let session_request = build_session_reduce_request(payload)?;
+            task.send(session_request).await?;
         }
+
+        // Re-insert with new key
+        self.tasks.insert(new_key, task);
 
         Ok(())
     }
 
+    /// Wait for all tasks to complete
     async fn handle_wait_all(&mut self) {
         let tasks: Vec<_> = self.tasks.drain().collect();
         for (_, task) in tasks {
@@ -601,6 +617,7 @@ where
         }
     }
 
+    /// Shutdown the task manager
     async fn handle_shutdown(&mut self) {
         self.is_shutdown.store(true, Ordering::Relaxed);
         let tasks: Vec<_> = self.tasks.drain().collect();
@@ -1321,8 +1338,6 @@ mod tests {
 
         assert!(found_result, "Should have received a result");
         assert!(found_eof, "Should have received EOF");
-
-        sleep(Duration::from_secs(1)).await;
 
         shutdown_tx
             .send(())
