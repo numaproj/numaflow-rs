@@ -23,6 +23,7 @@ pub(crate) enum ContainerType {
     MapStream,
     Reduce,
     SessionReduce,
+    Accumulator,
     Sink,
     Source,
     SourceTransformer,
@@ -55,6 +56,7 @@ pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'st
         m.insert(ContainerType::BatchMap, "1.4.0-z");
         m.insert(ContainerType::Reduce, "1.4.0-z");
         m.insert(ContainerType::SessionReduce, "1.4.0-z");
+        m.insert(ContainerType::Accumulator, "1.4.0-z");
         m.insert(ContainerType::Sink, "1.4.0-z");
         m.insert(ContainerType::SourceTransformer, "1.4.0-z");
         m.insert(ContainerType::SideInput, "1.4.0-z");

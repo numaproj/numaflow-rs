@@ -39,4 +39,7 @@ pub enum Error {
 
     #[error("Session Reduce Error - {0}")]
     SessionReduceError(ErrorKind),
+
+    #[error("Accumulator Error - {0}")]
+    AccumulatorError(ErrorKind),
 }

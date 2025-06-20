@@ -12,6 +12,7 @@
 //! [User Defined Sources]: https://numaflow.numaproj.io/user-guide/sources/user-defined-sources/
 //! [User Defined Source Transformer]: https://numaflow.numaproj.io/user-guide/sources/transformer/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
+//! [Session reduce]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/session/
 
 /// start up code
 mod shared;
@@ -42,7 +43,11 @@ pub mod mapstream;
 
 pub mod serving_store;
 
+/// session_reduce is for implementing [session reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/session) handlers.
 pub mod session_reduce;
+
+/// accumulator is for implementing [accumulator](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/accumulator) handlers.
+pub mod accumulator;
 
 mod servers;
 

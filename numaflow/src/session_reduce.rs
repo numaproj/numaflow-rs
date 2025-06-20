@@ -903,21 +903,13 @@ async fn handle_session_reduce_request(
 
 /// Generate unique key for a keyed window
 fn generate_key(keyed_window: &proto::KeyedWindow) -> String {
-    let start_millis = keyed_window
-        .start
-        .as_ref()
-        .map(|t| t.seconds * 1000 + (t.nanos / 1_000_000) as i64)
-        .unwrap_or(0);
-    let end_millis = keyed_window
-        .end
-        .as_ref()
-        .map(|t| t.seconds * 1000 + (t.nanos / 1_000_000) as i64)
-        .unwrap_or(0);
+    let start = keyed_window.start.as_ref().unwrap().seconds;
+    let end = keyed_window.end.as_ref().unwrap().seconds;
 
     format!(
         "{}:{}:{}",
-        start_millis,
-        end_millis,
+        start,
+        end,
         keyed_window.keys.join(KEY_JOIN_DELIMITER)
     )
 }
