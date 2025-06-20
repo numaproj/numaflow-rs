@@ -1,29 +1,20 @@
-####################################################################################################
-# Builder image
-####################################################################################################
-FROM rust:1.79-bookworm as builder
+FROM rust:1.84-bullseye AS build
 
-RUN apt-get update && apt-get install -y \
-    protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update
+RUN apt-get install protobuf-compiler -y
 
 WORKDIR /numaflow-rs
+COPY ./ ./
+WORKDIR /numaflow-rs/examples/stream-sorter
 
-COPY Cargo.toml Cargo.lock ./
-COPY numaflow ./numaflow
-COPY examples/stream-sorter ./examples/stream-sorter
+# build for release
+RUN cargo build --release
 
-RUN cargo build --release --bin stream-sorter
+# our final base
+FROM debian:bullseye AS stream-sorter
 
-####################################################################################################
-# Runtime image
-####################################################################################################
-FROM debian:bookworm-slim
+# copy the build artifact from the build stage
+COPY --from=build /numaflow-rs/target/release/stream-sorter .
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /numaflow-rs/target/release/stream-sorter /usr/local/bin/stream-sorter
-
-CMD ["stream-sorter"]
+# set the startup command to run your binary
+CMD ["./stream-sorter"]

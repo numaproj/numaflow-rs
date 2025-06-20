@@ -1,15 +1,16 @@
 TAG ?= stable
 PUSH ?= false
+IMAGE_REGISTRY = quay.io/numaio/numaflow-rs/stream-sorter:${TAG}
+DOCKER_FILE_PATH = examples/stream-sorter/Dockerfile
 
-.PHONY: build
-build:
-	cargo build --release --bin stream-sorter
+.PHONY: update
+update:
+	cargo check
+	cargo update
 
 .PHONY: image
-image: build
-	docker build -t quay.io/numaio/numaflow-rs/stream-sorter:${TAG} -f examples/stream-sorter/Dockerfile .
-	@if [ "$(PUSH)" = "true" ]; then docker push quay.io/numaio/numaflow-rs/stream-sorter:${TAG}; fi
-
-.PHONY: clean
-clean:
-	cargo clean
+image: update
+	cd ../../ && docker build \
+	-f ${DOCKER_FILE_PATH}  \
+	-t ${IMAGE_REGISTRY} .
+	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
