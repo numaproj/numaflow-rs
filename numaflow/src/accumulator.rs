@@ -442,7 +442,12 @@ impl AccumulatorTask {
                 // Send EOF response
                 let eof_response = proto::AccumulatorResponse {
                     payload: None,
-                    window: Some(keyed_window),
+                    window: Some(proto::KeyedWindow {
+                        start: keyed_window.start,
+                        end: shared::prost_timestamp_from_utc(latest_watermark),
+                        slot: keyed_window.slot.clone(),
+                        keys: keyed_window.keys.clone(),
+                    }),
                     tags: vec![],
                     eof: true,
                 };
@@ -1222,11 +1227,11 @@ mod tests {
                     keys: vec!["key1".to_string()],
                     value: "10".as_bytes().to_vec(),
                     watermark: Some(Timestamp {
-                        seconds: 60000,
+                        seconds: 80000,
                         nanos: 0,
                     }),
                     event_time: Some(Timestamp {
-                        seconds: 60000,
+                        seconds: 90000,
                         nanos: 0,
                     }),
                     id: "msg2".to_string(),
@@ -1315,7 +1320,7 @@ mod tests {
                     assert_eq!(start.seconds, 60000);
                 }
                 if let Some(end) = keyed_window.end.as_ref() {
-                    assert_eq!(end.seconds, 120000);
+                    assert_eq!(end.seconds, 80000);
                 }
             }
         }
@@ -1361,7 +1366,10 @@ mod tests {
         assert_eq!(accumulator_request.id, proto_payload.id);
 
         // Test From<&Message> for proto::Payload
-        let message = Message::from_datum(accumulator_request);
+        let mut message = Message::from_datum(accumulator_request);
+        let tags = vec!["tag1".to_string()];
+        message = message.with_tags(tags.clone());
+
         let proto_payload_from_message = proto::Payload::from(&message);
         assert_eq!(
             proto_payload_from_message.keys,
@@ -1377,7 +1385,6 @@ mod tests {
             slot: "slot-0".to_string(),
             keys: vec!["key1".to_string()],
         };
-        let tags = vec!["tag1".to_string()];
 
         let response = proto::AccumulatorResponse::from((&message, keyed_window.clone()));
         assert!(!response.eof);
