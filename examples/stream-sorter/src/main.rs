@@ -12,7 +12,7 @@ use tracing::{info, warn};
 /// 2. Headers, event_time, watermark, and id are read-only (preserved from input datum)
 /// 3. Keys, value, and tags can be modified using builder methods
 /// 4. When flushing sorted data, all original metadata is preserved automatically
-
+///
 /// StreamSorter buffers the incoming unordered (unordered by event-time but honors watermark) stream(s) and stores
 /// in the sorted buffer.
 struct StreamSorter {
