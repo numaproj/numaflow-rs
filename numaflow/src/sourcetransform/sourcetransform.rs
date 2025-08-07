@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use proto::SourceTransformResponse;
 use std::collections::HashMap;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -11,17 +11,13 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::Error::{self, SourceTransformerError};
-use crate::error::ErrorKind;
-use crate::servers::sourcetransformer as proto;
-use crate::shared::{self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType};
-
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
-
-const DROP: &str = "U+005C__DROP__";
+use crate::error::Error;
+use crate::proto::source_transformer as proto;
+use crate::shared::{
+    self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, ServiceError,
+    SocketCleanup, DEFAULT_CHANNEL_SIZE, DEFAULT_SOURCETRANSFORM_SERVER_INFO_FILE,
+    DEFAULT_SOURCETRANSFORM_SOCK_ADDR, DROP,
+};
 
 struct SourceTransformerService<T> {
     handler: Arc<T>,
@@ -387,9 +383,9 @@ async fn run_transform<T>(
 {
     let Some(request) = transform_request.request else {
         error_tx
-            .send(SourceTransformerError(ErrorKind::InternalError(
+            .send(Server::<()>::internal_error(
                 "Transform request can not be none".to_string(),
-            )))
+            ))
             .await
             .expect("Sending error on channel");
         return;
@@ -414,9 +410,9 @@ async fn run_transform<T>(
         Err(e) => {
             error!("Failed to run transform function: {e:?}");
             error_tx
-                .send(SourceTransformerError(ErrorKind::UserDefinedError(
+                .send(Server::<()>::user_error(
                     "panic in transform UDF".to_string(),
-                )))
+                ))
                 .await
                 .expect("Sending error on channel");
             return;
@@ -441,9 +437,9 @@ async fn run_transform<T>(
     };
 
     error_tx
-        .send(SourceTransformerError(ErrorKind::InternalError(format!(
+        .send(Server::<()>::internal_error(format!(
             "sending source transform response over gRPC stream: {e:?}"
-        ))))
+        )))
         .await
         .expect("Sending error on channel");
 }
@@ -451,54 +447,58 @@ async fn run_transform<T>(
 /// gRPC server to start a sourcetransform service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     pub fn new(sourcetransformer_svc: T) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(
+            DEFAULT_SOURCETRANSFORM_SOCK_ADDR,
+            DEFAULT_SOURCETRANSFORM_SERVER_INFO_FILE,
+        );
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+
+        Self {
+            config,
             svc: Some(sourcetransformer_svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sourcetransform.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/XXX.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcetransformer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sourcetransformer-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -510,8 +510,11 @@ impl<T> Server<T> {
         T: SourceTransformer + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::SourceTransformer);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -523,8 +526,8 @@ impl<T> Server<T> {
         };
         let sourcetrf_svc =
             proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
-                .max_encoding_message_size(self.max_message_size)
-                .max_decoding_message_size(self.max_message_size);
+                .max_encoding_message_size(self.config.max_message_size)
+                .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
@@ -549,11 +552,12 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+// Drop implementation is handled by SocketCleanup
+
+/// Implementation of ServiceError trait for Sourcetransform service
+impl<T> ServiceError for Server<T> {
+    fn service_name() -> &'static str {
+        "sourcetransform"
     }
 }
 
@@ -568,10 +572,10 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::sourcetransform::{
-        self,
-        proto::{self, source_transform_client::SourceTransformClient},
+    use crate::proto::source_transformer::{
+        self as proto, source_transform_client::SourceTransformClient,
     };
+    use crate::sourcetransform::{self};
 
     #[tokio::test]
     async fn source_transformer_server() -> Result<(), Box<dyn Error>> {

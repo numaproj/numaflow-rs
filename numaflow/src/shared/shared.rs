@@ -11,13 +11,51 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
+// Server configuration constants - internal implementation details
+pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
+pub(crate) const DEFAULT_CHANNEL_SIZE: usize = 1000;
+
+// Map mode constants
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
 pub(crate) const UNARY_MAP: &str = "unary-map";
 pub(crate) const BATCH_MAP: &str = "batch-map";
 pub(crate) const STREAM_MAP: &str = "stream-map";
 
+// Default socket addresses for each service - internal implementation details
+pub(crate) const DEFAULT_SOURCE_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
+pub(crate) const DEFAULT_MAP_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
+pub(crate) const DEFAULT_BATCHMAP_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
+pub(crate) const DEFAULT_MAPSTREAM_SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
+pub(crate) const DEFAULT_REDUCE_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
+pub(crate) const DEFAULT_SINK_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
+pub(crate) const DEFAULT_SOURCETRANSFORM_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
+pub(crate) const DEFAULT_SIDEINPUT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
+pub(crate) const DEFAULT_SERVING_SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
+
+// Default server info file paths for each service - internal implementation details
+pub(crate) const DEFAULT_SOURCE_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+pub(crate) const DEFAULT_MAP_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+pub(crate) const DEFAULT_BATCHMAP_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+pub(crate) const DEFAULT_MAPSTREAM_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+pub(crate) const DEFAULT_REDUCE_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
+pub(crate) const DEFAULT_SINK_SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
+pub(crate) const DEFAULT_SOURCETRANSFORM_SERVER_INFO_FILE: &str =
+    "/var/run/numaflow/sourcetransformer-server-info";
+pub(crate) const DEFAULT_SIDEINPUT_SERVER_INFO_FILE: &str =
+    "/var/run/numaflow/sideinput-server-info";
+pub(crate) const DEFAULT_SERVING_SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
+
+// Sink-specific constants (fallback sink) - internal implementation details
+pub(crate) const DEFAULT_FB_SINK_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
+pub(crate) const DEFAULT_FB_SINK_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
+pub(crate) const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
+pub(crate) const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
+
+// Special constants - used in public APIs but internal implementation detail
+pub(crate) const DROP: &str = "U+005C__DROP__";
+
 #[derive(Eq, PartialEq, Hash)]
-pub(crate) enum ContainerType {
+pub enum ContainerType {
     Map,
     BatchMap,
     MapStream,

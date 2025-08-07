@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::{channel, Sender};
@@ -11,16 +11,14 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::error::Error;
-use crate::error::Error::ReduceError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-pub use crate::servers::reduce as proto;
-use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
+
+pub use crate::proto::reduce as proto;
+use crate::shared::{
+    self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup,
+    DEFAULT_REDUCE_SERVER_INFO_FILE, DEFAULT_REDUCE_SOCK_ADDR, DROP,
+};
 
 const KEY_JOIN_DELIMITER: &str = ":";
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
-const DROP: &str = "U+005C__DROP__";
 
 struct ReduceService<C> {
     creator: Arc<C>,
@@ -317,10 +315,10 @@ where
                     }
                     Some(Err(e)) => {
                         response_tx
-                            .send(Err(ReduceError(InternalError(format!(
+                            .send(Err(Server::<()>::internal_error(format!(
                                 "Failed to receive request: {}",
                                 e
-                            )))))
+                            ))))
                             .await
                             .expect("error_tx send failed");
                         break;
@@ -443,10 +441,10 @@ impl Task {
 
                 if let Err(e) = send_result {
                     let _ = udf_response_tx
-                        .send(Err(ReduceError(InternalError(format!(
+                        .send(Err(Server::<()>::internal_error(format!(
                             "Failed to send response back: {}",
                             e
-                        )))))
+                        ))))
                         .await;
                     return;
                 }
@@ -459,7 +457,7 @@ impl Task {
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
-                    .send(Err(ReduceError(UserDefinedError(format!(" {}", e)))))
+                    .send(Err(Server::<()>::user_error(format!(" {}", e))))
                     .await;
             }
 
@@ -481,10 +479,10 @@ impl Task {
     async fn send(&self, rr: ReduceRequest) {
         if let Err(e) = self.udf_tx.send(rr).await {
             self.response_tx
-                .send(Err(ReduceError(InternalError(format!(
+                .send(Err(Server::<()>::internal_error(format!(
                     "Failed to send message to task: {}",
                     e
-                )))))
+                ))))
                 .await
                 .expect("failed to send message to error channel");
         }
@@ -552,9 +550,9 @@ where
                                     Some(payload) => payload.keys.clone(),
                                     None => {
                                         task_set
-                                            .handle_error(ReduceError(InternalError(
-                                                "Invalid ReduceRequest".to_string(),
-                                            )))
+                                            .handle_error(Server::<()>::internal_error(
+                                                "Invalid ReduceRequest"
+                                            ))
                                             .await;
                                         continue;
                                     }
@@ -612,7 +610,7 @@ where
         if let Some(task) = self.tasks.get(&keys.join(KEY_JOIN_DELIMITER)) {
             task.send(reduce_request).await;
         } else {
-            self.handle_error(ReduceError(InternalError("Task not found".to_string())))
+            self.handle_error(Server::<()>::internal_error("Task not found"))
                 .await;
         }
     }
@@ -632,7 +630,7 @@ where
         if let Some(task) = self.tasks.get(&task_name) {
             task.send(reduce_request).await;
         } else {
-            self.handle_error(ReduceError(InternalError("Task not found".to_string())))
+            self.handle_error(Server::<()>::internal_error("Task not found"))
                 .await;
         }
     }
@@ -647,19 +645,17 @@ where
         let (payload, windows) = match (rr.payload, rr.operation) {
             (Some(payload), Some(operation)) => (payload, operation.windows),
             _ => {
-                self.handle_error(ReduceError(InternalError(
-                    "Invalid ReduceRequest".to_string(),
-                )))
-                .await;
+                self.handle_error(Server::<()>::internal_error("Invalid ReduceRequest"))
+                    .await;
                 return None;
             }
         };
 
         // Check if there is exactly one window in the ReduceRequest
         if windows.len() != 1 {
-            self.handle_error(ReduceError(InternalError(
-                "Exactly one window is required".to_string(),
-            )))
+            self.handle_error(Server::<()>::internal_error(
+                "Exactly one window is required",
+            ))
             .await;
             return None;
         }
@@ -707,10 +703,10 @@ where
             .await;
 
         if let Err(e) = send_eof {
-            self.handle_error(ReduceError(InternalError(format!(
+            self.handle_error(Server::<()>::internal_error(format!(
                 "Failed to send EOF message: {}",
                 e
-            ))))
+            )))
             .await;
         }
     }
@@ -734,55 +730,56 @@ where
 /// gRPC server to start a reduce service
 #[derive(Debug)]
 pub struct Server<C> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     creator: Option<C>,
+    _cleanup: SocketCleanup,
 }
 
 impl<C> Server<C> {
     /// Create a new Server with the given reduce service
     pub fn new(creator: C) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(DEFAULT_REDUCE_SOCK_ADDR, DEFAULT_REDUCE_SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+
+        Self {
+            config,
             creator: Some(creator),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/reduce.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/reduce.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/reducer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/reducer-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -794,8 +791,11 @@ impl<C> Server<C> {
         C: ReducerCreator + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::Reduce);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
         let cln_token = CancellationToken::new();
@@ -805,8 +805,8 @@ impl<C> Server<C> {
             cancellation_token: cln_token.clone(),
         };
         let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size)
+            .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
 
@@ -832,11 +832,10 @@ impl<C> Server<C> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+/// Implementation of ServiceError trait for Reduce service
+impl<C> ServiceError for Server<C> {
+    fn service_name() -> &'static str {
+        "reduce"
     }
 }
 
@@ -1234,7 +1233,7 @@ mod tests {
 
         if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"))
+            assert!(e.message().contains("User Defined error"))
         }
 
         for _ in 0..10 {
@@ -1385,7 +1384,7 @@ mod tests {
 
             if let Err(e) = response_stream.message().await {
                 assert_eq!(e.code(), tonic::Code::Internal);
-                assert!(e.message().contains("User Defined Error"))
+                assert!(e.message().contains("User Defined error"))
             }
         });
 

@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{env, fs};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -11,21 +11,15 @@ use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
 
 use crate::error::Error;
-use crate::error::Error::SinkError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::sink::{self as sink_pb, SinkResponse};
-use crate::shared::{self, ContainerType};
 
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
+use crate::proto::sink::{self as sink_pb, SinkResponse};
+use crate::shared::{
+    self, ContainerType, ServerConfig, ServiceError, SocketCleanup, DEFAULT_CHANNEL_SIZE,
+    DEFAULT_FB_SINK_SERVER_INFO_FILE, DEFAULT_FB_SINK_SOCK_ADDR, DEFAULT_SINK_SERVER_INFO_FILE,
+    DEFAULT_SINK_SOCK_ADDR, ENV_UD_CONTAINER_TYPE, UD_CONTAINER_FB_SINK,
+};
 
-const DEFAULT_FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
-const DEFAULT_FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
-const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
-const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
 struct SinkService<T: Sinker> {
     handler: Arc<T>,
@@ -311,10 +305,10 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    return Err(SinkError(InternalError(format!(
+                    return Err(Server::<()>::internal_error(format!(
                         "Error reading message from stream: {}",
                         e
-                    ))))
+                    )))
                 }
             };
 
@@ -326,17 +320,15 @@ where
 
             // message.request cannot be none
             let request = message.request.ok_or_else(|| {
-                SinkError(InternalError(
-                    "Invalid argument, request can't be None".to_string(),
-                ))
+                Server::<()>::internal_error("Invalid argument, request can't be None")
             })?;
 
             // write to the UDF's tx
             tx.send(request.into()).await.map_err(|e| {
-                SinkError(InternalError(format!(
+                Server::<()>::internal_error(format!(
                     "Error sending message to sink handler: {}",
                     e
-                )))
+                ))
             })?;
         }
 
@@ -346,7 +338,7 @@ where
         // wait for UDF task to return
         sinker_handle
             .await
-            .map_err(|e| SinkError(UserDefinedError(e.to_string())))?;
+            .map_err(|e| Server::<()>::user_error(e.to_string()))?;
 
         Ok(global_stream_ended)
     }
@@ -420,64 +412,62 @@ where
 /// gRPC server to start a sink service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
         let container_type = env::var(ENV_UD_CONTAINER_TYPE).unwrap_or_default();
         let (sock_addr, server_info_file) = if container_type == UD_CONTAINER_FB_SINK {
-            (
-                DEFAULT_FB_SOCK_ADDR.into(),
-                DEFAULT_FB_SERVER_INFO_FILE.into(),
-            )
+            (DEFAULT_FB_SINK_SOCK_ADDR, DEFAULT_FB_SINK_SERVER_INFO_FILE)
         } else {
-            (DEFAULT_SOCK_ADDR.into(), DEFAULT_SERVER_INFO_FILE.into())
+            (DEFAULT_SINK_SOCK_ADDR, DEFAULT_SINK_SERVER_INFO_FILE)
         };
 
+        let config = ServerConfig::new(sock_addr, server_info_file);
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+
         Self {
-            sock_addr,
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file,
+            config,
             svc: Some(svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sink.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/sink.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sinker-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -489,8 +479,11 @@ impl<T> Server<T> {
         T: Sinker + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::Sink);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
@@ -502,8 +495,8 @@ impl<T> Server<T> {
         };
 
         let svc = sink_pb::sink_server::SinkServer::new(svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size)
+            .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
@@ -528,11 +521,10 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+/// Implementation of ServiceError trait for Sink service
+impl<T> ServiceError for Server<T> {
+    fn service_name() -> &'static str {
+        "sink"
     }
 }
 
@@ -546,11 +538,11 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::servers::sink::TransmissionStatus;
+    use crate::proto::sink::sink_client::SinkClient;
+    use crate::proto::sink::sink_request::Request;
+    use crate::proto::sink::Handshake;
+    use crate::proto::sink::TransmissionStatus;
     use crate::sink;
-    use crate::sink::sink_pb::sink_client::SinkClient;
-    use crate::sink::sink_pb::sink_request::Request;
-    use crate::sink::sink_pb::Handshake;
 
     #[tokio::test]
     async fn sink_server() -> Result<(), Box<dyn Error>> {
@@ -609,12 +601,12 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = sink::sink_pb::SinkRequest {
+        let handshake_request = crate::proto::sink::SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
         };
-        let request = sink::sink_pb::SinkRequest {
+        let request = crate::proto::sink::SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -627,13 +619,13 @@ mod tests {
             handshake: None,
         };
 
-        let eot_request = sink::sink_pb::SinkRequest {
+        let eot_request = crate::proto::sink::SinkRequest {
             request: None,
             status: Some(TransmissionStatus { eot: true }),
             handshake: None,
         };
 
-        let request_two = sink::sink_pb::SinkRequest {
+        let request_two = crate::proto::sink::SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -752,7 +744,7 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = sink::sink_pb::SinkRequest {
+        let handshake_request = crate::proto::sink::SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
@@ -761,7 +753,7 @@ mod tests {
         let mut requests = vec![handshake_request];
 
         for i in 0..10 {
-            let request = sink::sink_pb::SinkRequest {
+            let request = crate::proto::sink::SinkRequest {
                 request: Some(Request {
                     keys: vec!["first".into(), "second".into()],
                     value: format!("hello {}", i).into(),
@@ -776,7 +768,7 @@ mod tests {
             requests.push(request);
         }
 
-        requests.push(sink::sink_pb::SinkRequest {
+        requests.push(crate::proto::sink::SinkRequest {
             request: None,
             status: Some(TransmissionStatus { eot: true }),
             handshake: None,
@@ -798,7 +790,7 @@ mod tests {
 
         if let Err(e) = err_resp {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"));
+            assert!(e.message().contains("User Defined error"));
         }
 
         // server should shut down gracefully because there was a panic in the handler.

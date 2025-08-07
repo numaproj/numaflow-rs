@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
@@ -12,17 +12,14 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
 use crate::error::Error;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::map as proto;
-use crate::servers::map::map_server::Map;
-use crate::servers::map::{MapRequest, MapResponse, ReadyResponse};
-use crate::shared::{self, shutdown_signal, ContainerType};
 
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-const DROP: &str = "U+005C__DROP__";
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
+use crate::proto::map as proto;
+use crate::proto::map::map_server::Map;
+use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
+use crate::shared::{
+    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
+    DEFAULT_BATCHMAP_SERVER_INFO_FILE, DEFAULT_BATCHMAP_SOCK_ADDR, DEFAULT_CHANNEL_SIZE, DROP,
+};
 
 struct BatchMapService<T: BatchMapper> {
     handler: Arc<T>,
@@ -345,10 +342,10 @@ where
                     break;
                 }
                 Err(e) => {
-                    return Err(Error::BatchMapError(InternalError(format!(
+                    return Err(Server::<()>::internal_error(format!(
                         "Error reading message from stream: {}",
                         e
-                    ))))
+                    )))
                 }
             };
 
@@ -362,14 +359,11 @@ where
             tx.send(
                 message
                     .try_into()
-                    .map_err(|e| Error::BatchMapError(InternalError(format!("{:?}", e))))?,
+                    .map_err(|e| Server::<()>::internal_error(format!("{:?}", e)))?,
             )
             .await
             .map_err(|e| {
-                Error::BatchMapError(InternalError(format!(
-                    "Error sending message to map handler: {}",
-                    e
-                )))
+                Server::<()>::internal_error(format!("Error sending message to map handler: {}", e))
             })?;
         }
 
@@ -379,7 +373,7 @@ where
         // wait for UDF task to return
         batch_mapper_handle
             .await
-            .map_err(|e| Error::BatchMapError(UserDefinedError(e.to_string())))?;
+            .map_err(|e| Server::<()>::user_error(e.to_string()))?;
 
         Ok(global_stream_ended)
     }
@@ -452,53 +446,57 @@ where
 /// gRPC server to start a batch map service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 impl<T> Server<T> {
     pub fn new(batch_map_svc: T) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(
+            DEFAULT_BATCHMAP_SOCK_ADDR,
+            DEFAULT_BATCHMAP_SERVER_INFO_FILE,
+        );
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+
+        Self {
+            config,
             svc: Some(batch_map_svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/batchmap.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/batchmap.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/batchmapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -510,8 +508,11 @@ impl<T> Server<T> {
         T: BatchMapper + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::BatchMap);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
 
         let cln_token = CancellationToken::new();
@@ -525,8 +526,8 @@ impl<T> Server<T> {
         };
 
         let map_svc = proto::map_server::MapServer::new(map_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size)
+            .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
@@ -548,11 +549,12 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+// Drop implementation is handled by SocketCleanup
+
+/// Implementation of ServiceError trait for Batchmap service
+impl<T> ServiceError for Server<T> {
+    fn service_name() -> &'static str {
+        "batchmap"
     }
 }
 
@@ -568,8 +570,8 @@ mod tests {
     use tower::service_fn;
 
     use crate::batchmap;
-    use crate::batchmap::proto::map_client::MapClient;
     use crate::batchmap::{BatchResponse, Datum, Message};
+    use crate::proto::map::map_client::MapClient;
 
     #[tokio::test]
     async fn batch_map_server() -> Result<(), Box<dyn Error>> {
@@ -623,15 +625,15 @@ mod tests {
             .await?;
 
         let mut client = MapClient::new(channel);
-        let handshake_request = batchmap::proto::MapRequest {
+        let handshake_request = crate::proto::map::MapRequest {
             request: None,
             id: "0".to_string(),
-            handshake: Some(batchmap::proto::Handshake { sot: true }),
+            handshake: Some(crate::proto::map::Handshake { sot: true }),
             status: None,
         };
 
-        let request = batchmap::proto::MapRequest {
-            request: Some(batchmap::proto::map_request::Request {
+        let request = crate::proto::map::MapRequest {
+            request: Some(crate::proto::map::map_request::Request {
                 keys: vec!["first".into()],
                 value: "hello".into(),
                 watermark: Some(prost_types::Timestamp::default()),
@@ -643,8 +645,8 @@ mod tests {
             status: None,
         };
 
-        let request2 = batchmap::proto::MapRequest {
-            request: Some(batchmap::proto::map_request::Request {
+        let request2 = crate::proto::map::MapRequest {
+            request: Some(crate::proto::map::map_request::Request {
                 keys: vec!["second".into()],
                 value: "hello2".into(),
                 watermark: Some(prost_types::Timestamp::default()),
@@ -656,11 +658,11 @@ mod tests {
             status: None,
         };
 
-        let eot_request = batchmap::proto::MapRequest {
+        let eot_request = crate::proto::map::MapRequest {
             request: None,
             id: "3".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::TransmissionStatus { eot: true }),
+            status: Some(crate::proto::map::TransmissionStatus { eot: true }),
         };
 
         let resp = client
@@ -735,16 +737,16 @@ mod tests {
         let mut client = MapClient::new(channel);
         let mut requests = Vec::new();
 
-        let handshake_request = batchmap::proto::MapRequest {
+        let handshake_request = crate::proto::map::MapRequest {
             request: None,
             id: "0".to_string(),
-            handshake: Some(batchmap::proto::Handshake { sot: true }),
+            handshake: Some(crate::proto::map::Handshake { sot: true }),
             status: None,
         };
         requests.push(handshake_request);
         for i in 0..10 {
-            let request = batchmap::proto::MapRequest {
-                request: Some(batchmap::proto::map_request::Request {
+            let request = crate::proto::map::MapRequest {
+                request: Some(crate::proto::map::map_request::Request {
                     keys: vec!["first".into(), "second".into()],
                     value: format!("hello {}", i).into(),
                     watermark: Some(prost_types::Timestamp::default()),
@@ -757,11 +759,11 @@ mod tests {
             };
             requests.push(request);
         }
-        let eot_request = batchmap::proto::MapRequest {
+        let eot_request = crate::proto::map::MapRequest {
             request: None,
             id: "11".to_string(),
             handshake: None,
-            status: Some(batchmap::proto::TransmissionStatus { eot: true }),
+            status: Some(crate::proto::map::TransmissionStatus { eot: true }),
         };
         requests.push(eot_request);
 
@@ -775,7 +777,7 @@ mod tests {
         if let Err(e) = response_stream.message().await {
             println!("Error: {:?}", e);
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"))
+            assert!(e.message().contains("User Defined error"))
         } else {
             return Err("Expected error from server".into());
         };

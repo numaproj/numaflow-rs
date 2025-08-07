@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,14 +5,11 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::error::Error::SideInputError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::sideinput as proto;
-use crate::shared::{self, shutdown_signal, ContainerType};
-
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sideinput-server-info";
+use crate::proto::side_input as proto;
+use crate::shared::{
+    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
+    DEFAULT_SIDEINPUT_SERVER_INFO_FILE, DEFAULT_SIDEINPUT_SOCK_ADDR,
+};
 
 struct SideInputService<T> {
     handler: Arc<T>,
@@ -114,12 +110,12 @@ where
                     }
                     Err(e) => {
                         shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
-                        Err(Status::internal(SideInputError(UserDefinedError(e.to_string())).to_string()))
+                        Err(Status::internal(Server::<()>::user_error(e.to_string()).to_string()))
                     }
                 }
             }
             _ = self.cancellation_token.cancelled() => {
-                Err(Status::internal(SideInputError(InternalError("Server is shutting down".to_string())).to_string()))
+                Err(Status::internal(Server::<()>::internal_error("Server is shutting down").to_string()))
             },
         }
     }
@@ -132,55 +128,59 @@ where
 /// gRPC server to start a side input service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     /// Create a new Server with the given side input service
     pub fn new(sideinput_svc: T) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(
+            DEFAULT_SIDEINPUT_SOCK_ADDR,
+            DEFAULT_SIDEINPUT_SERVER_INFO_FILE,
+        );
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+
+        Self {
+            config,
             svc: Some(sideinput_svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sideinput.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/sideinput.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sideinput-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sideinput-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -192,8 +192,11 @@ impl<T> Server<T> {
         T: SideInputer + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::SideInput);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -204,8 +207,8 @@ impl<T> Server<T> {
             cancellation_token: cln_token.clone(),
         };
         let sideinput_svc = proto::side_input_server::SideInputServer::new(sideinput_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size)
+            .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
@@ -230,10 +233,9 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+/// Implementation of ServiceError trait for Sideinput service
+impl<T> ServiceError for Server<T> {
+    fn service_name() -> &'static str {
+        "sideinput"
     }
 }

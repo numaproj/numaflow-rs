@@ -13,36 +13,38 @@
 //! [User Defined Source Transformer]: https://numaflow.numaproj.io/user-guide/sources/transformer/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
 
-/// start up code
-mod shared;
+/// Shared utilities and common functionality
+pub mod shared;
 
-/// source is for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
+/// Generated protobuf modules
+pub mod proto;
+
+/// Source functionality for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
 pub mod source;
 
-/// sourcetransform for writing [source data transformers](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/).
+/// Source transform functionality for writing [source data transformers](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/).
 pub mod sourcetransform;
 
-/// map is for writing the [map](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/) handlers.
+/// Map functionality for writing the [map](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/) handlers.
 pub mod map;
 
-/// reduce is for writing the [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
-pub mod reduce;
-
-/// sink for writing [user defined sinks](https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/).
-pub mod sink;
-
-/// building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/)
-pub mod sideinput;
-
-/// batchmap is for writing the map in [batch mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#batch-map-mode) handlers.
+/// Batch map functionality for writing the map in [batch mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#batch-map-mode) handlers.
 pub mod batchmap;
 
-/// mapstream is for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
+/// Map stream functionality for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
 pub mod mapstream;
 
-pub mod serving_store;
+/// Reduce functionality for writing the [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
+pub mod reduce;
 
-mod servers;
+/// Sink functionality for writing [user defined sinks](https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/).
+pub mod sink;
+
+/// Side input functionality for building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/) handlers.
+pub mod sideinput;
+
+/// Serving functionality for serving stores and related operations.
+pub mod serving;
 
 // Error handling on Numaflow SDKs!
 //
@@ -83,5 +85,5 @@ mod servers;
 // The above 3 level task ordering is only for complex cases like reduce, but for simpler endpoints like `map`, it only has 2 levels but
 // the error propagation is handled the same way.
 
-/// error module
+/// Error handling types and utilities
 pub mod error;

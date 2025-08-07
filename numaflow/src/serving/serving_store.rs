@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,16 +5,13 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status};
 
-use crate::error::Error::ServingStoreError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
-use crate::servers::serving::{
+use crate::proto::serving_store::{
     self as serving_pb, GetRequest, GetResponse, PutRequest, PutResponse,
 };
-use crate::shared::{self, ContainerType};
-
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
+use crate::shared::{
+    self, ContainerType, ServerConfig, ServiceError, SocketCleanup,
+    DEFAULT_SERVING_SERVER_INFO_FILE, DEFAULT_SERVING_SOCK_ADDR,
+};
 
 /// ServingStore trait for implementing user defined stores. This Store has to be
 /// a shared Store between the Source and the Sink vertices. [ServingStore::put] happens in Sink
@@ -114,13 +110,13 @@ where
                             .send(())
                             .await
                             .expect("Sending shutdown signal to gRPC server");
-                        Err(Status::internal(ServingStoreError(UserDefinedError(e.to_string())).to_string()))
+                        Err(Status::internal(Server::<()>::user_error(e.to_string()).to_string()))
                     }
                 }
             },
 
             _ = cancellation_token.cancelled() => {
-                Err(Status::internal(ServingStoreError(InternalError("Server is shutting down".to_string())).to_string()))
+                Err(Status::internal(Server::<()>::internal_error("Server is shutting down").to_string()))
             },
         }
     }
@@ -150,13 +146,13 @@ where
                             .send(())
                             .await
                             .expect("Sending shutdown signal to gRPC server");
-                        Err(Status::internal(ServingStoreError(UserDefinedError(e.to_string())).to_string()))
+                        Err(Status::internal(Server::<()>::user_error(e.to_string()).to_string()))
                     }
                 }
             },
 
             _ = cancellation_token.cancelled() => {
-                Err(Status::internal(ServingStoreError(InternalError("Server is shutting down".to_string())).to_string()))
+                Err(Status::internal(Server::<()>::internal_error("Server is shutting down").to_string()))
             },
         }
     }
@@ -174,57 +170,55 @@ where
 /// gRPC server to start a `ServingStore` service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
-        let (sock_addr, server_info_file) =
-            (DEFAULT_SOCK_ADDR.into(), DEFAULT_SERVER_INFO_FILE.into());
+        let config = ServerConfig::new(DEFAULT_SERVING_SOCK_ADDR, DEFAULT_SERVING_SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
-            sock_addr,
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file,
+            config,
             svc: Some(svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/serving.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        self.config.sock_addr = file.into();
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/serving.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.sock_addr.as_path()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config.max_message_size = message_size;
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/serving-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        self.config.server_info_file = file.into();
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/serving-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file.as_path()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -236,8 +230,11 @@ impl<T> Server<T> {
         T: ServingStore + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::Serving);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            &self.config.sock_addr,
+            &self.config.server_info_file,
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
@@ -249,8 +246,8 @@ impl<T> Server<T> {
         };
 
         let svc = serving_pb::serving_store_server::ServingStoreServer::new(svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size)
+            .max_decoding_message_size(self.config.max_message_size);
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
 
@@ -275,11 +272,10 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
+/// Implementation of ServiceError trait for Serving service
+impl<T> ServiceError for Server<T> {
+    fn service_name() -> &'static str {
+        "servingstore"
     }
 }
 
@@ -294,8 +290,9 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::serving_store::serving_pb::serving_store_client::ServingStoreClient;
-    use crate::serving_store::{self, serving_pb, Payload};
+    use crate::proto::serving_store as serving_pb;
+    use crate::proto::serving_store::serving_store_client::ServingStoreClient;
+    use crate::serving::{self as serving_store, Payload};
 
     struct TestStore {
         store: Arc<Mutex<HashMap<String, Vec<Payload>>>>,
