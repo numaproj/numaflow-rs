@@ -219,13 +219,12 @@ where
             handler.clone(),
             stream,
             stream_response_tx.clone(),
-            error_tx.clone(),
-            self.cancellation_token.child_token(),
+            error_tx,
+            self.cancellation_token.clone(),
         ));
 
         tokio::spawn(manage_grpc_stream(
             handle,
-            self.cancellation_token.clone(),
             stream_response_tx,
             error_rx,
             self.shutdown_tx.clone(),
@@ -258,7 +257,6 @@ async fn handle_stream_requests<T>(
                 map_request,
                 stream_response_tx.clone(),
                 error_tx.clone(),
-                token.clone(),
             ).await,
             _ = token.cancelled() => {
                 info!("Cancellation token is cancelled, shutting down");
@@ -276,7 +274,6 @@ async fn handle_request<T>(
     map_request: Result<Option<proto::MapRequest>, Status>,
     stream_response_tx: Sender<Result<proto::MapResponse, Status>>,
     error_tx: Sender<Error>,
-    token: CancellationToken,
 ) -> bool
 where
     T: MapStreamer + Send + Sync + 'static,
@@ -294,7 +291,6 @@ where
         map_request,
         stream_response_tx,
         error_tx,
-        token,
     ));
     true
 }
@@ -305,37 +301,18 @@ async fn run_map_stream<T>(
     map_request: proto::MapRequest,
     stream_response_tx: Sender<Result<proto::MapResponse, Status>>,
     error_tx: Sender<Error>,
-    token: CancellationToken,
 ) where
     T: MapStreamer + Send + Sync + 'static,
 {
-    let Some(request) = map_request.request else {
-        error_tx
-            .send(Error::MapError(ErrorKind::InternalError(
-                "Request not present".to_string(),
-            )))
-            .await
-            .expect("Sending error on channel");
-        return;
-    };
-
+    let request = map_request.request.expect("request can not be none");
     let message_id = map_request.id.clone();
 
     let (tx, mut rx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
 
     // Spawn a task to run the map_stream function
-    let token = token.child_token();
     let map_stream_task = tokio::spawn({
         let handler = handler.clone();
-        let token = token.clone();
-        async move {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    info!("Task was cancelled");
-                }
-                _ = handler.map_stream(request.into(), tx) => {}
-            }
-        }
+        async move { handler.map_stream(request.into(), tx).await }
     });
 
     // Wait for the map_stream_task to complete and handle any errors
@@ -343,12 +320,11 @@ async fn run_map_stream<T>(
         let error_tx = error_tx.clone();
         async move {
             if let Err(e) = map_stream_task.await {
-                error_tx
+                let _ = error_tx
                     .send(Error::MapError(ErrorKind::UserDefinedError(format!(
                         "panicked: {e:?}"
                     ))))
-                    .await
-                    .expect("Sending error on channel");
+                    .await;
                 return Err(e);
             }
             Ok(())
@@ -367,12 +343,11 @@ async fn run_map_stream<T>(
             .await;
 
         if let Err(e) = send_response_result {
-            error_tx
+            let _ = error_tx
                 .send(Error::MapError(ErrorKind::InternalError(format!(
                     "Failed to send response: {e:?}"
                 ))))
-                .await
-                .expect("Sending error on channel");
+                .await;
             return;
         }
     }
@@ -398,20 +373,17 @@ async fn run_map_stream<T>(
 /// Manages the gRPC stream. If the request handler is finished, it cancels the token.
 async fn manage_grpc_stream(
     request_handler: JoinHandle<()>,
-    token: CancellationToken,
     stream_response_tx: Sender<Result<proto::MapResponse, Status>>,
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: Sender<()>,
 ) {
     let err = tokio::select! {
         _ = request_handler => {
-            token.cancel();
             return;
         },
         err = error_rx.recv() => err,
     };
 
-    token.cancel();
     let Some(err) = err else {
         return;
     };

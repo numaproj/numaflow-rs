@@ -209,13 +209,12 @@ where
             handler.clone(),
             stream,
             stream_response_tx.clone(),
-            error_tx.clone(),
-            self.cancellation_token.child_token(),
+            error_tx,
+            self.cancellation_token.clone(),
         ));
 
         tokio::spawn(manage_grpc_stream(
             handle,
-            self.cancellation_token.clone(),
             stream_response_tx,
             error_rx,
             self.shutdown_tx.clone(),
@@ -246,7 +245,6 @@ async fn handle_stream_requests<T>(
                 map_request,
                 stream_response_tx.clone(),
                 error_tx.clone(),
-                token.clone(),
             ).await,
             _ = token.cancelled() => {
                 info!("Cancellation token is cancelled, shutting down");
@@ -258,23 +256,21 @@ async fn handle_stream_requests<T>(
 
 async fn manage_grpc_stream(
     request_handler: JoinHandle<()>,
-    token: CancellationToken,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: mpsc::Sender<()>,
 ) {
     let err = tokio::select! {
         _ = request_handler => {
-            token.cancel();
             return;
         },
         err = error_rx.recv() => err,
     };
 
-    token.cancel();
     let Some(err) = err else {
         return;
     };
+
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
         .send(Err(Status::internal(err.to_string())))
@@ -291,7 +287,6 @@ async fn handle_request<T>(
     map_request: Result<Option<proto::MapRequest>, Status>,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) -> bool
 where
     T: Mapper + Send + Sync + 'static,
@@ -304,13 +299,7 @@ where
             return false;
         }
     };
-    tokio::spawn(run_map(
-        handler,
-        map_request,
-        stream_response_tx,
-        error_tx,
-        token,
-    ));
+    tokio::spawn(run_map(handler, map_request, stream_response_tx, error_tx));
     true
 }
 
@@ -319,32 +308,16 @@ async fn run_map<T>(
     map_request: proto::MapRequest,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) where
     T: Mapper + Send + Sync + 'static,
 {
-    let Some(request) = map_request.request else {
-        error_tx
-            .send(Error::MapError(ErrorKind::InternalError(
-                "Request not present".to_string(),
-            )))
-            .await
-            .expect("Sending error on channel");
-        return;
-    };
-
+    let request = map_request.request.expect("request can not be none");
     let message_id = map_request.id.clone();
 
     // A new task is spawned to catch the panic
     let udf_map_task = tokio::spawn({
         let handler = handler.clone();
-        let token = token.child_token();
-        async move {
-            tokio::select! {
-                _ = token.cancelled() => None,
-                messages = handler.map(request.into()) => Some(messages),
-            }
-        }
+        async move { handler.map(request.into()).await }
     });
 
     let messages = match udf_map_task.await {
@@ -361,11 +334,6 @@ async fn run_map<T>(
         }
     };
 
-    let Some(messages) = messages else {
-        // CancellationToken is cancelled
-        return;
-    };
-
     let send_response_result = stream_response_tx
         .send(Ok(MapResponse {
             results: messages.into_iter().map(|msg| msg.into()).collect(),
@@ -379,12 +347,11 @@ async fn run_map<T>(
         return;
     };
 
-    error_tx
+    let _ = error_tx
         .send(Error::MapError(ErrorKind::InternalError(format!(
             "Failed to send response: {e:?}"
         ))))
-        .await
-        .expect("Sending error on channel");
+        .await;
 }
 
 async fn perform_handshake(

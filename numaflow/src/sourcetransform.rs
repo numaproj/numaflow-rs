@@ -240,13 +240,12 @@ where
             handler.clone(),
             stream,
             stream_response_tx.clone(),
-            error_tx.clone(),
+            error_tx,
             self.cancellation_token.child_token(),
         ));
 
         tokio::spawn(manage_grpc_stream(
             handle,
-            self.cancellation_token.clone(),
             stream_response_tx,
             error_rx,
             self.shutdown_tx.clone(),
@@ -288,23 +287,21 @@ async fn perform_handshake(
 // shutdown the gRPC server on first error
 async fn manage_grpc_stream(
     request_handler: JoinHandle<()>,
-    token: CancellationToken,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: mpsc::Sender<()>,
 ) {
     let err = tokio::select! {
         _ = request_handler => {
-            token.cancel();
             return;
         },
         err = error_rx.recv() => err,
     };
 
-    token.cancel();
     let Some(err) = err else {
         return;
     };
+
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
         .send(Err(Status::internal(err.to_string())))
@@ -335,7 +332,6 @@ async fn handle_stream_requests<T>(
                 transform_request,
                 stream_response_tx.clone(),
                 error_tx.clone(),
-                token.clone(),
             ).await,
             _ = token.cancelled() => {
                 info!("Cancellation token is cancelled, shutting down");
@@ -352,7 +348,6 @@ async fn handle_request<T>(
     transform_request: Result<Option<proto::SourceTransformRequest>, Status>,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) -> bool
 where
     T: SourceTransformer + Send + Sync + 'static,
@@ -370,7 +365,6 @@ where
         transform_request,
         stream_response_tx,
         error_tx,
-        token,
     ));
     true
 }
@@ -381,51 +375,29 @@ async fn run_transform<T>(
     transform_request: proto::SourceTransformRequest,
     stream_response_tx: mpsc::Sender<Result<SourceTransformResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) where
     T: SourceTransformer + Send + Sync + 'static,
 {
-    let Some(request) = transform_request.request else {
-        error_tx
-            .send(SourceTransformerError(ErrorKind::InternalError(
-                "Transform request can not be none".to_string(),
-            )))
-            .await
-            .expect("Sending error on channel");
-        return;
-    };
-
+    let request = transform_request.request.expect("request can not be none");
     let message_id = request.id.clone();
 
     // A new task is spawned to catch the panic
     let udf_transform_task = tokio::spawn({
         let handler = handler.clone();
-        let token = token.child_token();
-        async move {
-            tokio::select! {
-                _ = token.cancelled() => None,
-                messages = handler.transform(request.into()) => Some(messages),
-            }
-        }
+        async move { handler.transform(request.into()).await }
     });
 
     let messages = match udf_transform_task.await {
         Ok(messages) => messages,
         Err(e) => {
             error!("Failed to run transform function: {e:?}");
-            error_tx
+            let _ = error_tx
                 .send(SourceTransformerError(ErrorKind::UserDefinedError(
                     "panic in transform UDF".to_string(),
                 )))
-                .await
-                .expect("Sending error on channel");
+                .await;
             return;
         }
-    };
-
-    let Some(messages) = messages else {
-        // CancellationToken is cancelled
-        return;
     };
 
     let send_response_result = stream_response_tx
@@ -440,12 +412,11 @@ async fn run_transform<T>(
         return;
     };
 
-    error_tx
+    let _ = error_tx
         .send(SourceTransformerError(ErrorKind::InternalError(format!(
             "sending source transform response over gRPC stream: {e:?}"
         ))))
-        .await
-        .expect("Sending error on channel");
+        .await;
 }
 
 /// gRPC server to start a sourcetransform service
