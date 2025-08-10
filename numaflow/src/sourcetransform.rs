@@ -291,15 +291,14 @@ async fn manage_grpc_stream(
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: mpsc::Sender<()>,
 ) {
-    let err = tokio::select! {
-        _ = request_handler => {
-            return;
+    let err = match error_rx.recv().await {
+        Some(err) => err,
+        None => match request_handler.await {
+            Ok(_) => return,
+            Err(e) => SourceTransformerError(ErrorKind::InternalError(format!(
+                "Source transformer request handler aborted: {e:?}"
+            ))),
         },
-        err = error_rx.recv() => err,
-    };
-
-    let Some(err) = err else {
-        return;
     };
 
     error!("Shutting down gRPC channel: {err:?}");
@@ -734,6 +733,7 @@ mod tests {
             handshake: None,
         };
         tx.send(request).await.unwrap();
+        drop(tx);
 
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {

@@ -260,15 +260,14 @@ async fn manage_grpc_stream(
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: mpsc::Sender<()>,
 ) {
-    let err = tokio::select! {
-        _ = request_handler => {
-            return;
+    let err = match error_rx.recv().await {
+        Some(err) => err,
+        None => match request_handler.await {
+            Ok(_) => return,
+            Err(e) => Error::MapError(ErrorKind::InternalError(format!(
+                "Map request handler aborted: {e:?}"
+            ))),
         },
-        err = error_rx.recv() => err,
-    };
-
-    let Some(err) = err else {
-        return;
     };
 
     error!("Shutting down gRPC channel: {err:?}");
@@ -687,6 +686,14 @@ mod tests {
         };
         tx.send(request).await.unwrap();
 
+        if let Err(e) = stream.message().await {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("Panic in mapper"));
+        } else {
+            return Err("Expected error from server".into());
+        }
+
+        drop(tx);
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -783,6 +790,7 @@ mod tests {
         let resp = stream.message().await;
         assert!(resp.is_err());
 
+        drop(tx);
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;

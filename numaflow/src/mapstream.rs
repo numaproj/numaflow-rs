@@ -377,16 +377,16 @@ async fn manage_grpc_stream(
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: Sender<()>,
 ) {
-    let err = tokio::select! {
-        _ = request_handler => {
-            return;
+    let err = match error_rx.recv().await {
+        Some(err) => err,
+        None => match request_handler.await {
+            Ok(_) => return,
+            Err(e) => Error::MapError(ErrorKind::InternalError(format!(
+                "MapStream request handler aborted: {e:?}"
+            ))),
         },
-        err = error_rx.recv() => err,
     };
 
-    let Some(err) = err else {
-        return;
-    };
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
         .send(Err(Status::internal(err.to_string())))
@@ -831,6 +831,7 @@ mod tests {
             return Err("Expected error from server".into());
         }
 
+        drop(tx);
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             if task.is_finished() {
