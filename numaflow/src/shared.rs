@@ -9,6 +9,7 @@ use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
@@ -151,7 +152,11 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 pub(crate) async fn shutdown_signal(
     mut shutdown_on_err: mpsc::Receiver<()>,
     shutdown_from_user: Option<oneshot::Receiver<()>>,
+    cln_token: CancellationToken,
 ) {
+    // will call cancel_token.cancel() on drop of guard
+    let _drop_guard = cln_token.drop_guard();
+
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -268,7 +273,12 @@ mod tests {
 
         // Spawn a new task to call shutdown_signal
         let shutdown_signal_task = tokio::spawn(async move {
-            shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx)).await;
+            shutdown_signal(
+                internal_shutdown_rx,
+                Some(user_shutdown_rx),
+                CancellationToken::new(),
+            )
+            .await;
         });
 
         // Send a shutdown signal
