@@ -1,7 +1,8 @@
 //! Map functionality for the Numaflow SDK
 //!
 //! This module provides the implementation for map operations in Numaflow pipelines.
-//! Map functions transform input data into output data on a per-message basis.
+//! Map in a Map vertex takes an input and returns 0, 1, or more outputs (also known as flat-map operation).
+//! Map is an element wise operator.
 
 mod map;
 

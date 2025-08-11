@@ -1,14 +1,8 @@
-//! Error types and handling for the Numaflow SDK
-//!
-//! This module provides structured error handling across the SDK with proper
-//! error chaining, context, and categorization.
-
 use thiserror::Error;
 
 /// The main Result type used throughout the Numaflow SDK
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Enhanced ErrorKind with more specific error categories
 #[derive(Error, Debug, Clone)]
 pub enum ErrorKind {
     /// User-defined function errors
@@ -44,7 +38,6 @@ pub enum ErrorKind {
     TimeoutError(String),
 }
 
-/// Enhanced Error enum with backward compatibility and new features
 #[derive(Error, Debug, Clone)]
 pub enum Error {
     #[error("Map Error - {0}")]

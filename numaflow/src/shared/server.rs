@@ -1,7 +1,5 @@
 //! Common server configuration and builder patterns
 //!
-//! This module provides shared server configuration structures and builder patterns
-//! that eliminate code duplication across all Numaflow service implementations.
 
 use std::fs;
 use std::path::PathBuf;
@@ -48,7 +46,7 @@ impl ServerConfig {
         self.max_message_size
     }
 
-    /// Change the file in which numaflow server information is stored on start up to the new value.
+    /// Set the file in which numaflow server information is stored
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.server_info_file = file.into();
         self
@@ -60,21 +58,21 @@ impl ServerConfig {
     }
 }
 
-/// Common Drop implementation for cleaning up socket files
+/// It is used to clean up the socket file when the server is dropped.
 #[derive(Debug)]
-pub struct SocketCleanup {
+pub(crate) struct SocketCleanup {
     sock_addr: PathBuf,
 }
 
 impl SocketCleanup {
-    pub fn new(sock_addr: PathBuf) -> Self {
+    pub(crate) fn new(sock_addr: PathBuf) -> Self {
         Self { sock_addr }
     }
 }
 
 impl Drop for SocketCleanup {
-    /// Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    /// same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    /// Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the same address.
+    /// UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.sock_addr);
     }

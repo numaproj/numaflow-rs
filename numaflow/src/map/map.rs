@@ -513,8 +513,6 @@ impl<T> Server<T> {
     }
 }
 
-// Drop implementation is handled by SocketCleanup
-
 /// Implementation of ServiceError trait for Map service
 impl<T> ServiceError for Server<T> {
     fn service_name() -> &'static str {

@@ -6,8 +6,10 @@ use crate::error::{Error, ErrorKind};
 
 /// Trait for consistent error construction across all Numaflow services
 ///
-/// This trait provides a unified interface for creating service-specific errors
-pub trait ServiceError {
+/// This trait provides a unified interface for creating service-specific errors.
+/// This is an internal trait used only by SDK service implementations.
+/// Add more methods here if needed. eg: config_error, network_error, etc.
+pub(crate) trait ServiceError {
     /// Get the service name for error context
     fn service_name() -> &'static str;
 
@@ -20,7 +22,7 @@ pub trait ServiceError {
             "sink" => Error::SinkError(kind),
             "source" => Error::SourceError(kind),
             "batchmap" => Error::BatchMapError(kind),
-            "sourcetransform" => Error::SourceTransformerError(kind),
+            "sourcetransformer" => Error::SourceTransformerError(kind),
             "sideinput" => Error::SideInputError(kind),
             "servingstore" => Error::ServingStoreError(kind),
             "mapstream" => Error::MapStreamError(kind),

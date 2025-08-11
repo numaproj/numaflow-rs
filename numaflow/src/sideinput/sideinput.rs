@@ -152,35 +152,36 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sideinput.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config.sock_addr = file.into();
+        self.config = self.config.with_socket_file(file);
+        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/sideinput.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.config.sock_addr.as_path()
+        self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.config.max_message_size = message_size;
+        self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size
+        self.config.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sideinput-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config.server_info_file = file.into();
+        self.config = self.config.with_server_info_file(file);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sideinput-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
