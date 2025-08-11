@@ -377,6 +377,7 @@ async fn manage_grpc_stream(
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: Sender<()>,
 ) {
+    // wait for err tx to be closed or consumed before waiting on JH.
     let err = match error_rx.recv().await {
         Some(err) => err,
         None => match request_handler.await {
