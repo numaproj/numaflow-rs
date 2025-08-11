@@ -40,7 +40,7 @@ pub(crate) trait ServiceError {
             "sink" => Error::SinkError(kind),
             "source" => Error::SourceError(kind),
             "batchmap" => Error::BatchMapError(kind),
-            "sourcetransform" => Error::SourceTransformerError(kind),
+            "sourcetransformer" => Error::SourceTransformerError(kind),
             "sideinput" => Error::SideInputError(kind),
             "servingstore" => Error::ServingStoreError(kind),
             "mapstream" => Error::MapStreamError(kind),
