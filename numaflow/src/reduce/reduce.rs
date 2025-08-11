@@ -358,7 +358,7 @@ where
                             Some(Err(error)) => {
                                 tracing::error!("Error from task: {:?}", error);
                                 grpc_response_tx
-                                    .send(Err(Status::internal(error.to_string())))
+                                    .send(Err(Server::<()>::grpc_internal_error(error.to_string())))
                                     .await
                                     .expect("send to grpc response channel failed");
                                 // stop reading new messages from the stream.

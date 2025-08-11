@@ -356,14 +356,17 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Status::internal(e.to_string())))
+                            .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
                     Err(e) => {
                         resp_tx
-                            .send(Err(Status::internal(format!("Sink handler aborted: {}", e))))
+                            .send(Err(Server::<()>::grpc_internal_error(format!(
+                                "Sink handler aborted: {}",
+                                e
+                            ))))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
@@ -372,7 +375,7 @@ where
             },
             _ = cln_token.cancelled() => {
                 resp_tx
-                    .send(Err(Status::cancelled("Sink handler cancelled")))
+                    .send(Err(Server::<()>::grpc_cancelled_error("Sink handler cancelled")))
                     .await
                     .expect("Sending error to response channel");
             }
@@ -388,8 +391,8 @@ where
         let handshake_request = sink_stream
             .message()
             .await
-            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+            .map_err(|e| Server::<()>::grpc_internal_error(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Server::<()>::grpc_internal_error("stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -400,11 +403,16 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("failed to send handshake response {}", e))
+                    Server::<()>::grpc_internal_error(format!(
+                        "failed to send handshake response {}",
+                        e
+                    ))
                 })?;
             Ok(())
         } else {
-            Err(Status::invalid_argument("Handshake not present"))
+            Err(Server::<()>::grpc_invalid_argument_error(
+                "Handshake not present",
+            ))
         }
     }
 }

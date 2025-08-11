@@ -93,9 +93,9 @@ impl TryFrom<MapRequest> for Datum {
     type Error = Status;
 
     fn try_from(sr: MapRequest) -> Result<Self, Self::Error> {
-        let request = sr
-            .request
-            .ok_or_else(|| Status::invalid_argument("Invalid argument, request can't be None"))?;
+        let request = sr.request.ok_or_else(|| {
+            Server::<()>::grpc_invalid_argument_error("Invalid argument, request can't be None")
+        })?;
 
         Ok(Self {
             keys: request.keys,
@@ -390,14 +390,14 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Status::internal(e.to_string())))
+                            .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
                     Err(e) => {
                         resp_tx
-                            .send(Err(Status::internal(format!("Map handler aborted: {}", e))))
+                            .send(Err(Server::<()>::grpc_internal_error(format!("Map handler aborted: {}", e))))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
@@ -406,7 +406,7 @@ where
             },
             _ = cln_token.cancelled() => {
                 resp_tx
-                    .send(Err(Status::cancelled("Map handler cancelled")))
+                    .send(Err(Server::<()>::grpc_cancelled_error("Map handler cancelled")))
                     .await
                     .expect("Sending error to response channel");
             }
@@ -421,8 +421,8 @@ where
         let handshake_request = map_stream
             .message()
             .await
-            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
+            .map_err(|e| Server::<()>::grpc_internal_error(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Server::<()>::grpc_internal_error("stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -434,11 +434,16 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("failed to send handshake response {}", e))
+                    Server::<()>::grpc_internal_error(format!(
+                        "failed to send handshake response {}",
+                        e
+                    ))
                 })?;
             Ok(())
         } else {
-            Err(Status::invalid_argument("Handshake not present"))
+            Err(Server::<()>::grpc_invalid_argument_error(
+                "Handshake not present",
+            ))
         }
     }
 }

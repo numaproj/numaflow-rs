@@ -12,61 +12,37 @@ pub enum ErrorKind {
     /// Internal SDK errors
     #[error("Internal error: {0}")]
     InternalError(String),
-
-    /// Configuration errors
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-
-    /// Network and connection errors
-    #[error("Network error: {0}")]
-    NetworkError(String),
-
-    /// Protocol and serialization errors
-    #[error("Protocol error: {0}")]
-    ProtocolError(String),
-
-    /// Validation errors
-    #[error("Validation error: {0}")]
-    ValidationError(String),
-
-    /// I/O errors
-    #[error("I/O error: {0}")]
-    IoError(String),
-
-    /// Timeout errors
-    #[error("Timeout error: {0}")]
-    TimeoutError(String),
 }
 
 #[derive(Error, Debug, Clone)]
 pub enum Error {
-    #[error("Map Error - {0}")]
+    #[error("Map - {0}")]
     MapError(ErrorKind),
 
-    #[error("Reduce Error - {0}")]
+    #[error("Reduce - {0}")]
     ReduceError(ErrorKind),
 
-    #[error("Sink Error - {0}")]
+    #[error("Sink - {0}")]
     SinkError(ErrorKind),
 
-    #[error("Source Error - {0}")]
+    #[error("Source - {0}")]
     SourceError(ErrorKind),
 
-    #[error("BatchMap Error - {0}")]
+    #[error("BatchMap - {0}")]
     BatchMapError(ErrorKind),
 
-    #[error("Source Transformer Error: {0}")]
+    #[error("Source Transformer - {0}")]
     SourceTransformerError(ErrorKind),
 
-    #[error("SideInput Error: {0}")]
+    #[error("SideInput - {0}")]
     SideInputError(ErrorKind),
 
-    #[error("ServingStore Error: {0}")]
+    #[error("ServingStore - {0}")]
     ServingStoreError(ErrorKind),
 
-    #[error("MapStream Error: {0}")]
+    #[error("MapStream - {0}")]
     MapStreamError(ErrorKind),
 
-    #[error("Numaflow Error: {0}")]
+    #[error("Numaflow - {0}")]
     DefaultError(ErrorKind),
 }

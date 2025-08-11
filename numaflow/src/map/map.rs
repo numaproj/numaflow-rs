@@ -274,7 +274,7 @@ async fn manage_grpc_stream(
     };
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Status::internal(err.to_string())))
+        .send(Err(Server::<()>::grpc_internal_error(err.to_string())))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -387,8 +387,8 @@ async fn perform_handshake(
     let handshake_request = stream
         .message()
         .await
-        .map_err(|e| Status::internal(format!("Handshake failed: {}", e)))?
-        .ok_or_else(|| Status::internal("Stream closed before handshake"))?;
+        .map_err(|e| Server::<()>::grpc_internal_error(format!("Handshake failed: {}", e)))?
+        .ok_or_else(|| Server::<()>::grpc_internal_error("Stream closed before handshake"))?;
 
     if let Some(handshake) = handshake_request.handshake {
         stream_response_tx
@@ -399,10 +399,17 @@ async fn perform_handshake(
                 status: None,
             }))
             .await
-            .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
+            .map_err(|e| {
+                Server::<()>::grpc_internal_error(format!(
+                    "Failed to send handshake response: {}",
+                    e
+                ))
+            })?;
         Ok(())
     } else {
-        Err(Status::invalid_argument("Handshake not present"))
+        Err(Server::<()>::grpc_invalid_argument_error(
+            "Handshake not present",
+        ))
     }
 }
 

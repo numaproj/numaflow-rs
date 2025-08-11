@@ -110,12 +110,12 @@ where
                     }
                     Err(e) => {
                         shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
-                        Err(Status::internal(Server::<()>::user_error(e.to_string()).to_string()))
+                        Err(Server::<()>::grpc_internal_error(e.to_string()))
                     }
                 }
             }
             _ = self.cancellation_token.cancelled() => {
-                Err(Status::internal(Server::<()>::internal_error("Server is shutting down").to_string()))
+                Err(Server::<()>::grpc_cancelled_error("Server is shutting down"))
             },
         }
     }

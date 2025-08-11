@@ -225,7 +225,7 @@ where
             // which will close the stream with failure.
             if let Err(e) = grpc_read_handle.await {
                 error!("shutting down the gRPC channel, {}", e);
-                tx.send(Err(Status::internal(e.to_string())))
+                tx.send(Err(Server::<()>::grpc_internal_error(e.to_string())))
                     .await
                     .map_err(|e| Server::<()>::internal_error(e.to_string()))
                     .expect("writing error to grpc response channel should never fail");
@@ -304,7 +304,7 @@ where
             if let Err(e) = grpc_read_handle.await {
                 error!("shutting down the gRPC ack channel, {}", e);
                 ack_tx
-                    .send(Err(Status::internal(e.to_string())))
+                    .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
                     .await
                     .map_err(|e| Server::<()>::internal_error(e.to_string()))
                     .expect("writing error to grpc response channel should never fail");
@@ -364,8 +364,10 @@ where
         let handshake_request = read_stream
             .message()
             .await
-            .map_err(|e| Status::internal(format!("read handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("read stream closed before handshake"))?;
+            .map_err(|e| Server::<()>::grpc_internal_error(format!("read handshake failed {}", e)))?
+            .ok_or_else(|| {
+                Server::<()>::grpc_internal_error("read stream closed before handshake")
+            })?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -376,11 +378,16 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("failed to send read handshake response {}", e))
+                    Server::<()>::grpc_internal_error(format!(
+                        "failed to send read handshake response {}",
+                        e
+                    ))
                 })?;
             Ok(())
         } else {
-            Err(Status::invalid_argument("Read handshake not present"))
+            Err(Server::<()>::grpc_invalid_argument_error(
+                "Read handshake not present",
+            ))
         }
     }
 
@@ -393,8 +400,10 @@ where
         let handshake_request = ack_stream
             .message()
             .await
-            .map_err(|e| Status::internal(format!("ack handshake failed {}", e)))?
-            .ok_or_else(|| Status::internal("ack stream closed before handshake"))?;
+            .map_err(|e| Server::<()>::grpc_internal_error(format!("ack handshake failed {}", e)))?
+            .ok_or_else(|| {
+                Server::<()>::grpc_internal_error("ack stream closed before handshake")
+            })?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -404,11 +413,16 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("failed to send ack handshake response {}", e))
+                    Server::<()>::grpc_internal_error(format!(
+                        "failed to send ack handshake response {}",
+                        e
+                    ))
                 })?;
             Ok(())
         } else {
-            Err(Status::invalid_argument("Ack handshake not present"))
+            Err(Server::<()>::grpc_invalid_argument_error(
+                "Ack handshake not present",
+            ))
         }
     }
 }

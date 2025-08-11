@@ -3,6 +3,7 @@
 //!
 
 use crate::error::{Error, ErrorKind};
+use tonic::Status;
 
 /// Trait for consistent error construction across all Numaflow services
 ///
@@ -45,6 +46,19 @@ pub(crate) trait ServiceError {
             "mapstream" => Error::MapStreamError(kind),
             _ => Error::DefaultError(kind),
         }
+    }
+
+    /// Create a  gRPC internal error
+    fn grpc_internal_error(message: impl Into<String>) -> Status {
+        Status::internal(message.into())
+    }
+    /// Create a  gRPC invalid_argument error
+    fn grpc_invalid_argument_error(message: impl Into<String>) -> Status {
+        Status::invalid_argument(message.into())
+    }
+    /// Create a  gRPC cancelled error
+    fn grpc_cancelled_error(message: impl Into<String>) -> Status {
+        Status::cancelled(message.into())
     }
 }
 
