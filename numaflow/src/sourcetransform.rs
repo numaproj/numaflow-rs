@@ -390,6 +390,8 @@ async fn run_transform<T>(
         Ok(messages) => messages,
         Err(e) => {
             error!("Failed to run transform function: {e:?}");
+            // only one panic is sent to error_tx which is shown in the UI.
+            // `rx` will be dropped after recving first err.
             let _ = error_tx
                 .send(SourceTransformerError(ErrorKind::UserDefinedError(
                     "panic in transform UDF".to_string(),
