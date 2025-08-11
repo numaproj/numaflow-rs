@@ -87,10 +87,10 @@ pub mod map_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
     pub struct MapClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -121,7 +121,10 @@ pub mod map_client {
             let inner = tonic::client::Grpc::with_origin(inner, origin);
             Self { inner }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> MapClient<InterceptedService<T, F>>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> MapClient<InterceptedService<T, F>>
         where
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
@@ -131,8 +134,9 @@ pub mod map_client {
                     <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             MapClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -175,14 +179,18 @@ pub mod map_client {
             tonic::Response<tonic::codec::Streaming<super::MapResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/map.v1.Map/MapFn");
             let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("map.v1.Map", "MapFn"));
+            req.extensions_mut().insert(GrpcMethod::new("map.v1.Map", "MapFn"));
             self.inner.streaming(req, path, codec).await
         }
         /// IsReady is the heartbeat endpoint for gRPC.
@@ -190,14 +198,18 @@ pub mod map_client {
             &mut self,
             request: impl tonic::IntoRequest<()>,
         ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/map.v1.Map/IsReady");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("map.v1.Map", "IsReady"));
+            req.extensions_mut().insert(GrpcMethod::new("map.v1.Map", "IsReady"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -209,7 +221,7 @@ pub mod map_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with MapServer.
@@ -218,7 +230,8 @@ pub mod map_server {
         /// Server streaming response type for the MapFn method.
         type MapFnStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::MapResponse, tonic::Status>,
-            > + std::marker::Send
+            >
+            + std::marker::Send
             + 'static;
         /// MapFn applies a function to each map request element.
         async fn map_fn(
@@ -252,7 +265,10 @@ pub mod map_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -307,17 +323,22 @@ pub mod map_server {
                 "/map.v1.Map/MapFn" => {
                     #[allow(non_camel_case_types)]
                     struct MapFnSvc<T: Map>(pub Arc<T>);
-                    impl<T: Map> tonic::server::StreamingService<super::MapRequest> for MapFnSvc<T> {
+                    impl<T: Map> tonic::server::StreamingService<super::MapRequest>
+                    for MapFnSvc<T> {
                         type Response = super::MapResponse;
                         type ResponseStream = T::MapFnStream;
-                        type Future =
-                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<tonic::Streaming<super::MapRequest>>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move { <T as Map>::map_fn(&inner, request).await };
+                            let fut = async move {
+                                <T as Map>::map_fn(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -348,10 +369,15 @@ pub mod map_server {
                     struct IsReadySvc<T: Map>(pub Arc<T>);
                     impl<T: Map> tonic::server::UnaryService<()> for IsReadySvc<T> {
                         type Response = super::ReadyResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move { <T as Map>::is_ready(&inner, request).await };
+                            let fut = async move {
+                                <T as Map>::is_ready(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -377,19 +403,25 @@ pub mod map_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(tonic::body::Body::default());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
             }
         }
     }

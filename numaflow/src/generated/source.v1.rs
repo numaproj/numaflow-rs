@@ -89,7 +89,15 @@ pub mod read_response {
     pub mod status {
         /// Code to indicate the status of the response.
         #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+            Clone,
+            Copy,
+            Debug,
+            PartialEq,
+            Eq,
+            Hash,
+            PartialOrd,
+            Ord,
+            ::prost::Enumeration
         )]
         #[repr(i32)]
         pub enum Code {
@@ -118,7 +126,15 @@ pub mod read_response {
         }
         /// Error to indicate the error type. If the code is FAILURE, then the error field will be populated.
         #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+            Clone,
+            Copy,
+            Debug,
+            PartialEq,
+            Eq,
+            Hash,
+            PartialOrd,
+            Ord,
+            ::prost::Enumeration
         )]
         #[repr(i32)]
         pub enum Error {
@@ -260,10 +276,10 @@ pub mod source_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
     pub struct SourceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -307,8 +323,9 @@ pub mod source_client {
                     <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             SourceClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -355,14 +372,18 @@ pub mod source_client {
             tonic::Response<tonic::codec::Streaming<super::ReadResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/source.v1.Source/ReadFn");
             let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("source.v1.Source", "ReadFn"));
+            req.extensions_mut().insert(GrpcMethod::new("source.v1.Source", "ReadFn"));
             self.inner.streaming(req, path, codec).await
         }
         /// AckFn acknowledges a stream of datum offsets.
@@ -378,26 +399,40 @@ pub mod source_client {
             tonic::Response<tonic::codec::Streaming<super::AckResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/source.v1.Source/AckFn");
             let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("source.v1.Source", "AckFn"));
+            req.extensions_mut().insert(GrpcMethod::new("source.v1.Source", "AckFn"));
             self.inner.streaming(req, path, codec).await
         }
         /// PendingFn returns the number of pending records at the user defined source.
         pub async fn pending_fn(
             &mut self,
             request: impl tonic::IntoRequest<()>,
-        ) -> std::result::Result<tonic::Response<super::PendingResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::PendingResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/source.v1.Source/PendingFn");
+            let path = http::uri::PathAndQuery::from_static(
+                "/source.v1.Source/PendingFn",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("source.v1.Source", "PendingFn"));
@@ -407,13 +442,22 @@ pub mod source_client {
         pub async fn partitions_fn(
             &mut self,
             request: impl tonic::IntoRequest<()>,
-        ) -> std::result::Result<tonic::Response<super::PartitionsResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::PartitionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/source.v1.Source/PartitionsFn");
+            let path = http::uri::PathAndQuery::from_static(
+                "/source.v1.Source/PartitionsFn",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("source.v1.Source", "PartitionsFn"));
@@ -424,14 +468,18 @@ pub mod source_client {
             &mut self,
             request: impl tonic::IntoRequest<()>,
         ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/source.v1.Source/IsReady");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("source.v1.Source", "IsReady"));
+            req.extensions_mut().insert(GrpcMethod::new("source.v1.Source", "IsReady"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -443,7 +491,7 @@ pub mod source_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with SourceServer.
@@ -452,7 +500,8 @@ pub mod source_server {
         /// Server streaming response type for the ReadFn method.
         type ReadFnStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::ReadResponse, tonic::Status>,
-            > + std::marker::Send
+            >
+            + std::marker::Send
             + 'static;
         /// Read returns a stream of datum responses.
         /// The size of the returned responses is less than or equal to the num_records specified in each ReadRequest.
@@ -466,7 +515,8 @@ pub mod source_server {
         /// Server streaming response type for the AckFn method.
         type AckFnStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::AckResponse, tonic::Status>,
-            > + std::marker::Send
+            >
+            + std::marker::Send
             + 'static;
         /// AckFn acknowledges a stream of datum offsets.
         /// When AckFn is called, it implicitly indicates that the datum stream has been processed by the source vertex.
@@ -487,7 +537,10 @@ pub mod source_server {
         async fn partitions_fn(
             &self,
             request: tonic::Request<()>,
-        ) -> std::result::Result<tonic::Response<super::PartitionsResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::PartitionsResponse>,
+            tonic::Status,
+        >;
         /// IsReady is the heartbeat endpoint for user defined source gRPC.
         async fn is_ready(
             &self,
@@ -515,7 +568,10 @@ pub mod source_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -570,17 +626,22 @@ pub mod source_server {
                 "/source.v1.Source/ReadFn" => {
                     #[allow(non_camel_case_types)]
                     struct ReadFnSvc<T: Source>(pub Arc<T>);
-                    impl<T: Source> tonic::server::StreamingService<super::ReadRequest> for ReadFnSvc<T> {
+                    impl<T: Source> tonic::server::StreamingService<super::ReadRequest>
+                    for ReadFnSvc<T> {
                         type Response = super::ReadResponse;
                         type ResponseStream = T::ReadFnStream;
-                        type Future =
-                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<tonic::Streaming<super::ReadRequest>>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move { <T as Source>::read_fn(&inner, request).await };
+                            let fut = async move {
+                                <T as Source>::read_fn(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -609,17 +670,22 @@ pub mod source_server {
                 "/source.v1.Source/AckFn" => {
                     #[allow(non_camel_case_types)]
                     struct AckFnSvc<T: Source>(pub Arc<T>);
-                    impl<T: Source> tonic::server::StreamingService<super::AckRequest> for AckFnSvc<T> {
+                    impl<T: Source> tonic::server::StreamingService<super::AckRequest>
+                    for AckFnSvc<T> {
                         type Response = super::AckResponse;
                         type ResponseStream = T::AckFnStream;
-                        type Future =
-                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<tonic::Streaming<super::AckRequest>>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move { <T as Source>::ack_fn(&inner, request).await };
+                            let fut = async move {
+                                <T as Source>::ack_fn(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -650,11 +716,15 @@ pub mod source_server {
                     struct PendingFnSvc<T: Source>(pub Arc<T>);
                     impl<T: Source> tonic::server::UnaryService<()> for PendingFnSvc<T> {
                         type Response = super::PendingResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as Source>::pending_fn(&inner, request).await };
+                            let fut = async move {
+                                <T as Source>::pending_fn(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -683,13 +753,18 @@ pub mod source_server {
                 "/source.v1.Source/PartitionsFn" => {
                     #[allow(non_camel_case_types)]
                     struct PartitionsFnSvc<T: Source>(pub Arc<T>);
-                    impl<T: Source> tonic::server::UnaryService<()> for PartitionsFnSvc<T> {
+                    impl<T: Source> tonic::server::UnaryService<()>
+                    for PartitionsFnSvc<T> {
                         type Response = super::PartitionsResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as Source>::partitions_fn(&inner, request).await };
+                            let fut = async move {
+                                <T as Source>::partitions_fn(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -720,10 +795,15 @@ pub mod source_server {
                     struct IsReadySvc<T: Source>(pub Arc<T>);
                     impl<T: Source> tonic::server::UnaryService<()> for IsReadySvc<T> {
                         type Response = super::ReadyResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move { <T as Source>::is_ready(&inner, request).await };
+                            let fut = async move {
+                                <T as Source>::is_ready(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -749,19 +829,25 @@ pub mod source_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(tonic::body::Body::default());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
             }
         }
     }

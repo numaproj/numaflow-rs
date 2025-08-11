@@ -1,59 +1,40 @@
+//! Shared utilities, traits, and common functionality
+//!
+//! This module contains utilities, constants, types, traits, and server configuration
+//! that are shared across different parts of the Numaflow SDK.
+
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnixListenerStream;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// Server configuration constants
-pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
-pub(crate) const DEFAULT_CHANNEL_SIZE: usize = 1000;
+use crate::error::{Error, ErrorKind};
+use tonic::Status;
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
 
 // Map mode constants
-pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
-pub(crate) const UNARY_MAP: &str = "unary-map";
-pub(crate) const BATCH_MAP: &str = "batch-map";
-pub(crate) const STREAM_MAP: &str = "stream-map";
+const MAP_MODE_KEY: &str = "MAP_MODE";
+const UNARY_MAP: &str = "unary-map";
+const BATCH_MAP: &str = "batch-map";
+const STREAM_MAP: &str = "stream-map";
 
-// Default socket addresses for each service
-pub(crate) const DEFAULT_SOURCE_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
-pub(crate) const DEFAULT_MAP_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
-pub(crate) const DEFAULT_BATCHMAP_SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
-pub(crate) const DEFAULT_MAPSTREAM_SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
-pub(crate) const DEFAULT_REDUCE_SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
-pub(crate) const DEFAULT_SINK_SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
-pub(crate) const DEFAULT_SOURCETRANSFORM_SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
-pub(crate) const DEFAULT_SIDEINPUT_SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
-pub(crate) const DEFAULT_SERVING_SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
+pub const DROP: &str = "U+005C__DROP__";
 
-// Default server info file paths for each service
-pub(crate) const DEFAULT_SOURCE_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
-pub(crate) const DEFAULT_MAP_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-pub(crate) const DEFAULT_BATCHMAP_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-pub(crate) const DEFAULT_MAPSTREAM_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-pub(crate) const DEFAULT_REDUCE_SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
-pub(crate) const DEFAULT_SINK_SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
-pub(crate) const DEFAULT_SOURCETRANSFORM_SERVER_INFO_FILE: &str =
-    "/var/run/numaflow/sourcetransformer-server-info";
-pub(crate) const DEFAULT_SIDEINPUT_SERVER_INFO_FILE: &str =
-    "/var/run/numaflow/sideinput-server-info";
-pub(crate) const DEFAULT_SERVING_SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
-
-// Sink-specific constants (fallback sink)
-pub(crate) const DEFAULT_FB_SINK_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
-pub(crate) const DEFAULT_FB_SINK_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
-pub(crate) const UD_CONTAINER_FB_SINK: &str = "fb-udsink";
-
-// Environment variable for the container type
-pub(crate) const ENV_UD_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
-
-pub(crate) const DROP: &str = "U+005C__DROP__";
+// =============================================================================
+// TYPES AND ENUMS
+// =============================================================================
 
 #[derive(Eq, PartialEq, Hash)]
 pub enum ContainerType {
@@ -85,7 +66,7 @@ pub enum ContainerType {
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
+pub static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
     LazyLock::new(|| {
         let mut m = HashMap::new();
         m.insert(ContainerType::Source, "1.4.0-z");
@@ -103,7 +84,7 @@ const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct ServerInfo {
+pub struct ServerInfo {
     #[serde(default)]
     protocol: String,
     #[serde(default)]
@@ -115,6 +96,7 @@ pub(crate) struct ServerInfo {
     #[serde(default)]
     metadata: Option<HashMap<String, String>>, // Metadata is optional
 }
+
 impl ServerInfo {
     pub fn new(container_type: ContainerType) -> Self {
         let mut metadata: HashMap<String, String> = HashMap::new();
@@ -145,6 +127,150 @@ impl ServerInfo {
     }
 }
 
+// =============================================================================
+// SERVER CONFIGURATION
+// =============================================================================
+
+// Server configuration constants
+pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
+pub const DEFAULT_CHANNEL_SIZE: usize = 1000;
+/// Common server configuration that all services share
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub(crate) sock_addr: PathBuf,
+    pub(crate) max_message_size: usize,
+    pub(crate) server_info_file: PathBuf,
+}
+
+impl ServerConfig {
+    /// Create new server configuration with defaults for the given service
+    pub fn new(default_sock_addr: &str, default_server_info_file: &str) -> Self {
+        Self {
+            sock_addr: default_sock_addr.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: default_server_info_file.into(),
+        }
+    }
+
+    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
+    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.sock_addr = file.into();
+        self
+    }
+
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
+    pub fn socket_file(&self) -> &std::path::Path {
+        self.sock_addr.as_path()
+    }
+
+    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
+    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
+        self.max_message_size = message_size;
+        self
+    }
+
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
+    }
+
+    /// Set the file in which numaflow server information is stored
+    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.server_info_file = file.into();
+        self
+    }
+
+    /// Get the path to the file where numaflow server info is stored.
+    pub fn server_info_file(&self) -> &std::path::Path {
+        self.server_info_file.as_path()
+    }
+}
+
+/// It is used to clean up the socket file when the server is dropped.
+#[derive(Debug)]
+pub struct SocketCleanup {
+    sock_addr: PathBuf,
+}
+
+impl SocketCleanup {
+    pub fn new(sock_addr: PathBuf) -> Self {
+        Self { sock_addr }
+    }
+}
+
+impl Drop for SocketCleanup {
+    /// Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the same address.
+    /// UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
+    }
+}
+
+// =============================================================================
+// TRAITS
+// =============================================================================
+
+/// Trait for consistent error construction across all Numaflow services
+///
+/// This trait provides a unified interface for creating service-specific errors.
+/// This is an internal trait used only by SDK service implementations.
+/// Add more methods here if needed. eg: config_error, network_error, etc.
+pub trait ServiceError {
+    /// Get the service name for error context
+    fn service_name() -> &'static str;
+
+    /// Create a user-defined function error
+    fn user_error(message: impl Into<String>) -> Error {
+        let kind = ErrorKind::UserDefinedError(message.into());
+        match Self::service_name() {
+            "map" => Error::MapError(kind),
+            "reduce" => Error::ReduceError(kind),
+            "sink" => Error::SinkError(kind),
+            "source" => Error::SourceError(kind),
+            "batchmap" => Error::BatchMapError(kind),
+            "sourcetransformer" => Error::SourceTransformerError(kind),
+            "sideinput" => Error::SideInputError(kind),
+            "servingstore" => Error::ServingStoreError(kind),
+            "mapstream" => Error::MapStreamError(kind),
+            _ => Error::DefaultError(kind),
+        }
+    }
+
+    /// Create an internal service error
+    fn internal_error(message: impl Into<String>) -> Error {
+        let kind = ErrorKind::InternalError(message.into());
+        match Self::service_name() {
+            "map" => Error::MapError(kind),
+            "reduce" => Error::ReduceError(kind),
+            "sink" => Error::SinkError(kind),
+            "source" => Error::SourceError(kind),
+            "batchmap" => Error::BatchMapError(kind),
+            "sourcetransformer" => Error::SourceTransformerError(kind),
+            "sideinput" => Error::SideInputError(kind),
+            "servingstore" => Error::ServingStoreError(kind),
+            "mapstream" => Error::MapStreamError(kind),
+            _ => Error::DefaultError(kind),
+        }
+    }
+
+    /// Create a  gRPC internal error
+    fn grpc_internal_error(message: impl Into<String>) -> Status {
+        Status::internal(message.into())
+    }
+    /// Create a  gRPC invalid_argument error
+    fn grpc_invalid_argument_error(message: impl Into<String>) -> Status {
+        Status::invalid_argument(message.into())
+    }
+    /// Create a  gRPC cancelled error
+    fn grpc_cancelled_error(message: impl Into<String>) -> Status {
+        Status::cancelled(message.into())
+    }
+}
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
 fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Result<()> {
@@ -157,7 +283,7 @@ fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Resul
     fs::write(path, content)
 }
 
-pub(crate) fn create_listener_stream(
+pub fn create_listener_stream(
     socket_file: impl AsRef<Path>,
     server_info_file: impl AsRef<Path>,
     server_info: ServerInfo,
@@ -169,13 +295,13 @@ pub(crate) fn create_listener_stream(
     Ok(UnixListenerStream::new(uds_stream))
 }
 
-pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+pub fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
     t.map_or(Utc.timestamp_nanos(-1), |t| {
         DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
     })
 }
 
-pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
+pub fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     Some(Timestamp {
         seconds: t.timestamp(),
         nanos: t.nanosecond() as i32,
@@ -187,10 +313,14 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 ///     2. user is explicitly asking us to shut down
 /// Once the request for shutdown has be invoked, server will broadcast shutdown to all tasks
 /// through the cancellation-token.
-pub(crate) async fn shutdown_signal(
+pub async fn shutdown_signal(
     mut shutdown_on_err: mpsc::Receiver<()>,
     shutdown_from_user: Option<oneshot::Receiver<()>>,
+    cln_token: CancellationToken,
 ) {
+    // will call cancel_token.cancel() on drop of guard
+    let _drop_guard = cln_token.drop_guard();
+
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -221,6 +351,10 @@ pub(crate) async fn shutdown_signal(
         _ = shutdown_from_user_future => {},
     }
 }
+
+// =============================================================================
+// TESTS
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -307,7 +441,12 @@ mod tests {
 
         // Spawn a new task to call shutdown_signal
         let shutdown_signal_task = tokio::spawn(async move {
-            shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx)).await;
+            shutdown_signal(
+                internal_shutdown_rx,
+                Some(user_shutdown_rx),
+                CancellationToken::new(),
+            )
+            .await;
         });
 
         // Send a shutdown signal
@@ -318,5 +457,26 @@ mod tests {
 
         // If we reach this point, it means that the shutdown_signal function has correctly handled the shutdown signal
         assert!(result.is_ok());
+    }
+
+    // Tests for ServiceError trait
+    // Mock service for testing
+    struct MockService;
+
+    impl ServiceError for MockService {
+        fn service_name() -> &'static str {
+            "mock"
+        }
+    }
+
+    #[test]
+    fn test_service_error_construction() {
+        let user_err = MockService::user_error("function failed");
+        assert!(user_err.to_string().contains("User Defined error"));
+        assert!(user_err.to_string().contains("function failed"));
+
+        let internal_err = MockService::internal_error("connection lost");
+        assert!(internal_err.to_string().contains("Internal error"));
+        assert!(internal_err.to_string().contains("connection lost"));
     }
 }

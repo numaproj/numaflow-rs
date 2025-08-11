@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+use crate::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
@@ -11,15 +12,24 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
-use crate::error::Error;
-
 use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared::{
     self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_BATCHMAP_SERVER_INFO_FILE, DEFAULT_BATCHMAP_SOCK_ADDR, DEFAULT_CHANNEL_SIZE, DROP,
+    DEFAULT_CHANNEL_SIZE, DROP,
 };
+
+/// Configuration for batchmap service
+pub struct BatchMapConfig;
+
+impl BatchMapConfig {
+    /// Default socket address for batchmap service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/batchmap.sock";
+
+    /// Default server info file for batchmap service  
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
+}
 
 struct BatchMapService<T: BatchMapper> {
     handler: Arc<T>,
@@ -457,10 +467,7 @@ pub struct Server<T> {
 }
 impl<T> Server<T> {
     pub fn new(batch_map_svc: T) -> Self {
-        let config = ServerConfig::new(
-            DEFAULT_BATCHMAP_SOCK_ADDR,
-            DEFAULT_BATCHMAP_SERVER_INFO_FILE,
-        );
+        let config = ServerConfig::new(BatchMapConfig::SOCK_ADDR, BatchMapConfig::SERVER_INFO_FILE);
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
@@ -535,7 +542,7 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(map_svc)

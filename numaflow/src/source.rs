@@ -17,8 +17,19 @@ use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared::{
     self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE, DEFAULT_SOURCE_SERVER_INFO_FILE, DEFAULT_SOURCE_SOCK_ADDR,
+    DEFAULT_CHANNEL_SIZE,
 };
+
+/// Configuration for source service
+pub struct SourceConfig;
+
+impl SourceConfig {
+    /// Default socket address for source service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/source.sock";
+
+    /// Default server info file for source service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sourcer-server-info";
+}
 
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 
@@ -452,7 +463,7 @@ pub struct Server<T> {
 impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
-        let config = ServerConfig::new(DEFAULT_SOURCE_SOCK_ADDR, DEFAULT_SOURCE_SERVER_INFO_FILE);
+        let config = ServerConfig::new(SourceConfig::SOCK_ADDR, SourceConfig::SERVER_INFO_FILE);
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
@@ -525,10 +536,7 @@ impl<T> Server<T> {
             .max_decoding_message_size(self.config.max_message_size)
             .max_encoding_message_size(self.config.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(source_svc)

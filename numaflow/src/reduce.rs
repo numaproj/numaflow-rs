@@ -14,9 +14,19 @@ use crate::error::Error;
 
 pub use crate::proto::reduce as proto;
 use crate::shared::{
-    self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_REDUCE_SERVER_INFO_FILE, DEFAULT_REDUCE_SOCK_ADDR, DROP,
+    self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP,
 };
+
+/// Configuration for reduce service
+pub struct ReduceConfig;
+
+impl ReduceConfig {
+    /// Default socket address for reduce service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/reduce.sock";
+
+    /// Default server info file for reduce service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/reducer-server-info";
+}
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -738,7 +748,7 @@ pub struct Server<C> {
 impl<C> Server<C> {
     /// Create a new Server with the given reduce service
     pub fn new(creator: C) -> Self {
-        let config = ServerConfig::new(DEFAULT_REDUCE_SOCK_ADDR, DEFAULT_REDUCE_SERVER_INFO_FILE);
+        let config = ServerConfig::new(ReduceConfig::SOCK_ADDR, ReduceConfig::SERVER_INFO_FILE);
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
@@ -809,10 +819,8 @@ impl<C> Server<C> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown =
+            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(reduce_svc)

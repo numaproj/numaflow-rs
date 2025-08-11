@@ -15,9 +15,30 @@ use crate::error::Error;
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared::{
     self, ContainerType, ServerConfig, ServiceError, SocketCleanup, DEFAULT_CHANNEL_SIZE,
-    DEFAULT_FB_SINK_SERVER_INFO_FILE, DEFAULT_FB_SINK_SOCK_ADDR, DEFAULT_SINK_SERVER_INFO_FILE,
-    DEFAULT_SINK_SOCK_ADDR, ENV_UD_CONTAINER_TYPE, UD_CONTAINER_FB_SINK,
 };
+
+/// Configuration for sink service
+pub struct SinkConfig;
+
+impl SinkConfig {
+    /// Default socket address for sink service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/sink.sock";
+
+    /// Default server info file for sink service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sinker-server-info";
+
+    /// Default socket address for fallback sink
+    pub const FB_SOCK_ADDR: &'static str = "/var/run/numaflow/fb-sink.sock";
+
+    /// Default server info file for fallback sink
+    pub const FB_SERVER_INFO_FILE: &'static str = "/var/run/numaflow/fb-sinker-server-info";
+
+    /// Container identifier for fallback sink
+    pub const FB_CONTAINER_TYPE: &'static str = "fb-udsink";
+
+    /// Environment variable for the container type
+    pub const ENV_CONTAINER_TYPE: &'static str = "NUMAFLOW_UD_CONTAINER_TYPE";
+}
 
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 
@@ -427,11 +448,11 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
-        let container_type = env::var(ENV_UD_CONTAINER_TYPE).unwrap_or_default();
-        let (sock_addr, server_info_file) = if container_type == UD_CONTAINER_FB_SINK {
-            (DEFAULT_FB_SINK_SOCK_ADDR, DEFAULT_FB_SINK_SERVER_INFO_FILE)
+        let container_type = env::var(SinkConfig::ENV_CONTAINER_TYPE).unwrap_or_default();
+        let (sock_addr, server_info_file) = if container_type == SinkConfig::FB_CONTAINER_TYPE {
+            (SinkConfig::FB_SOCK_ADDR, SinkConfig::FB_SERVER_INFO_FILE)
         } else {
-            (DEFAULT_SINK_SOCK_ADDR, DEFAULT_SINK_SERVER_INFO_FILE)
+            (SinkConfig::SOCK_ADDR, SinkConfig::SERVER_INFO_FILE)
         };
 
         let config = ServerConfig::new(sock_addr, server_info_file);
@@ -507,10 +528,7 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(svc)

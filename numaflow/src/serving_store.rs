@@ -8,10 +8,18 @@ use tonic::{Request, Status};
 use crate::proto::serving_store::{
     self as serving_pb, GetRequest, GetResponse, PutRequest, PutResponse,
 };
-use crate::shared::{
-    self, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_SERVING_SERVER_INFO_FILE, DEFAULT_SERVING_SOCK_ADDR,
-};
+use crate::shared::{self, ContainerType, ServerConfig, ServiceError, SocketCleanup};
+
+/// Configuration for serving store service
+pub struct ServingConfig;
+
+impl ServingConfig {
+    /// Default socket address for serving store service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/serving.sock";
+
+    /// Default server info file for serving store service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/serving-server-info";
+}
 
 /// ServingStore trait for implementing user defined stores. This Store has to be
 /// a shared Store between the Source and the Sink vertices. [ServingStore::put] happens in Sink
@@ -177,7 +185,7 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
-        let config = ServerConfig::new(DEFAULT_SERVING_SOCK_ADDR, DEFAULT_SERVING_SERVER_INFO_FILE);
+        let config = ServerConfig::new(ServingConfig::SOCK_ADDR, ServingConfig::SERVER_INFO_FILE);
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
@@ -250,10 +258,7 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(svc)

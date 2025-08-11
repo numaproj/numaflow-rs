@@ -13,7 +13,7 @@
 //! [User Defined Source Transformer]: https://numaflow.numaproj.io/user-guide/sources/transformer/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
 
-/// Shared utilities and common functionality
+/// Shared utilities, traits, and common functionality
 pub mod shared;
 
 /// Generated protobuf modules
@@ -44,6 +44,7 @@ pub mod sink;
 pub mod sideinput;
 
 /// Serving functionality for serving stores and related operations.
+#[path = "serving_store.rs"]
 pub mod serving;
 
 // Error handling on Numaflow SDKs!

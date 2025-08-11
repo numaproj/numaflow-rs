@@ -8,8 +8,18 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::proto::side_input as proto;
 use crate::shared::{
     self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_SIDEINPUT_SERVER_INFO_FILE, DEFAULT_SIDEINPUT_SOCK_ADDR,
 };
+
+/// Configuration for sideinput service
+pub struct SideInputConfig;
+
+impl SideInputConfig {
+    /// Default socket address for sideinput service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/sideinput.sock";
+
+    /// Default server info file for sideinput service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sideinput-server-info";
+}
 
 struct SideInputService<T> {
     handler: Arc<T>,
@@ -137,8 +147,8 @@ impl<T> Server<T> {
     /// Create a new Server with the given side input service
     pub fn new(sideinput_svc: T) -> Self {
         let config = ServerConfig::new(
-            DEFAULT_SIDEINPUT_SOCK_ADDR,
-            DEFAULT_SIDEINPUT_SERVER_INFO_FILE,
+            SideInputConfig::SOCK_ADDR,
+            SideInputConfig::SERVER_INFO_FILE,
         );
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
@@ -211,10 +221,7 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(sideinput_svc)

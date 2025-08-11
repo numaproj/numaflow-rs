@@ -14,8 +14,19 @@ use crate::error::Error;
 use crate::proto::map::{self as proto, MapResponse};
 use crate::shared::{
     self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE, DEFAULT_MAP_SERVER_INFO_FILE, DEFAULT_MAP_SOCK_ADDR, DROP,
+    DEFAULT_CHANNEL_SIZE, DROP,
 };
+
+/// Configuration for map service
+pub struct MapConfig;
+
+impl MapConfig {
+    /// Default socket address for map service
+    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/map.sock";
+
+    /// Default server info file for map service
+    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
+}
 
 struct MapService<T> {
     handler: Arc<T>,
@@ -206,13 +217,12 @@ where
             handler.clone(),
             stream,
             stream_response_tx.clone(),
-            error_tx.clone(),
-            self.cancellation_token.child_token(),
+            error_tx,
+            self.cancellation_token.clone(),
         ));
 
         tokio::spawn(manage_grpc_stream(
             handle,
-            self.cancellation_token.clone(),
             stream_response_tx,
             error_rx,
             self.shutdown_tx.clone(),
@@ -243,7 +253,6 @@ async fn handle_stream_requests<T>(
                 map_request,
                 stream_response_tx.clone(),
                 error_tx.clone(),
-                token.clone(),
             ).await,
             _ = token.cancelled() => {
                 info!("Cancellation token is cancelled, shutting down");
@@ -255,23 +264,18 @@ async fn handle_stream_requests<T>(
 
 async fn manage_grpc_stream(
     request_handler: JoinHandle<()>,
-    token: CancellationToken,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     mut error_rx: mpsc::Receiver<Error>,
     server_shutdown_tx: mpsc::Sender<()>,
 ) {
-    let err = tokio::select! {
-        _ = request_handler => {
-            token.cancel();
-            return;
+    let err = match error_rx.recv().await {
+        Some(err) => err,
+        None => match request_handler.await {
+            Ok(_) => return,
+            Err(e) => Server::<()>::internal_error(format!("Map request handler aborted: {e:?}")),
         },
-        err = error_rx.recv() => err,
     };
 
-    token.cancel();
-    let Some(err) = err else {
-        return;
-    };
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
         .send(Err(Server::<()>::grpc_internal_error(err.to_string())))
@@ -288,7 +292,6 @@ async fn handle_request<T>(
     map_request: Result<Option<proto::MapRequest>, Status>,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) -> bool
 where
     T: Mapper + Send + Sync + 'static,
@@ -301,13 +304,7 @@ where
             return false;
         }
     };
-    tokio::spawn(run_map(
-        handler,
-        map_request,
-        stream_response_tx,
-        error_tx,
-        token,
-    ));
+    tokio::spawn(run_map(handler, map_request, stream_response_tx, error_tx));
     true
 }
 
@@ -316,30 +313,16 @@ async fn run_map<T>(
     map_request: proto::MapRequest,
     stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
     error_tx: mpsc::Sender<Error>,
-    token: CancellationToken,
 ) where
     T: Mapper + Send + Sync + 'static,
 {
-    let Some(request) = map_request.request else {
-        error_tx
-            .send(Server::<()>::internal_error("Request not present"))
-            .await
-            .expect("Sending error on channel");
-        return;
-    };
-
+    let request = map_request.request.expect("request can not be none");
     let message_id = map_request.id.clone();
 
     // A new task is spawned to catch the panic
     let udf_map_task = tokio::spawn({
         let handler = handler.clone();
-        let token = token.child_token();
-        async move {
-            tokio::select! {
-                _ = token.cancelled() => None,
-                messages = handler.map(request.into()) => Some(messages),
-            }
-        }
+        async move { handler.map(request.into()).await }
     });
 
     let messages = match udf_map_task.await {
@@ -352,11 +335,6 @@ async fn run_map<T>(
                 .expect("Sending error on channel");
             return;
         }
-    };
-
-    let Some(messages) = messages else {
-        // CancellationToken is cancelled
-        return;
     };
 
     let send_response_result = stream_response_tx
@@ -372,12 +350,11 @@ async fn run_map<T>(
         return;
     };
 
-    error_tx
+    let _ = error_tx
         .send(Server::<()>::internal_error(format!(
             "Failed to send response: {e:?}"
         )))
-        .await
-        .expect("Sending error on channel");
+        .await;
 }
 
 async fn perform_handshake(
@@ -423,7 +400,7 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
-        let config = ServerConfig::new(DEFAULT_MAP_SOCK_ADDR, DEFAULT_MAP_SERVER_INFO_FILE);
+        let config = ServerConfig::new(MapConfig::SOCK_ADDR, MapConfig::SERVER_INFO_FILE);
         let cleanup = SocketCleanup::new(config.sock_addr.clone());
 
         Self {
@@ -497,10 +474,7 @@ impl<T> Server<T> {
             .max_encoding_message_size(self.config.max_message_size)
             .max_decoding_message_size(self.config.max_message_size);
 
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx));
-
-        // will call cancel_token.cancel() on drop of _drop_guard
-        let _drop_guard = cln_token.drop_guard();
+        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(map_svc)
@@ -723,6 +697,14 @@ mod tests {
         };
         tx.send(request).await.unwrap();
 
+        if let Err(e) = stream.message().await {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            assert!(e.message().contains("Panic in mapper"));
+        } else {
+            return Err("Expected error from server".into());
+        }
+
+        drop(tx);
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -819,6 +801,7 @@ mod tests {
         let resp = stream.message().await;
         assert!(resp.is_err());
 
+        drop(tx);
         // server should shut down gracefully because there was a panic in the handler.
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(10)).await;
