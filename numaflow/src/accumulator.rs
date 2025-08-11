@@ -64,7 +64,7 @@ impl Message {
     ///
     /// # Arguments
     ///
-    /// * `datum` - The input AccumulatorRequest to create the message from.
+    /// * `request` - The input AccumulatorRequest to create the message from.
     ///
     /// # Examples
     ///
@@ -73,7 +73,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3, 4],
     ///     watermark: Utc::now(),
@@ -81,17 +81,17 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// ```
-    pub fn from_datum(datum: AccumulatorRequest) -> Self {
+    pub fn from_accumulator_request(request: AccumulatorRequest) -> Self {
         Self {
-            keys: Some(datum.keys),
-            value: datum.value,
+            keys: Some(request.keys),
+            value: request.value,
             tags: None,
-            id: datum.id,
-            headers: datum.headers,
-            event_time: datum.event_time,
-            watermark: datum.watermark,
+            id: request.id,
+            headers: request.headers,
+            event_time: request.event_time,
+            watermark: request.watermark,
         }
     }
 
@@ -108,7 +108,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["original_key".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -116,7 +116,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum).with_keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let message = Message::from_accumulator_request(request).with_keys(vec!["key1".to_string(), "key2".to_string()]);
     /// ```
     pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
@@ -136,7 +136,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -144,7 +144,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum).with_value(vec![4, 5, 6]);
+    /// let message = Message::from_accumulator_request(request).with_value(vec![4, 5, 6]);
     /// ```
     pub fn with_value(mut self, value: Vec<u8>) -> Self {
         self.value = value;
@@ -164,7 +164,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -172,7 +172,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
+    /// let message = Message::from_accumulator_request(request).with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
     /// ```
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
@@ -188,7 +188,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -196,7 +196,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.keys(), &Some(vec!["key1".to_string()]));
     /// ```
     pub fn keys(&self) -> &Option<Vec<String>> {
@@ -212,7 +212,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -220,7 +220,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.value(), &vec![1, 2, 3]);
     /// ```
     pub fn value(&self) -> &Vec<u8> {
@@ -236,7 +236,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -244,7 +244,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.tags(), &None);
     /// ```
     pub fn tags(&self) -> &Option<Vec<String>> {
@@ -260,7 +260,7 @@ impl Message {
     /// use chrono::Utc;
     /// use std::collections::HashMap;
     ///
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -268,7 +268,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.id(), "msg1");
     /// ```
     pub fn id(&self) -> &str {
@@ -286,7 +286,7 @@ impl Message {
     ///
     /// let mut headers = HashMap::new();
     /// headers.insert("header1".to_string(), "value1".to_string());
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -294,7 +294,7 @@ impl Message {
     ///     headers: headers.clone(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.headers(), &headers);
     /// ```
     pub fn headers(&self) -> &HashMap<String, String> {
@@ -311,7 +311,7 @@ impl Message {
     /// use std::collections::HashMap;
     ///
     /// let event_time = Utc::now();
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark: Utc::now(),
@@ -319,7 +319,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.event_time(), event_time);
     /// ```
     pub fn event_time(&self) -> DateTime<Utc> {
@@ -336,7 +336,7 @@ impl Message {
     /// use std::collections::HashMap;
     ///
     /// let watermark = Utc::now();
-    /// let datum = AccumulatorRequest {
+    /// let request = AccumulatorRequest {
     ///     keys: vec!["key1".to_string()],
     ///     value: vec![1, 2, 3],
     ///     watermark,
@@ -344,7 +344,7 @@ impl Message {
     ///     headers: HashMap::new(),
     ///     id: "msg1".to_string(),
     /// };
-    /// let message = Message::from_datum(datum);
+    /// let message = Message::from_accumulator_request(request);
     /// assert_eq!(message.watermark(), watermark);
     /// ```
     pub fn watermark(&self) -> DateTime<Utc> {
@@ -384,9 +384,6 @@ enum TaskManagerCommand {
     },
     CloseTask {
         keyed_window: proto::KeyedWindow,
-    },
-    WaitAll {
-        response_tx: oneshot::Sender<()>,
     },
     Shutdown,
 }
@@ -509,7 +506,6 @@ struct AccumulatorTaskManager<C> {
     creator: Arc<C>,
     tasks: HashMap<String, AccumulatorTask>,
     response_tx: mpsc::Sender<Result<proto::AccumulatorResponse, Error>>,
-    shutdown_tx: mpsc::Sender<()>,
     is_shutdown: Arc<AtomicBool>,
 }
 
@@ -520,13 +516,11 @@ where
     fn new(
         creator: Arc<C>,
         response_tx: mpsc::Sender<Result<proto::AccumulatorResponse, Error>>,
-        shutdown_tx: mpsc::Sender<()>,
     ) -> Self {
         Self {
             creator,
             tasks: HashMap::new(),
             response_tx,
-            shutdown_tx,
             is_shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -556,10 +550,6 @@ where
                     }
                     TaskManagerCommand::CloseTask { keyed_window } => {
                         self.handle_close_task(keyed_window).await;
-                    }
-                    TaskManagerCommand::WaitAll { response_tx } => {
-                        self.handle_wait_all().await;
-                        let _ = response_tx.send(());
                     }
                     TaskManagerCommand::Shutdown => {
                         self.handle_shutdown().await;
@@ -609,6 +599,7 @@ where
         Ok(())
     }
 
+    /// Append to an existing task
     async fn handle_append_to_task(
         &mut self,
         keyed_window: proto::KeyedWindow,
@@ -638,6 +629,7 @@ where
         Ok(())
     }
 
+    /// Close the task (closes input channel and waits for task to finish)
     async fn handle_close_task(&mut self, keyed_window: proto::KeyedWindow) {
         let key = generate_key(&keyed_window);
         if let Some(task) = self.tasks.remove(&key) {
@@ -645,22 +637,13 @@ where
         }
     }
 
-    /// Wait for all  accumulator tasks to complete
-    async fn handle_wait_all(&mut self) {
-        let tasks: Vec<_> = self.tasks.drain().collect();
-        for (_, task) in tasks {
-            task.close().await;
-        }
-    }
-
-    /// Shutdown the accumulator task manager
+    /// Shutdown the accumulator task manager and abort all tasks
     async fn handle_shutdown(&mut self) {
         self.is_shutdown.store(true, Ordering::Relaxed);
         let tasks: Vec<_> = self.tasks.drain().collect();
         for (_, task) in tasks {
             task.abort().await;
         }
-        let _ = self.shutdown_tx.send(()).await;
     }
 }
 
@@ -684,7 +667,7 @@ where
     ) -> Result<Response<Self::AccumulateFnStream>, Status> {
         let creator = Arc::clone(&self.creator);
         let shutdown_tx = self.shutdown_tx.clone();
-        let cancellation_token = self.cancellation_token.clone();
+        let cancellation_token = self.cancellation_token.child_token();
 
         // Create response channel for gRPC client
         let (grpc_response_tx, grpc_response_rx) =
@@ -695,8 +678,9 @@ where
             mpsc::channel::<Result<proto::AccumulatorResponse, Error>>(100);
 
         // Start task manager
-        let task_manager = AccumulatorTaskManager::new(creator, response_tx, shutdown_tx.clone());
+        let task_manager = AccumulatorTaskManager::new(creator, response_tx);
 
+        let request_shutdown_tx = shutdown_tx.clone();
         let request_cancellation_token = cancellation_token.clone();
         // Spawn task to handle incoming requests
         tokio::spawn(async move {
@@ -711,14 +695,13 @@ where
                         match result {
                             Some(Ok(req)) => {
                                 if let Err(e) = handle_accumulator_request(req, &task_manager_tx).await {
+                                    let _ = request_shutdown_tx.send(()).await;
                                     error!("Error handling accumulator request: {}", e);
-                                    let _ = task_manager_tx.send(TaskManagerCommand::Shutdown).await;
                                     break;
                                 }
                             }
                             Some(Err(e)) => {
                                 error!("Error receiving accumulator request: {}", e);
-                                let _ = task_manager_tx.send(TaskManagerCommand::Shutdown).await;
                                 break;
                             }
                             None => {
@@ -735,16 +718,8 @@ where
                 }
             }
 
-            info!("Request stream closed, waiting for all tasks to finish");
-            // End of stream - wait for all tasks to complete
-            let (wait_tx, wait_rx) = oneshot::channel();
-            let _ = task_manager_tx
-                .send(TaskManagerCommand::WaitAll {
-                    response_tx: wait_tx,
-                })
-                .await;
-            let _ = wait_rx.await;
-            info!("All tasks finished");
+            // Shutdown task manager
+            let _ = task_manager_tx.send(TaskManagerCommand::Shutdown).await;
         });
 
         // Spawn task to forward responses and handle errors
@@ -766,6 +741,7 @@ where
                                 let _ = grpc_response_tx.send(Err(Status::internal(error.to_string()))).await;
                                 // Signal request task to stop due to error
                                 response_cancellation_token.cancel();
+                                let _ = shutdown_tx.send(()).await;
                                 break;
                             }
                             None => break,
@@ -888,11 +864,11 @@ impl From<proto::Payload> for AccumulatorRequest {
             watermark: payload
                 .watermark
                 .map(|ts| shared::utc_from_timestamp(Some(ts)))
-                .unwrap_or_else(Utc::now),
+                .expect("watermark should be set"),
             event_time: payload
                 .event_time
                 .map(|ts| shared::utc_from_timestamp(Some(ts)))
-                .unwrap_or_else(Utc::now),
+                .expect("event_time should be set"),
             headers: payload.headers,
             id: payload.id,
         }
@@ -996,22 +972,20 @@ impl<C> Server<C> {
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let cancellation_token = CancellationToken::new();
+        let cln_token = CancellationToken::new();
 
         let accumulator_svc = AccumulatorService {
             creator: Arc::new(creator),
             shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cancellation_token.clone(),
+            cancellation_token: cln_token.clone(),
         };
 
         let accumulator_svc = proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
-
-        // will call cancellation_token.cancel() on drop of _drop_guard
-        let _drop_guard = cancellation_token.drop_guard();
+        let shutdown =
+            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(accumulator_svc)
@@ -1082,7 +1056,7 @@ mod tests {
 
             // Create a message from the last request and update the value and keys
             if let Some(request) = last_request {
-                let message = accumulator::Message::from_datum(request)
+                let message = accumulator::Message::from_accumulator_request(request)
                     .with_value(sum.to_string().into_bytes())
                     .with_keys(keys);
                 let _ = output.send(message).await;
@@ -1366,7 +1340,7 @@ mod tests {
         assert_eq!(accumulator_request.id, proto_payload.id);
 
         // Test From<&Message> for proto::Payload
-        let mut message = Message::from_datum(accumulator_request);
+        let mut message = Message::from_accumulator_request(accumulator_request);
         let tags = vec!["tag1".to_string()];
         message = message.with_tags(tags.clone());
 
@@ -1419,7 +1393,7 @@ mod tests {
         };
 
         // Create message from datum
-        let message = Message::from_datum(datum);
+        let message = Message::from_accumulator_request(datum);
 
         // Test getter methods
         assert_eq!(

@@ -45,7 +45,7 @@ async fn flush_buffer(
             break;
         }
 
-        let message = Message::from_datum(request.clone());
+        let message = Message::from_accumulator_request(request.clone());
         if let Err(e) = output.send(message).await {
             warn!("Failed to send message: {}", e);
             break;

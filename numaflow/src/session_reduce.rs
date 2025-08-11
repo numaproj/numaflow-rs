@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
@@ -18,8 +19,10 @@ use crate::shared;
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
+/// SessionReducer is the trait which has to be implemented to do a session reduce operation.
 #[async_trait]
 pub trait SessionReducer {
+    /// SessionReduce applies a session reduce function to a request stream and streams the results.
     async fn session_reduce(
         &self,
         keys: Vec<String>,
@@ -27,13 +30,19 @@ pub trait SessionReducer {
         response_stream: mpsc::Sender<Message>,
     );
 
+    /// Accumulator returns the accumulator for the session reducer, will be invoked when this session is merged
+    /// with another session.
     async fn accumulator(&self) -> Vec<u8>;
 
+    /// MergeAccumulator merges the accumulator for the session reducer, will be invoked when another session is merged
+    /// with this session.
     async fn merge_accumulator(&self, accumulator: Vec<u8>);
 }
 
+/// SessionReducerCreator is the interface which can be used to create a session reducer.
 pub trait SessionReducerCreator {
     type R: SessionReducer + Send + Sync + 'static;
+    /// Create creates a session reducer, will be invoked once for every keyed window.
     fn create(&self) -> Self::R;
 }
 
@@ -179,61 +188,61 @@ impl SessionReduceTask {
         let session_reducer_arc = Arc::new(session_reducer);
         let merged = Arc::new(AtomicBool::new(false));
 
-        let task_keyed_window = keyed_window_arc.clone();
-        let task_merged = merged.clone();
-        let udf_response_tx = response_tx.clone();
-        let task_session_reducer = session_reducer_arc.clone();
-
         // Spawn the main task that runs the user's session reduce function
-        let task_join_handler = tokio::spawn(async move {
+        let task_join_handler = tokio::spawn({
             let keys = keyed_window.keys.clone();
+            let window = keyed_window_arc.clone();
+            let merged_flag = merged.clone();
+            let response_sender = response_tx.clone();
+            let reducer = session_reducer_arc.clone();
 
-            // Spawn a task to handle output messages
-            let output_task_window = task_keyed_window.clone();
-            let output_task_merged = task_merged.clone();
-            let output_task_response_tx = udf_response_tx.clone();
+            async move {
+                // Spawn a task to handle output messages
+                let output_handle = tokio::spawn({
+                    let window = window.clone();
+                    let merged_flag = merged_flag.clone();
+                    let response_sender = response_sender.clone();
 
-            let output_handle = tokio::spawn(async move {
-                while let Some(message) = output_rx.recv().await {
-                    if !output_task_merged.load(Ordering::Relaxed) {
-                        let window = output_task_window.read().await;
-                        let response = proto::SessionReduceResponse {
-                            result: Some(proto::session_reduce_response::Result {
-                                keys: message.keys.unwrap_or_default(),
-                                value: message.value,
-                                tags: message.tags.unwrap_or_default(),
-                            }),
-                            keyed_window: Some(window.clone()),
-                            eof: false,
-                        };
+                    async move {
+                        while let Some(message) = output_rx.recv().await {
+                            if !merged_flag.load(Ordering::Relaxed) {
+                                let window_guard = window.read().await;
+                                let response = proto::SessionReduceResponse {
+                                    result: Some(proto::session_reduce_response::Result {
+                                        keys: message.keys.unwrap_or_default(),
+                                        value: message.value,
+                                        tags: message.tags.unwrap_or_default(),
+                                    }),
+                                    keyed_window: Some(window_guard.clone()),
+                                    eof: false,
+                                };
 
-                        if let Err(e) = output_task_response_tx.send(Ok(response)).await {
-                            error!("Failed to send response: {}", e);
-                            return;
+                                if let Err(e) = response_sender.send(Ok(response)).await {
+                                    error!("Failed to send response: {}", e);
+                                    return;
+                                }
+                            }
+                        }
+
+                        // Send EOF if not merged
+                        if !merged_flag.load(Ordering::Relaxed) {
+                            let window_guard = window.read().await;
+                            let eof_response = proto::SessionReduceResponse {
+                                result: None,
+                                keyed_window: Some(window_guard.clone()),
+                                eof: true,
+                            };
+                            let _ = response_sender.send(Ok(eof_response)).await;
                         }
                     }
-                }
+                });
 
-                // Send EOF if not merged
-                if !output_task_merged.load(Ordering::Relaxed) {
-                    let window = output_task_window.read().await;
-                    let eof_response = proto::SessionReduceResponse {
-                        result: None,
-                        keyed_window: Some(window.clone()),
-                        eof: true,
-                    };
+                // Execute the user's session reduce function
+                reducer.session_reduce(keys, input_rx, output_tx).await;
 
-                    let _ = output_task_response_tx.send(Ok(eof_response)).await;
-                }
-            });
-
-            // execute the users session reduce function
-            task_session_reducer
-                .session_reduce(keys, input_rx, output_tx)
-                .await;
-
-            // Wait for output task to complete
-            let _ = output_handle.await;
+                // Wait for output task to complete
+                let _ = output_handle.await;
+            }
         });
 
         // We spawn a separate task to await the join handler so that in case of any unhandled errors in the user-defined
@@ -420,7 +429,7 @@ where
 
         // Send payload if present
         if let Some(payload) = payload {
-            let session_request = build_session_reduce_request(payload)?;
+            let session_request = SessionReduceRequest::from(payload);
             task.send(session_request).await?;
         }
 
@@ -448,7 +457,7 @@ where
 
         // Send payload if present
         if let Some(payload) = payload {
-            let session_request = build_session_reduce_request(payload)?;
+            let session_request = SessionReduceRequest::from(payload);
             if let Some(task) = self.tasks.get(&key) {
                 task.send(session_request).await?;
             }
@@ -506,7 +515,7 @@ where
 
         // Send payload if present
         if let Some(payload) = payload {
-            let session_request = build_session_reduce_request(payload)?;
+            let session_request = SessionReduceRequest::from(payload);
             merged_task.send(session_request).await?;
         }
 
@@ -599,7 +608,7 @@ where
 
         // Send payload if present
         if let Some(payload) = payload {
-            let session_request = build_session_reduce_request(payload)?;
+            let session_request = SessionReduceRequest::from(payload);
             task.send(session_request).await?;
         }
 
@@ -648,7 +657,7 @@ where
     ) -> Result<Response<Self::SessionReduceFnStream>, Status> {
         let creator = Arc::clone(&self.creator);
         let shutdown_tx = self.shutdown_tx.clone();
-        let cancellation_token = self.cancellation_token.clone();
+        let cancellation_token = self.cancellation_token.child_token();
 
         // Create response channel for gRPC client
         let (grpc_response_tx, grpc_response_rx) =
@@ -671,7 +680,7 @@ where
             loop {
                 tokio::select! {
                     // Listen for incoming requests
-                    result = tokio_stream::StreamExt::next(&mut stream) => {
+                    result = stream.next() => {
                         match result {
                             Some(Ok(req)) => {
                                 if let Err(e) = handle_session_reduce_request(req, &task_manager_tx).await {
@@ -720,8 +729,6 @@ where
                         match result {
                             Some(Ok(response)) => {
                                 if grpc_response_tx.send(Ok(response)).await.is_err() {
-                                    // Client disconnected, signal request task to stop
-                                    response_cancellation_token.cancel();
                                     break;
                                 }
                             }
@@ -914,23 +921,22 @@ fn generate_key(keyed_window: &proto::KeyedWindow) -> String {
     )
 }
 
-/// Build SessionReduceRequest from proto payload
-fn build_session_reduce_request(
-    payload: proto::session_reduce_request::Payload,
-) -> Result<SessionReduceRequest, Error> {
-    Ok(SessionReduceRequest {
-        keys: payload.keys,
-        value: payload.value,
-        watermark: payload
-            .watermark
-            .map(|ts| shared::utc_from_timestamp(Some(ts)))
-            .unwrap_or_else(Utc::now),
-        event_time: payload
-            .event_time
-            .map(|ts| shared::utc_from_timestamp(Some(ts)))
-            .unwrap_or_else(Utc::now),
-        headers: payload.headers,
-    })
+impl From<proto::session_reduce_request::Payload> for SessionReduceRequest {
+    fn from(payload: proto::session_reduce_request::Payload) -> Self {
+        Self {
+            keys: payload.keys,
+            value: payload.value,
+            watermark: payload
+                .watermark
+                .map(|ts| shared::utc_from_timestamp(Some(ts)))
+                .unwrap_or_else(Utc::now),
+            event_time: payload
+                .event_time
+                .map(|ts| shared::utc_from_timestamp(Some(ts)))
+                .unwrap_or_else(Utc::now),
+            headers: payload.headers,
+        }
+    }
 }
 
 /// gRPC server for session reduce service
@@ -1004,12 +1010,12 @@ impl<C> Server<C> {
             shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let cancellation_token = CancellationToken::new();
+        let cln_token = CancellationToken::new();
 
         let session_reduce_svc = SessionReduceService {
             creator: Arc::new(creator),
             shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cancellation_token.clone(),
+            cancellation_token: cln_token.clone(),
         };
 
         let session_reduce_svc =
@@ -1017,10 +1023,8 @@ impl<C> Server<C> {
                 .max_encoding_message_size(self.max_message_size)
                 .max_decoding_message_size(self.max_message_size);
 
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx));
-
-        // will call cancellation_token.cancel() on drop of _drop_guard
-        let _drop_guard = cancellation_token.drop_guard();
+        let shutdown =
+            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
 
         tonic::transport::Server::builder()
             .add_service(session_reduce_svc)
