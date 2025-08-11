@@ -57,10 +57,10 @@ pub mod serving_store_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     /// ServingStore defines a set of methods to interface with a user-defined Store.
     #[derive(Debug, Clone)]
     pub struct ServingStoreClient<T> {
@@ -105,9 +105,8 @@ pub mod serving_store_client {
                     <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
+                Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             ServingStoreClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -147,18 +146,11 @@ pub mod serving_store_client {
             &mut self,
             request: impl tonic::IntoRequest<super::PutRequest>,
         ) -> std::result::Result<tonic::Response<super::PutResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/serving.v1.ServingStore/Put",
-            );
+            let path = http::uri::PathAndQuery::from_static("/serving.v1.ServingStore/Put");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("serving.v1.ServingStore", "Put"));
@@ -169,18 +161,11 @@ pub mod serving_store_client {
             &mut self,
             request: impl tonic::IntoRequest<super::GetRequest>,
         ) -> std::result::Result<tonic::Response<super::GetResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/serving.v1.ServingStore/Get",
-            );
+            let path = http::uri::PathAndQuery::from_static("/serving.v1.ServingStore/Get");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("serving.v1.ServingStore", "Get"));
@@ -191,18 +176,11 @@ pub mod serving_store_client {
             &mut self,
             request: impl tonic::IntoRequest<()>,
         ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/serving.v1.ServingStore/IsReady",
-            );
+            let path = http::uri::PathAndQuery::from_static("/serving.v1.ServingStore/IsReady");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("serving.v1.ServingStore", "IsReady"));
@@ -217,7 +195,7 @@ pub mod serving_store_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with ServingStoreServer.
@@ -261,10 +239,7 @@ pub mod serving_store_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -319,21 +294,16 @@ pub mod serving_store_server {
                 "/serving.v1.ServingStore/Put" => {
                     #[allow(non_camel_case_types)]
                     struct PutSvc<T: ServingStore>(pub Arc<T>);
-                    impl<T: ServingStore> tonic::server::UnaryService<super::PutRequest>
-                    for PutSvc<T> {
+                    impl<T: ServingStore> tonic::server::UnaryService<super::PutRequest> for PutSvc<T> {
                         type Response = super::PutResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::PutRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ServingStore>::put(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ServingStore>::put(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -362,21 +332,16 @@ pub mod serving_store_server {
                 "/serving.v1.ServingStore/Get" => {
                     #[allow(non_camel_case_types)]
                     struct GetSvc<T: ServingStore>(pub Arc<T>);
-                    impl<T: ServingStore> tonic::server::UnaryService<super::GetRequest>
-                    for GetSvc<T> {
+                    impl<T: ServingStore> tonic::server::UnaryService<super::GetRequest> for GetSvc<T> {
                         type Response = super::GetResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ServingStore>::get(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ServingStore>::get(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -405,18 +370,13 @@ pub mod serving_store_server {
                 "/serving.v1.ServingStore/IsReady" => {
                     #[allow(non_camel_case_types)]
                     struct IsReadySvc<T: ServingStore>(pub Arc<T>);
-                    impl<T: ServingStore> tonic::server::UnaryService<()>
-                    for IsReadySvc<T> {
+                    impl<T: ServingStore> tonic::server::UnaryService<()> for IsReadySvc<T> {
                         type Response = super::ReadyResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ServingStore>::is_ready(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ServingStore>::is_ready(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -442,25 +402,19 @@ pub mod serving_store_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
+                _ => Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::default());
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        tonic::Status::GRPC_STATUS,
+                        (tonic::Code::Unimplemented as i32).into(),
+                    );
+                    headers.insert(
+                        http::header::CONTENT_TYPE,
+                        tonic::metadata::GRPC_CONTENT_TYPE,
+                    );
+                    Ok(response)
+                }),
             }
         }
     }

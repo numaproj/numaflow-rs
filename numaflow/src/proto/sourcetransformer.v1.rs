@@ -79,10 +79,10 @@ pub mod source_transform_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct SourceTransformClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -126,9 +126,8 @@ pub mod source_transform_client {
                     <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
+                Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             SourceTransformClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -168,33 +167,23 @@ pub mod source_transform_client {
         /// SourceTransformFn can be used only at source vertex by source data transformer.
         pub async fn source_transform_fn(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<
-                Message = super::SourceTransformRequest,
-            >,
+            request: impl tonic::IntoStreamingRequest<Message = super::SourceTransformRequest>,
         ) -> std::result::Result<
             tonic::Response<tonic::codec::Streaming<super::SourceTransformResponse>>,
             tonic::Status,
         > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/sourcetransformer.v1.SourceTransform/SourceTransformFn",
             );
             let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new(
-                        "sourcetransformer.v1.SourceTransform",
-                        "SourceTransformFn",
-                    ),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "sourcetransformer.v1.SourceTransform",
+                "SourceTransformFn",
+            ));
             self.inner.streaming(req, path, codec).await
         }
         /// IsReady is the heartbeat endpoint for gRPC.
@@ -202,23 +191,18 @@ pub mod source_transform_client {
             &mut self,
             request: impl tonic::IntoRequest<()>,
         ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/sourcetransformer.v1.SourceTransform/IsReady",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("sourcetransformer.v1.SourceTransform", "IsReady"),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "sourcetransformer.v1.SourceTransform",
+                "IsReady",
+            ));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -230,7 +214,7 @@ pub mod source_transform_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with SourceTransformServer.
@@ -239,8 +223,7 @@ pub mod source_transform_server {
         /// Server streaming response type for the SourceTransformFn method.
         type SourceTransformFnStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::SourceTransformResponse, tonic::Status>,
-            >
-            + std::marker::Send
+            > + std::marker::Send
             + 'static;
         /// SourceTransformFn applies a function to each request element.
         /// In addition to map function, SourceTransformFn also supports assigning a new event time to response.
@@ -248,10 +231,7 @@ pub mod source_transform_server {
         async fn source_transform_fn(
             &self,
             request: tonic::Request<tonic::Streaming<super::SourceTransformRequest>>,
-        ) -> std::result::Result<
-            tonic::Response<Self::SourceTransformFnStream>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<Self::SourceTransformFnStream>, tonic::Status>;
         /// IsReady is the heartbeat endpoint for gRPC.
         async fn is_ready(
             &self,
@@ -279,10 +259,7 @@ pub mod source_transform_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -337,16 +314,14 @@ pub mod source_transform_server {
                 "/sourcetransformer.v1.SourceTransform/SourceTransformFn" => {
                     #[allow(non_camel_case_types)]
                     struct SourceTransformFnSvc<T: SourceTransform>(pub Arc<T>);
-                    impl<
-                        T: SourceTransform,
-                    > tonic::server::StreamingService<super::SourceTransformRequest>
-                    for SourceTransformFnSvc<T> {
+                    impl<T: SourceTransform>
+                        tonic::server::StreamingService<super::SourceTransformRequest>
+                        for SourceTransformFnSvc<T>
+                    {
                         type Response = super::SourceTransformResponse;
                         type ResponseStream = T::SourceTransformFnStream;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::ResponseStream>,
-                            tonic::Status,
-                        >;
+                        type Future =
+                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<
@@ -355,8 +330,7 @@ pub mod source_transform_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as SourceTransform>::source_transform_fn(&inner, request)
-                                    .await
+                                <T as SourceTransform>::source_transform_fn(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -386,13 +360,9 @@ pub mod source_transform_server {
                 "/sourcetransformer.v1.SourceTransform/IsReady" => {
                     #[allow(non_camel_case_types)]
                     struct IsReadySvc<T: SourceTransform>(pub Arc<T>);
-                    impl<T: SourceTransform> tonic::server::UnaryService<()>
-                    for IsReadySvc<T> {
+                    impl<T: SourceTransform> tonic::server::UnaryService<()> for IsReadySvc<T> {
                         type Response = super::ReadyResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
@@ -423,25 +393,19 @@ pub mod source_transform_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
+                _ => Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::default());
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        tonic::Status::GRPC_STATUS,
+                        (tonic::Code::Unimplemented as i32).into(),
+                    );
+                    headers.insert(
+                        http::header::CONTENT_TYPE,
+                        tonic::metadata::GRPC_CONTENT_TYPE,
+                    );
+                    Ok(response)
+                }),
             }
         }
     }

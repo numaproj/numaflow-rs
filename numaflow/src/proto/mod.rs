@@ -1,11 +1,11 @@
 //! Generated protobuf modules
-//! 
+//!
 //! This module contains all the generated protobuf code for the Numaflow SDK.
 
 #[path = "map.v1.rs"]
 pub mod map;
 
-#[path = "reduce.v1.rs"] 
+#[path = "reduce.v1.rs"]
 pub mod reduce;
 
 #[path = "source.v1.rs"]

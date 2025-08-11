@@ -27,6 +27,8 @@ test:
 codegen:
 	# Change timestamps so that tonic_build code generation will always be triggered.
 	cd numaflow && mkdir -p src/proto && touch proto/* && PROTO_CODE_GEN=1 cargo build
+	# Format the generated proto files automatically
+	cargo fmt --all
 
 .PHONY: clean-proto
 clean-proto:

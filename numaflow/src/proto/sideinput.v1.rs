@@ -24,10 +24,10 @@ pub mod side_input_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     /// SideInput is the gRPC service for user-defined Side Inputs.
     /// It is used to propagate changes in the values of the provided Side Inputs
     /// which allows access to slow updated data or configuration without needing to retrieve
@@ -79,9 +79,8 @@ pub mod side_input_client {
                     <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
+                Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             SideInputClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -120,25 +119,18 @@ pub mod side_input_client {
         pub async fn retrieve_side_input(
             &mut self,
             request: impl tonic::IntoRequest<()>,
-        ) -> std::result::Result<
-            tonic::Response<super::SideInputResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::SideInputResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/sideinput.v1.SideInput/RetrieveSideInput",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/sideinput.v1.SideInput/RetrieveSideInput");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("sideinput.v1.SideInput", "RetrieveSideInput"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "sideinput.v1.SideInput",
+                "RetrieveSideInput",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// IsReady is the health check endpoint to indicate whether the service is ready to be used.
@@ -146,18 +138,11 @@ pub mod side_input_client {
             &mut self,
             request: impl tonic::IntoRequest<()>,
         ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/sideinput.v1.SideInput/IsReady",
-            );
+            let path = http::uri::PathAndQuery::from_static("/sideinput.v1.SideInput/IsReady");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("sideinput.v1.SideInput", "IsReady"));
@@ -172,7 +157,7 @@ pub mod side_input_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with SideInputServer.
@@ -182,10 +167,7 @@ pub mod side_input_server {
         async fn retrieve_side_input(
             &self,
             request: tonic::Request<()>,
-        ) -> std::result::Result<
-            tonic::Response<super::SideInputResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::SideInputResponse>, tonic::Status>;
         /// IsReady is the health check endpoint to indicate whether the service is ready to be used.
         async fn is_ready(
             &self,
@@ -221,10 +203,7 @@ pub mod side_input_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -279,13 +258,9 @@ pub mod side_input_server {
                 "/sideinput.v1.SideInput/RetrieveSideInput" => {
                     #[allow(non_camel_case_types)]
                     struct RetrieveSideInputSvc<T: SideInput>(pub Arc<T>);
-                    impl<T: SideInput> tonic::server::UnaryService<()>
-                    for RetrieveSideInputSvc<T> {
+                    impl<T: SideInput> tonic::server::UnaryService<()> for RetrieveSideInputSvc<T> {
                         type Response = super::SideInputResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
@@ -319,18 +294,13 @@ pub mod side_input_server {
                 "/sideinput.v1.SideInput/IsReady" => {
                     #[allow(non_camel_case_types)]
                     struct IsReadySvc<T: SideInput>(pub Arc<T>);
-                    impl<T: SideInput> tonic::server::UnaryService<()>
-                    for IsReadySvc<T> {
+                    impl<T: SideInput> tonic::server::UnaryService<()> for IsReadySvc<T> {
                         type Response = super::ReadyResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as SideInput>::is_ready(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as SideInput>::is_ready(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -356,25 +326,19 @@ pub mod side_input_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
+                _ => Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::default());
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        tonic::Status::GRPC_STATUS,
+                        (tonic::Code::Unimplemented as i32).into(),
+                    );
+                    headers.insert(
+                        http::header::CONTENT_TYPE,
+                        tonic::metadata::GRPC_CONTENT_TYPE,
+                    );
+                    Ok(response)
+                }),
             }
         }
     }
