@@ -12,10 +12,8 @@ use tracing::{error, info};
 
 use crate::error::Error;
 use crate::proto::map::{self as proto, MapResponse};
-use crate::shared::{
-    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE, DROP,
-};
+use crate::shared;
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP};
 
 /// Configuration for map service
 pub struct MapConfig;
@@ -26,6 +24,9 @@ impl MapConfig {
 
     /// Default server info file for map service
     pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
+
+    /// Default channel size for map service
+    pub const CHANNEL_SIZE: usize = 1000;
 }
 
 struct MapService<T> {
@@ -205,7 +206,7 @@ where
         let handler = Arc::clone(&self.handler);
 
         let (stream_response_tx, stream_response_rx) =
-            mpsc::channel::<Result<MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+            mpsc::channel::<Result<MapResponse, Status>>(MapConfig::CHANNEL_SIZE);
 
         // perform handshake
         perform_handshake(&mut stream, &stream_response_tx).await?;

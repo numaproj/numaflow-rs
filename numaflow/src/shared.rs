@@ -131,9 +131,7 @@ impl ServerInfo {
 // SERVER CONFIGURATION
 // =============================================================================
 
-// Server configuration constants
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
-pub const DEFAULT_CHANNEL_SIZE: usize = 1000;
 /// Common server configuration that all services share
 #[derive(Debug, Clone)]
 pub struct ServerConfig {

@@ -13,9 +13,10 @@ use tracing::{error, info};
 
 use crate::error::Error;
 use crate::proto::source_transformer as proto;
-use crate::shared::{
-    self, prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, ServiceError,
-    SocketCleanup, DEFAULT_CHANNEL_SIZE, DROP,
+use crate::shared;
+use shared::{
+    prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, ServiceError,
+    SocketCleanup, DROP,
 };
 
 /// Configuration for source transformer service
@@ -27,6 +28,9 @@ impl SourceTransformConfig {
 
     /// Default server info file for source transformer service
     pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sourcetransformer-server-info";
+
+    /// Default channel size for source transformer service
+    pub const CHANNEL_SIZE: usize = 1000;
 }
 
 struct SourceTransformerService<T> {
@@ -233,7 +237,9 @@ where
         let handler = Arc::clone(&self.handler);
 
         let (stream_response_tx, stream_response_rx) =
-            mpsc::channel::<Result<SourceTransformResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+            mpsc::channel::<Result<SourceTransformResponse, Status>>(
+                SourceTransformConfig::CHANNEL_SIZE,
+            );
 
         // do the handshake first to let the client know that we are ready to receive transformation requests.
         perform_handshake(&mut stream, &stream_response_tx).await?;

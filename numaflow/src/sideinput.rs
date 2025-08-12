@@ -6,9 +6,8 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::proto::side_input as proto;
-use crate::shared::{
-    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-};
+use crate::shared;
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup};
 
 /// Configuration for sideinput service
 pub struct SideInputConfig;

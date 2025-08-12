@@ -13,8 +13,9 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::error::Error;
 
 pub use crate::proto::reduce as proto;
-use crate::shared::{
-    self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP,
+use crate::shared;
+use shared::{
+    prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP,
 };
 
 /// Configuration for reduce service

@@ -15,10 +15,8 @@ use tracing::{error, info};
 use crate::error::Error;
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
-use crate::shared::{
-    self, prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE,
-};
+use crate::shared;
+use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup};
 
 /// Configuration for source service
 pub struct SourceConfig;
@@ -29,9 +27,11 @@ impl SourceConfig {
 
     /// Default server info file for source service
     pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sourcer-server-info";
-}
 
-// TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
+    // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
+    /// Default channel size for source service
+    pub const CHANNEL_SIZE: usize = 1000;
+}
 
 struct SourceService<T> {
     handler: Arc<T>,
@@ -145,7 +145,7 @@ where
         request: proto::read_request::Request,
     ) -> crate::error::Result<()> {
         // tx,rx pair for sending data over to user-defined source
-        let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+        let (stx, srx) = mpsc::channel::<Message>(SourceConfig::CHANNEL_SIZE);
 
         // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
         // to the grpc response stream.
@@ -188,7 +188,7 @@ where
         let handler_fn = Arc::clone(&self.handler);
 
         // tx (read from client), rx (write to client) pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(SourceConfig::CHANNEL_SIZE);
 
         // this _tx ends up writing to the client side
         let grpc_tx = tx.clone();
@@ -259,7 +259,8 @@ where
         request: Request<Streaming<AckRequest>>,
     ) -> Result<Response<Self::AckFnStream>, Status> {
         let mut ack_stream = request.into_inner();
-        let (ack_tx, ack_rx) = mpsc::channel::<Result<AckResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (ack_tx, ack_rx) =
+            mpsc::channel::<Result<AckResponse, Status>>(SourceConfig::CHANNEL_SIZE);
 
         let handler_fn = Arc::clone(&self.handler);
 

@@ -13,9 +13,8 @@ use tracing::{debug, info};
 use crate::error::Error;
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
-use crate::shared::{
-    self, ContainerType, ServerConfig, ServiceError, SocketCleanup, DEFAULT_CHANNEL_SIZE,
-};
+use crate::shared;
+use shared::{ContainerType, ServerConfig, ServiceError, SocketCleanup};
 
 /// Configuration for sink service
 pub struct SinkConfig;
@@ -38,9 +37,10 @@ impl SinkConfig {
 
     /// Environment variable for the container type
     pub const ENV_CONTAINER_TYPE: &'static str = "NUMAFLOW_UD_CONTAINER_TYPE";
-}
 
-// TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
+    /// Default channel size for sink service
+    pub const CHANNEL_SIZE: usize = 1000;
+}
 
 struct SinkService<T: Sinker> {
     handler: Arc<T>,
@@ -225,7 +225,7 @@ where
         let shutdown_tx = self.shutdown_tx.clone();
         let cln_token = self.cancellation_token.clone();
         let (resp_tx, resp_rx) =
-            mpsc::channel::<Result<SinkResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+            mpsc::channel::<Result<SinkResponse, Status>>(SinkConfig::CHANNEL_SIZE);
 
         self.perform_handshake(&mut sink_stream, &resp_tx).await?;
 
@@ -285,7 +285,7 @@ where
         sink_stream: &mut Streaming<sink_pb::SinkRequest>,
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<bool, Error> {
-        let (tx, rx) = mpsc::channel::<SinkRequest>(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) = mpsc::channel::<SinkRequest>(SinkConfig::CHANNEL_SIZE);
         let resp_tx = grpc_resp_tx.clone();
         let sink_handle = sink_handle.clone();
 

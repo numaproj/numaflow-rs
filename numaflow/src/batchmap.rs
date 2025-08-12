@@ -15,10 +15,8 @@ use tracing::{debug, info};
 use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
-use crate::shared::{
-    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE, DROP,
-};
+use crate::shared;
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP};
 
 /// Configuration for batchmap service
 pub struct BatchMapConfig;
@@ -29,6 +27,9 @@ impl BatchMapConfig {
 
     /// Default server info file for batchmap service  
     pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
+
+    /// Default channel size for batchmap service
+    pub const CHANNEL_SIZE: usize = 1000;
 }
 
 struct BatchMapService<T: BatchMapper> {
@@ -251,7 +252,8 @@ where
         let map_handle = self.handler.clone();
         let shutdown_tx = self.shutdown_tx.clone();
         let cln_token = self.cancellation_token.clone();
-        let (resp_tx, resp_rx) = channel::<Result<MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (resp_tx, resp_rx) =
+            channel::<Result<MapResponse, Status>>(BatchMapConfig::CHANNEL_SIZE);
 
         self.perform_handshake(&mut map_stream, &resp_tx).await?;
 
@@ -306,7 +308,7 @@ where
         map_stream: &mut Streaming<MapRequest>,
         grpc_resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
     ) -> Result<bool, Error> {
-        let (tx, rx) = channel::<Datum>(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) = channel::<Datum>(BatchMapConfig::CHANNEL_SIZE);
         let resp_tx = grpc_resp_tx.clone();
         let batch_map_handle = batch_map_handle.clone();
 

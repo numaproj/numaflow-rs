@@ -8,7 +8,8 @@ use tonic::{Request, Status};
 use crate::proto::serving_store::{
     self as serving_pb, GetRequest, GetResponse, PutRequest, PutResponse,
 };
-use crate::shared::{self, ContainerType, ServerConfig, ServiceError, SocketCleanup};
+use crate::shared;
+use shared::{ContainerType, ServerConfig, ServiceError, SocketCleanup};
 
 /// Configuration for serving store service
 pub struct ServingConfig;

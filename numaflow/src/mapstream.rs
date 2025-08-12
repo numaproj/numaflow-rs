@@ -14,10 +14,8 @@ use tracing::{error, info};
 use crate::error::Error;
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
-use crate::shared::{
-    self, shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup,
-    DEFAULT_CHANNEL_SIZE, DROP,
-};
+use crate::shared;
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP};
 
 /// Configuration for mapstream service
 pub struct MapStreamConfig;
@@ -28,6 +26,9 @@ impl MapStreamConfig {
 
     /// Default server info file for mapstream service
     pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
+
+    /// Default channel size for mapstream service
+    pub const CHANNEL_SIZE: usize = 1000;
 }
 
 /// MapStreamer trait for implementing MapStream handler.
@@ -214,7 +215,7 @@ where
         let handler = Arc::clone(&self.handler);
 
         let (stream_response_tx, stream_response_rx) =
-            mpsc::channel::<Result<proto::MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+            mpsc::channel::<Result<proto::MapResponse, Status>>(MapStreamConfig::CHANNEL_SIZE);
 
         // Perform handshake
         perform_handshake(&mut stream, &stream_response_tx).await?;
@@ -314,7 +315,7 @@ async fn run_map_stream<T>(
     let request = map_request.request.expect("request can not be none");
     let message_id = map_request.id.clone();
 
-    let (tx, mut rx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+    let (tx, mut rx) = mpsc::channel::<Message>(MapStreamConfig::CHANNEL_SIZE);
 
     // Spawn a task to run the map_stream function
     let map_stream_task = tokio::spawn({
