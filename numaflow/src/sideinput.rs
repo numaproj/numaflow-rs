@@ -207,8 +207,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::SideInput);
         let listener = shared::create_listener_stream(
-            &self.config.socket_file(),
-            &self.config.server_info_file(),
+            self.config.socket_file(),
+            self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
