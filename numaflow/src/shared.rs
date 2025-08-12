@@ -17,10 +17,6 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// =============================================================================
-// CONSTANTS
-// =============================================================================
-
 // Map mode constants
 const MAP_MODE_KEY: &str = "MAP_MODE";
 const UNARY_MAP: &str = "unary-map";
@@ -28,10 +24,6 @@ const BATCH_MAP: &str = "batch-map";
 const STREAM_MAP: &str = "stream-map";
 
 pub const DROP: &str = "U+005C__DROP__";
-
-// =============================================================================
-// TYPES AND ENUMS
-// =============================================================================
 
 pub enum ServiceKind {
     Map,
@@ -137,11 +129,7 @@ impl ServerInfo {
     }
 }
 
-// =============================================================================
-// SERVER CONFIGURATION
-// =============================================================================
-
-pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
 /// Common server configuration that all services share
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -198,11 +186,15 @@ impl ServerConfig {
 #[derive(Debug)]
 pub struct SocketCleanup {
     sock_addr: PathBuf,
+    server_info_file: PathBuf,
 }
 
 impl SocketCleanup {
-    pub fn new(sock_addr: PathBuf) -> Self {
-        Self { sock_addr }
+    pub fn new(sock_addr: PathBuf, server_info_file: PathBuf) -> Self {
+        Self {
+            sock_addr,
+            server_info_file,
+        }
     }
 }
 
@@ -211,12 +203,9 @@ impl Drop for SocketCleanup {
     /// UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.sock_addr);
+        let _ = fs::remove_file(&self.server_info_file);
     }
 }
-
-// =============================================================================
-// UTILITY FUNCTIONS
-// =============================================================================
 
 // #[tracing::instrument(skip(path), fields(path = ?path.as_ref()))]
 #[tracing::instrument(fields(path = ? path.as_ref()))]
@@ -298,10 +287,6 @@ pub(crate) async fn shutdown_signal(
         _ = shutdown_from_user_future => {},
     }
 }
-
-// =============================================================================
-// TESTS
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

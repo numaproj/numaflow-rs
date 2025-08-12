@@ -17,16 +17,11 @@ use shared::{
     prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP,
 };
 
-/// Configuration for reduce service
-pub struct ReduceConfig;
+/// Default socket address for reduce service
+const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 
-impl ReduceConfig {
-    /// Default socket address for reduce service
-    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/reduce.sock";
-
-    /// Default server info file for reduce service
-    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/reducer-server-info";
-}
+/// Default server info file for reduce service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -767,8 +762,8 @@ pub struct Server<C> {
 impl<C> Server<C> {
     /// Create a new Server with the given reduce service
     pub fn new(creator: C) -> Self {
-        let config = ServerConfig::new(ReduceConfig::SOCK_ADDR, ReduceConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(ReduceConfig::SOCK_ADDR.into());
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
 
         Self {
             config,
@@ -782,7 +777,7 @@ impl<C> Server<C> {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -804,7 +799,9 @@ impl<C> Server<C> {
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/reducer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_server_info_file(file);
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 

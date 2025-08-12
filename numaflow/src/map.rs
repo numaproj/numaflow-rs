@@ -15,19 +15,14 @@ use crate::proto::map::{self as proto, MapResponse};
 use crate::shared;
 use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
 
-/// Configuration for map service
-pub struct MapConfig;
+/// Default socket address for map service
+const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 
-impl MapConfig {
-    /// Default socket address for map service
-    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/map.sock";
+/// Default server info file for map service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 
-    /// Default server info file for map service
-    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/mapper-server-info";
-
-    /// Default channel size for map service
-    pub const CHANNEL_SIZE: usize = 1000;
-}
+/// Default channel size for map service
+const CHANNEL_SIZE: usize = 1000;
 
 struct MapService<T> {
     handler: Arc<T>,
@@ -206,7 +201,7 @@ where
         let handler = Arc::clone(&self.handler);
 
         let (stream_response_tx, stream_response_rx) =
-            mpsc::channel::<Result<MapResponse, Status>>(MapConfig::CHANNEL_SIZE);
+            mpsc::channel::<Result<MapResponse, Status>>(CHANNEL_SIZE);
 
         // perform handshake
         perform_handshake(&mut stream, &stream_response_tx).await?;
@@ -401,8 +396,8 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
-        let config = ServerConfig::new(MapConfig::SOCK_ADDR, MapConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(MapConfig::SOCK_ADDR.into());
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
 
         Self {
             config,
@@ -416,7 +411,7 @@ impl<T> Server<T> {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -438,7 +433,9 @@ impl<T> Server<T> {
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_server_info_file(file);
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 

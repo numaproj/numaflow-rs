@@ -18,20 +18,15 @@ use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
 use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
-/// Configuration for source service
-pub struct SourceConfig;
+/// Default socket address for source service
+const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
 
-impl SourceConfig {
-    /// Default socket address for source service
-    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/source.sock";
+/// Default server info file for source service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
 
-    /// Default server info file for source service
-    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sourcer-server-info";
-
-    // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
-    /// Default channel size for source service
-    pub const CHANNEL_SIZE: usize = 1000;
-}
+// TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
+/// Default channel size for source service
+const CHANNEL_SIZE: usize = 1000;
 
 struct SourceService<T> {
     handler: Arc<T>,
@@ -149,7 +144,7 @@ where
         request: proto::read_request::Request,
     ) -> crate::error::Result<()> {
         // tx,rx pair for sending data over to user-defined source
-        let (stx, srx) = mpsc::channel::<Message>(SourceConfig::CHANNEL_SIZE);
+        let (stx, srx) = mpsc::channel::<Message>(CHANNEL_SIZE);
 
         // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
         // to the grpc response stream.
@@ -192,7 +187,7 @@ where
         let handler_fn = Arc::clone(&self.handler);
 
         // tx (read from client), rx (write to client) pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(SourceConfig::CHANNEL_SIZE);
+        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(CHANNEL_SIZE);
 
         // this _tx ends up writing to the client side
         let grpc_tx = tx.clone();
@@ -265,8 +260,7 @@ where
         request: Request<Streaming<AckRequest>>,
     ) -> Result<Response<Self::AckFnStream>, Status> {
         let mut ack_stream = request.into_inner();
-        let (ack_tx, ack_rx) =
-            mpsc::channel::<Result<AckResponse, Status>>(SourceConfig::CHANNEL_SIZE);
+        let (ack_tx, ack_rx) = mpsc::channel::<Result<AckResponse, Status>>(CHANNEL_SIZE);
 
         let handler_fn = Arc::clone(&self.handler);
 
@@ -458,8 +452,8 @@ pub struct Server<T> {
 impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
-        let config = ServerConfig::new(SourceConfig::SOCK_ADDR, SourceConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(SourceConfig::SOCK_ADDR.into());
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
 
         Self {
             config,
@@ -473,7 +467,7 @@ impl<T> Server<T> {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -495,7 +489,9 @@ impl<T> Server<T> {
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_server_info_file(file);
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 

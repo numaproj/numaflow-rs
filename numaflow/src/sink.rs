@@ -16,31 +16,26 @@ use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
-/// Configuration for sink service
-pub struct SinkConfig;
+/// Default socket address for sink service
+const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
 
-impl SinkConfig {
-    /// Default socket address for sink service
-    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/sink.sock";
+/// Default server info file for sink service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
 
-    /// Default server info file for sink service
-    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/sinker-server-info";
+/// Default socket address for fallback sink
+const FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
 
-    /// Default socket address for fallback sink
-    pub const FB_SOCK_ADDR: &'static str = "/var/run/numaflow/fb-sink.sock";
+/// Default server info file for fallback sink
+const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
-    /// Default server info file for fallback sink
-    pub const FB_SERVER_INFO_FILE: &'static str = "/var/run/numaflow/fb-sinker-server-info";
+/// Container identifier for fallback sink
+const FB_CONTAINER_TYPE: &str = "fb-udsink";
 
-    /// Container identifier for fallback sink
-    pub const FB_CONTAINER_TYPE: &'static str = "fb-udsink";
+/// Environment variable for the container type
+const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 
-    /// Environment variable for the container type
-    pub const ENV_CONTAINER_TYPE: &'static str = "NUMAFLOW_UD_CONTAINER_TYPE";
-
-    /// Default channel size for sink service
-    pub const CHANNEL_SIZE: usize = 1000;
-}
+/// Default channel size for sink service
+const CHANNEL_SIZE: usize = 1000;
 
 struct SinkService<T: Sinker> {
     handler: Arc<T>,
@@ -224,8 +219,7 @@ where
         let sink_handle = self.handler.clone();
         let shutdown_tx = self.shutdown_tx.clone();
         let cln_token = self.cancellation_token.clone();
-        let (resp_tx, resp_rx) =
-            mpsc::channel::<Result<SinkResponse, Status>>(SinkConfig::CHANNEL_SIZE);
+        let (resp_tx, resp_rx) = mpsc::channel::<Result<SinkResponse, Status>>(CHANNEL_SIZE);
 
         self.perform_handshake(&mut sink_stream, &resp_tx).await?;
 
@@ -285,7 +279,7 @@ where
         sink_stream: &mut Streaming<sink_pb::SinkRequest>,
         grpc_resp_tx: mpsc::Sender<Result<SinkResponse, Status>>,
     ) -> Result<bool, Error> {
-        let (tx, rx) = mpsc::channel::<SinkRequest>(SinkConfig::CHANNEL_SIZE);
+        let (tx, rx) = mpsc::channel::<SinkRequest>(CHANNEL_SIZE);
         let resp_tx = grpc_resp_tx.clone();
         let sink_handle = sink_handle.clone();
 
@@ -455,15 +449,15 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
-        let container_type = env::var(SinkConfig::ENV_CONTAINER_TYPE).unwrap_or_default();
-        let (sock_addr, server_info_file) = if container_type == SinkConfig::FB_CONTAINER_TYPE {
-            (SinkConfig::FB_SOCK_ADDR, SinkConfig::FB_SERVER_INFO_FILE)
+        let container_type = env::var(ENV_CONTAINER_TYPE).unwrap_or_default();
+        let (sock_addr, server_info_file) = if container_type == FB_CONTAINER_TYPE {
+            (FB_SOCK_ADDR, FB_SERVER_INFO_FILE)
         } else {
-            (SinkConfig::SOCK_ADDR, SinkConfig::SERVER_INFO_FILE)
+            (SOCK_ADDR, SERVER_INFO_FILE)
         };
 
         let config = ServerConfig::new(sock_addr, server_info_file);
-        let cleanup = SocketCleanup::new(SinkConfig::SOCK_ADDR.into());
+        let cleanup = SocketCleanup::new(sock_addr.into(), server_info_file.into());
 
         Self {
             config,
@@ -477,7 +471,7 @@ impl<T> Server<T> {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -499,7 +493,9 @@ impl<T> Server<T> {
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sinker-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_server_info_file(file);
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 

@@ -12,16 +12,11 @@ use crate::proto::serving_store::{
 use crate::shared;
 use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
-/// Configuration for serving store service
-pub struct ServingConfig;
+/// Default socket address for serving store service
+const SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
 
-impl ServingConfig {
-    /// Default socket address for serving store service
-    pub const SOCK_ADDR: &'static str = "/var/run/numaflow/serving.sock";
-
-    /// Default server info file for serving store service
-    pub const SERVER_INFO_FILE: &'static str = "/var/run/numaflow/serving-server-info";
-}
+/// Default server info file for serving store service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
 
 /// ServingStore trait for implementing user defined stores. This Store has to be
 /// a shared Store between the Source and the Sink vertices. [ServingStore::put] happens in Sink
@@ -187,8 +182,8 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
-        let config = ServerConfig::new(ServingConfig::SOCK_ADDR, ServingConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(ServingConfig::SOCK_ADDR.into());
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
 
         Self {
             config,
@@ -202,7 +197,7 @@ impl<T> Server<T> {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -224,7 +219,9 @@ impl<T> Server<T> {
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/serving-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_server_info_file(file);
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
