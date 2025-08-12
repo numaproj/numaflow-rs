@@ -582,6 +582,7 @@ mod tests {
     use crate::batchmap;
     use crate::batchmap::{BatchResponse, Datum, Message};
     use crate::proto::map::map_client::MapClient;
+    use crate::proto::map::{map_request::Request, Handshake, MapRequest};
 
     #[tokio::test]
     async fn batch_map_server() -> Result<(), Box<dyn Error>> {
@@ -635,15 +636,15 @@ mod tests {
             .await?;
 
         let mut client = MapClient::new(channel);
-        let handshake_request = crate::proto::map::MapRequest {
+        let handshake_request = MapRequest {
             request: None,
             id: "0".to_string(),
-            handshake: Some(crate::proto::map::Handshake { sot: true }),
+            handshake: Some(Handshake { sot: true }),
             status: None,
         };
 
-        let request = crate::proto::map::MapRequest {
-            request: Some(crate::proto::map::map_request::Request {
+        let request = MapRequest {
+            request: Some(Request {
                 keys: vec!["first".into()],
                 value: "hello".into(),
                 watermark: Some(prost_types::Timestamp::default()),
@@ -655,8 +656,8 @@ mod tests {
             status: None,
         };
 
-        let request2 = crate::proto::map::MapRequest {
-            request: Some(crate::proto::map::map_request::Request {
+        let request2 = MapRequest {
+            request: Some(Request {
                 keys: vec!["second".into()],
                 value: "hello2".into(),
                 watermark: Some(prost_types::Timestamp::default()),
@@ -668,7 +669,7 @@ mod tests {
             status: None,
         };
 
-        let eot_request = crate::proto::map::MapRequest {
+        let eot_request = MapRequest {
             request: None,
             id: "3".to_string(),
             handshake: None,
@@ -747,16 +748,16 @@ mod tests {
         let mut client = MapClient::new(channel);
         let mut requests = Vec::new();
 
-        let handshake_request = crate::proto::map::MapRequest {
+        let handshake_request = MapRequest {
             request: None,
             id: "0".to_string(),
-            handshake: Some(crate::proto::map::Handshake { sot: true }),
+            handshake: Some(Handshake { sot: true }),
             status: None,
         };
         requests.push(handshake_request);
         for i in 0..10 {
-            let request = crate::proto::map::MapRequest {
-                request: Some(crate::proto::map::map_request::Request {
+            let request = MapRequest {
+                request: Some(Request {
                     keys: vec!["first".into(), "second".into()],
                     value: format!("hello {}", i).into(),
                     watermark: Some(prost_types::Timestamp::default()),
@@ -769,7 +770,7 @@ mod tests {
             };
             requests.push(request);
         }
-        let eot_request = crate::proto::map::MapRequest {
+        let eot_request = MapRequest {
             request: None,
             id: "11".to_string(),
             handshake: None,

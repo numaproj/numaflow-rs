@@ -564,8 +564,8 @@ mod tests {
 
     use crate::proto::sink::sink_client::SinkClient;
     use crate::proto::sink::sink_request::Request;
-    use crate::proto::sink::Handshake;
     use crate::proto::sink::TransmissionStatus;
+    use crate::proto::sink::{Handshake, SinkRequest};
     use crate::sink;
 
     #[tokio::test]
@@ -625,12 +625,12 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = crate::proto::sink::SinkRequest {
+        let handshake_request = SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
         };
-        let request = crate::proto::sink::SinkRequest {
+        let request = SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -643,13 +643,13 @@ mod tests {
             handshake: None,
         };
 
-        let eot_request = crate::proto::sink::SinkRequest {
+        let eot_request = SinkRequest {
             request: None,
             status: Some(TransmissionStatus { eot: true }),
             handshake: None,
         };
 
-        let request_two = crate::proto::sink::SinkRequest {
+        let request_two = SinkRequest {
             request: Some(Request {
                 keys: vec!["first".into(), "second".into()],
                 value: "hello".into(),
@@ -768,7 +768,7 @@ mod tests {
 
         let mut client = SinkClient::new(channel);
         // Send handshake request
-        let handshake_request = crate::proto::sink::SinkRequest {
+        let handshake_request = SinkRequest {
             request: None,
             status: None,
             handshake: Some(Handshake { sot: true }),
@@ -777,7 +777,7 @@ mod tests {
         let mut requests = vec![handshake_request];
 
         for i in 0..10 {
-            let request = crate::proto::sink::SinkRequest {
+            let request = SinkRequest {
                 request: Some(Request {
                     keys: vec!["first".into(), "second".into()],
                     value: format!("hello {}", i).into(),
@@ -792,7 +792,7 @@ mod tests {
             requests.push(request);
         }
 
-        requests.push(crate::proto::sink::SinkRequest {
+        requests.push(SinkRequest {
             request: None,
             status: Some(TransmissionStatus { eot: true }),
             handshake: None,
