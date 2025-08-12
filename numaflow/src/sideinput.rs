@@ -5,9 +5,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::proto::side_input as proto;
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup};
+use crate::{
+    error::{service_error, ErrorKind},
+    proto::side_input as proto,
+};
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
 /// Configuration for sideinput service
 pub struct SideInputConfig;
@@ -119,12 +122,12 @@ where
                     }
                     Err(e) => {
                         shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
-                        Err(Status::internal(e.to_string()))
+                        Err(Status::internal(service_error(ServiceKind::SideInput, ErrorKind::UserDefinedError(e.to_string())).to_string()))
                     }
                 }
             }
             _ = self.cancellation_token.cancelled() => {
-                Err(Status::cancelled("Server is shutting down"))
+                Err(Status::cancelled(service_error(ServiceKind::SideInput, ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
             },
         }
     }

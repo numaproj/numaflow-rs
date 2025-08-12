@@ -47,7 +47,7 @@ pub enum ServiceKind {
 }
 
 #[derive(Eq, PartialEq, Hash)]
-pub enum ContainerType {
+pub(crate) enum ContainerType {
     Map,
     BatchMap,
     MapStream,
@@ -76,7 +76,7 @@ pub enum ContainerType {
 // Therefore, we translate ">= a.b.c" into ">= a.b.c-z".
 // The character 'z' is the largest in the ASCII table, ensuring that all RC versions are recognized as
 // smaller than any stable version suffixed with '-z'.
-pub static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
+pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'static str>> =
     LazyLock::new(|| {
         let mut m = HashMap::new();
         m.insert(ContainerType::Source, "1.4.0-z");
@@ -94,7 +94,7 @@ const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ServerInfo structure to store server-related information
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ServerInfo {
+pub(crate) struct ServerInfo {
     #[serde(default)]
     protocol: String,
     #[serde(default)]
@@ -230,7 +230,7 @@ fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Resul
     fs::write(path, content)
 }
 
-pub fn create_listener_stream(
+pub(crate) fn create_listener_stream(
     socket_file: impl AsRef<Path>,
     server_info_file: impl AsRef<Path>,
     server_info: ServerInfo,
@@ -242,13 +242,13 @@ pub fn create_listener_stream(
     Ok(UnixListenerStream::new(uds_stream))
 }
 
-pub fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
     t.map_or(Utc.timestamp_nanos(-1), |t| {
         DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
     })
 }
 
-pub fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
+pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     Some(Timestamp {
         seconds: t.timestamp(),
         nanos: t.nanosecond() as i32,
@@ -260,7 +260,7 @@ pub fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
 ///     2. user is explicitly asking us to shut down
 /// Once the request for shutdown has be invoked, server will broadcast shutdown to all tasks
 /// through the cancellation-token.
-pub async fn shutdown_signal(
+pub(crate) async fn shutdown_signal(
     mut shutdown_on_err: mpsc::Receiver<()>,
     shutdown_from_user: Option<oneshot::Receiver<()>>,
     cln_token: CancellationToken,
