@@ -7,7 +7,7 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::proto::side_input as proto;
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup};
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup};
 
 /// Configuration for sideinput service
 pub struct SideInputConfig;
@@ -119,12 +119,12 @@ where
                     }
                     Err(e) => {
                         shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
-                        Err(Server::<()>::grpc_internal_error(e.to_string()))
+                        Err(Status::internal(e.to_string()))
                     }
                 }
             }
             _ = self.cancellation_token.cancelled() => {
-                Err(Server::<()>::grpc_cancelled_error("Server is shutting down"))
+                Err(Status::cancelled("Server is shutting down"))
             },
         }
     }
@@ -149,7 +149,7 @@ impl<T> Server<T> {
             SideInputConfig::SOCK_ADDR,
             SideInputConfig::SERVER_INFO_FILE,
         );
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(SideInputConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -161,8 +161,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sideinput.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -203,8 +204,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::SideInput);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -217,8 +218,8 @@ impl<T> Server<T> {
             cancellation_token: cln_token.clone(),
         };
         let sideinput_svc = proto::side_input_server::SideInputServer::new(sideinput_svc)
-            .max_encoding_message_size(self.config.max_message_size)
-            .max_decoding_message_size(self.config.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -237,12 +238,5 @@ impl<T> Server<T> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
-    }
-}
-
-/// Implementation of ServiceError trait for Sideinput service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "sideinput"
     }
 }

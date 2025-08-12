@@ -5,11 +5,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status};
 
+use crate::error::{service_error, ErrorKind};
 use crate::proto::serving_store::{
     self as serving_pb, GetRequest, GetResponse, PutRequest, PutResponse,
 };
 use crate::shared;
-use shared::{ContainerType, ServerConfig, ServiceError, SocketCleanup};
+use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
 /// Configuration for serving store service
 pub struct ServingConfig;
@@ -119,13 +120,13 @@ where
                             .send(())
                             .await
                             .expect("Sending shutdown signal to gRPC server");
-                        Err(Server::<()>::grpc_internal_error(e.to_string()))
+                        Err(Status::internal(service_error(ServiceKind::ServingStore, ErrorKind::UserDefinedError(e.to_string())).to_string()))
                     }
                 }
             },
 
             _ = cancellation_token.cancelled() => {
-                Err(Server::<()>::grpc_cancelled_error("Server is shutting down"))
+                Err(Status::internal(service_error(ServiceKind::ServingStore, ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
             },
         }
     }
@@ -155,13 +156,13 @@ where
                             .send(())
                             .await
                             .expect("Sending shutdown signal to gRPC server");
-                        Err(Server::<()>::grpc_internal_error(e.to_string()))
+                        Err(Status::internal(e.to_string()))
                     }
                 }
             },
 
             _ = cancellation_token.cancelled() => {
-                Err(Server::<()>::grpc_cancelled_error("Server is shutting down"))
+                Err(Status::cancelled("Server is shutting down"))
             },
         }
     }
@@ -187,7 +188,7 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(svc: T) -> Self {
         let config = ServerConfig::new(ServingConfig::SOCK_ADDR, ServingConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(ServingConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -199,8 +200,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/serving.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -228,7 +230,7 @@ impl<T> Server<T> {
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/serving-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -241,8 +243,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::Serving);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -256,8 +258,8 @@ impl<T> Server<T> {
         };
 
         let svc = serving_pb::serving_store_server::ServingStoreServer::new(svc)
-            .max_encoding_message_size(self.config.max_message_size)
-            .max_decoding_message_size(self.config.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -278,14 +280,6 @@ impl<T> Server<T> {
         self.start_with_shutdown(shutdown_rx).await
     }
 }
-
-/// Implementation of ServiceError trait for Serving service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "servingstore"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

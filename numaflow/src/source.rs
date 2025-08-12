@@ -12,11 +12,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::Error;
+use crate::error::{service_error, Error, ErrorKind};
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
-use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceError, SocketCleanup};
+use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
 /// Configuration for source service
 pub struct SourceConfig;
@@ -116,7 +116,9 @@ where
                     handshake: None,
                 }))
                 .await
-                .map_err(|e| Server::<()>::internal_error(e.to_string()))?;
+                .map_err(|e| {
+                    service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
+                })?;
         }
 
         // send end of transmission on success
@@ -132,7 +134,9 @@ where
                 handshake: None,
             }))
             .await
-            .map_err(|e| Server::<()>::internal_error(e.to_string()))?;
+            .map_err(|e| {
+                service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
+            })?;
 
         Ok(())
     }
@@ -165,9 +169,9 @@ where
             .await;
 
         // wait for the spawned grpc writer to end
-        let _ = grpc_writer_handle
-            .await
-            .map_err(|e| Server::<()>::internal_error(e.to_string()))?;
+        let _ = grpc_writer_handle.await.map_err(|e| {
+            service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
+        })?;
 
         Ok(())
     }
@@ -208,10 +212,10 @@ where
                     // will be sent over to the client.
                     read_request = req_stream.message() => {
                         let read_request = read_request
-                            .map_err(|e| Server::<()>::internal_error(e.to_string()))?
-                            .ok_or_else(|| Server::<()>::internal_error("Stream closed"))?;
+                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
 
-                        let request = read_request.request.ok_or_else(|| Server::<()>::internal_error("Stream closed"))?;
+                        let request = read_request.request.ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         // start the ud-source rx asynchronously and start populating the gRPC
                         // response, so it can be streamed to the gRPC client (numaflow).
@@ -236,9 +240,11 @@ where
             // which will close the stream with failure.
             if let Err(e) = grpc_read_handle.await {
                 error!("shutting down the gRPC channel, {}", e);
-                tx.send(Err(Server::<()>::grpc_internal_error(e.to_string())))
+                tx.send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| Server::<()>::internal_error(e.to_string()))
+                    .map_err(|e| {
+                        service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
+                    })
                     .expect("writing error to grpc response channel should never fail");
 
                 // if there are any failures, we propagate those failures so that the server can shut down.
@@ -278,11 +284,11 @@ where
                     }
                     ack_request = ack_stream.message() => {
                         let ack_request = ack_request
-                            .map_err(|e| Server::<()>::internal_error(e.to_string()))?
-                            .ok_or_else(|| Server::<()>::internal_error("Stream closed"))?;
+                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         let request = ack_request.request
-                            .ok_or_else(|| Server::<()>::internal_error("Invalid request, request can't be empty"))?;
+                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
                         let offsets = request.offsets
                             .iter()
@@ -304,7 +310,7 @@ where
                                 handshake: None,
                             }))
                             .await
-                            .map_err(|e| Server::<()>::internal_error(e.to_string()))?;
+                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?;
                     }
                 }
             }
@@ -316,9 +322,11 @@ where
             if let Err(e) = grpc_read_handle.await {
                 error!("shutting down the gRPC ack channel, {}", e);
                 ack_tx
-                    .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
+                    .send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| Server::<()>::internal_error(e.to_string()))
+                    .map_err(|e| {
+                        service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
+                    })
                     .expect("writing error to grpc response channel should never fail");
 
                 shutdown_tx
@@ -376,10 +384,8 @@ where
         let handshake_request = read_stream
             .message()
             .await
-            .map_err(|e| Server::<()>::grpc_internal_error(format!("read handshake failed {}", e)))?
-            .ok_or_else(|| {
-                Server::<()>::grpc_internal_error("read stream closed before handshake")
-            })?;
+            .map_err(|e| Status::internal(format!("read handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("read stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -390,16 +396,11 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Server::<()>::grpc_internal_error(format!(
-                        "failed to send read handshake response {}",
-                        e
-                    ))
+                    Status::internal(format!("failed to send read handshake response {}", e))
                 })?;
             Ok(())
         } else {
-            Err(Server::<()>::grpc_invalid_argument_error(
-                "Read handshake not present",
-            ))
+            Err(Status::invalid_argument("Read handshake not present"))
         }
     }
 
@@ -412,10 +413,8 @@ where
         let handshake_request = ack_stream
             .message()
             .await
-            .map_err(|e| Server::<()>::grpc_internal_error(format!("ack handshake failed {}", e)))?
-            .ok_or_else(|| {
-                Server::<()>::grpc_internal_error("ack stream closed before handshake")
-            })?;
+            .map_err(|e| Status::internal(format!("ack handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("ack stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -425,16 +424,11 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Server::<()>::grpc_internal_error(format!(
-                        "failed to send ack handshake response {}",
-                        e
-                    ))
+                    Status::internal(format!("failed to send ack handshake response {}", e))
                 })?;
             Ok(())
         } else {
-            Err(Server::<()>::grpc_invalid_argument_error(
-                "Ack handshake not present",
-            ))
+            Err(Status::invalid_argument("Ack handshake not present"))
         }
     }
 }
@@ -465,7 +459,7 @@ impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
         let config = ServerConfig::new(SourceConfig::SOCK_ADDR, SourceConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(SourceConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -477,8 +471,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/source.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -519,8 +514,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::Source);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -534,8 +529,8 @@ impl<T> Server<T> {
         };
 
         let source_svc = proto::source_server::SourceServer::new(source_service)
-            .max_decoding_message_size(self.config.max_message_size)
-            .max_encoding_message_size(self.config.max_message_size);
+            .max_decoding_message_size(self.config.max_message_size())
+            .max_encoding_message_size(self.config.max_message_size());
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -556,14 +551,6 @@ impl<T> Server<T> {
         self.start_with_shutdown(shutdown_rx).await
     }
 }
-
-/// Implementation of ServiceError trait for Source service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "source"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;

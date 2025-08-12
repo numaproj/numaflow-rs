@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
 
-use crate::error::Error;
+use crate::error::{service_error, Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, ServiceError, SocketCleanup};
+use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
 
 /// Configuration for sink service
 pub struct SinkConfig;
@@ -326,10 +326,13 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    return Err(Server::<()>::internal_error(format!(
-                        "Error reading message from stream: {}",
-                        e
-                    )))
+                    return Err(service_error(
+                        ServiceKind::Sink,
+                        ErrorKind::InternalError(format!(
+                            "Error reading message from stream: {}",
+                            e
+                        )),
+                    ))
                 }
             };
 
@@ -341,15 +344,21 @@ where
 
             // message.request cannot be none
             let request = message.request.ok_or_else(|| {
-                Server::<()>::internal_error("Invalid argument, request can't be None")
+                service_error(
+                    ServiceKind::Sink,
+                    ErrorKind::InternalError("Invalid argument, request can't be None".to_string()),
+                )
             })?;
 
             // write to the UDF's tx
             tx.send(request.into()).await.map_err(|e| {
-                Server::<()>::internal_error(format!(
-                    "Error sending message to sink handler: {}",
-                    e
-                ))
+                service_error(
+                    ServiceKind::Sink,
+                    ErrorKind::InternalError(format!(
+                        "Error sending message to sink handler: {}",
+                        e
+                    )),
+                )
             })?;
         }
 
@@ -357,9 +366,12 @@ where
         drop(tx);
 
         // wait for UDF task to return
-        sinker_handle
-            .await
-            .map_err(|e| Server::<()>::user_error(e.to_string()))?;
+        sinker_handle.await.map_err(|e| {
+            service_error(
+                ServiceKind::Sink,
+                ErrorKind::UserDefinedError(e.to_string()),
+            )
+        })?;
 
         Ok(global_stream_ended)
     }
@@ -377,14 +389,14 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
+                            .send(Err(Status::internal(e.to_string())))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
                     Err(e) => {
                         resp_tx
-                            .send(Err(Server::<()>::grpc_internal_error(format!(
+                            .send(Err(Status::internal(format!(
                                 "Sink handler aborted: {}",
                                 e
                             ))))
@@ -396,7 +408,7 @@ where
             },
             _ = cln_token.cancelled() => {
                 resp_tx
-                    .send(Err(Server::<()>::grpc_cancelled_error("Sink handler cancelled")))
+                    .send(Err(Status::cancelled("Sink handler cancelled")))
                     .await
                     .expect("Sending error to response channel");
             }
@@ -412,8 +424,8 @@ where
         let handshake_request = sink_stream
             .message()
             .await
-            .map_err(|e| Server::<()>::grpc_internal_error(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Server::<()>::grpc_internal_error("stream closed before handshake"))?;
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -424,16 +436,11 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Server::<()>::grpc_internal_error(format!(
-                        "failed to send handshake response {}",
-                        e
-                    ))
+                    Status::internal(format!("failed to send handshake response {}", e))
                 })?;
             Ok(())
         } else {
-            Err(Server::<()>::grpc_invalid_argument_error(
-                "Handshake not present",
-            ))
+            Err(Status::invalid_argument("Handshake not present"))
         }
     }
 }
@@ -456,7 +463,7 @@ impl<T> Server<T> {
         };
 
         let config = ServerConfig::new(sock_addr, server_info_file);
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(SinkConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -468,8 +475,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sink.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -510,8 +518,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::Sink);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -525,8 +533,8 @@ impl<T> Server<T> {
         };
 
         let svc = sink_pb::sink_server::SinkServer::new(svc)
-            .max_encoding_message_size(self.config.max_message_size)
-            .max_decoding_message_size(self.config.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -545,13 +553,6 @@ impl<T> Server<T> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
-    }
-}
-
-/// Implementation of ServiceError trait for Sink service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "sink"
     }
 }
 

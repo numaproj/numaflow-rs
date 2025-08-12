@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
@@ -12,11 +11,12 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
+use crate::error::{service_error, Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP};
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
 
 /// Configuration for batchmap service
 pub struct BatchMapConfig;
@@ -104,9 +104,9 @@ impl TryFrom<MapRequest> for Datum {
     type Error = Status;
 
     fn try_from(sr: MapRequest) -> Result<Self, Self::Error> {
-        let request = sr.request.ok_or_else(|| {
-            Server::<()>::grpc_invalid_argument_error("Invalid argument, request can't be None")
-        })?;
+        let request = sr
+            .request
+            .ok_or_else(|| Status::invalid_argument("Invalid argument, request can't be None"))?;
 
         Ok(Self {
             keys: request.keys,
@@ -354,10 +354,13 @@ where
                     break;
                 }
                 Err(e) => {
-                    return Err(Server::<()>::internal_error(format!(
-                        "Error reading message from stream: {}",
-                        e
-                    )))
+                    return Err(service_error(
+                        ServiceKind::BatchMap,
+                        ErrorKind::InternalError(format!(
+                            "Error reading message from stream: {}",
+                            e
+                        )),
+                    ))
                 }
             };
 
@@ -368,14 +371,21 @@ where
             }
 
             // write to the UDF's tx
-            tx.send(
-                message
-                    .try_into()
-                    .map_err(|e| Server::<()>::internal_error(format!("{:?}", e)))?,
-            )
+            tx.send(message.try_into().map_err(|e| {
+                service_error(
+                    ServiceKind::BatchMap,
+                    ErrorKind::InternalError(format!("{:?}", e)),
+                )
+            })?)
             .await
             .map_err(|e| {
-                Server::<()>::internal_error(format!("Error sending message to map handler: {}", e))
+                service_error(
+                    ServiceKind::BatchMap,
+                    ErrorKind::InternalError(format!(
+                        "Error sending message to map handler: {}",
+                        e
+                    )),
+                )
             })?;
         }
 
@@ -383,9 +393,12 @@ where
         drop(tx);
 
         // wait for UDF task to return
-        batch_mapper_handle
-            .await
-            .map_err(|e| Server::<()>::user_error(e.to_string()))?;
+        batch_mapper_handle.await.map_err(|e| {
+            service_error(
+                ServiceKind::BatchMap,
+                ErrorKind::UserDefinedError(e.to_string()),
+            )
+        })?;
 
         Ok(global_stream_ended)
     }
@@ -402,14 +415,14 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Server::<()>::grpc_internal_error(e.to_string())))
+                            .send(Err(Status::internal(e.to_string())))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
                     }
                     Err(e) => {
                         resp_tx
-                            .send(Err(Server::<()>::grpc_internal_error(format!("Map handler aborted: {}", e))))
+                            .send(Err(Status::internal(format!("Map handler aborted: {}", e))))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
@@ -418,7 +431,7 @@ where
             },
             _ = cln_token.cancelled() => {
                 resp_tx
-                    .send(Err(Server::<()>::grpc_cancelled_error("Map handler cancelled")))
+                    .send(Err(Status::cancelled("Map handler cancelled")))
                     .await
                     .expect("Sending error to response channel");
             }
@@ -433,8 +446,8 @@ where
         let handshake_request = map_stream
             .message()
             .await
-            .map_err(|e| Server::<()>::grpc_internal_error(format!("handshake failed {}", e)))?
-            .ok_or_else(|| Server::<()>::grpc_internal_error("stream closed before handshake"))?;
+            .map_err(|e| Status::internal(format!("handshake failed {}", e)))?
+            .ok_or_else(|| Status::internal("stream closed before handshake"))?;
 
         if let Some(handshake) = handshake_request.handshake {
             resp_tx
@@ -446,16 +459,11 @@ where
                 }))
                 .await
                 .map_err(|e| {
-                    Server::<()>::grpc_internal_error(format!(
-                        "failed to send handshake response {}",
-                        e
-                    ))
+                    Status::internal(format!("failed to send handshake response {}", e))
                 })?;
             Ok(())
         } else {
-            Err(Server::<()>::grpc_invalid_argument_error(
-                "Handshake not present",
-            ))
+            Err(Status::invalid_argument("Handshake not present"))
         }
     }
 }
@@ -470,7 +478,7 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(batch_map_svc: T) -> Self {
         let config = ServerConfig::new(BatchMapConfig::SOCK_ADDR, BatchMapConfig::SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(BatchMapConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -482,8 +490,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/batchmap.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -524,8 +533,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::BatchMap);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -541,8 +550,8 @@ impl<T> Server<T> {
         };
 
         let map_svc = proto::map_server::MapServer::new(map_svc)
-            .max_encoding_message_size(self.config.max_message_size)
-            .max_decoding_message_size(self.config.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -563,14 +572,6 @@ impl<T> Server<T> {
         self.start_with_shutdown(shutdown_rx).await
     }
 }
-
-/// Implementation of ServiceError trait for Batchmap service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "batchmap"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};

@@ -11,11 +11,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::Error;
+use crate::error::{service_error, Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceError, SocketCleanup, DROP};
+use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
 
 /// Configuration for mapstream service
 pub struct MapStreamConfig;
@@ -329,7 +329,10 @@ async fn run_map_stream<T>(
         async move {
             if let Err(e) = map_stream_task.await {
                 let _ = error_tx
-                    .send(Server::<()>::user_error(format!("panicked: {e:?}")))
+                    .send(service_error(
+                        ServiceKind::MapStream,
+                        ErrorKind::UserDefinedError(format!("panicked: {e:?}")),
+                    ))
                     .await;
                 return Err(e);
             }
@@ -350,9 +353,10 @@ async fn run_map_stream<T>(
 
         if let Err(e) = send_response_result {
             let _ = error_tx
-                .send(Server::<()>::internal_error(format!(
-                    "Failed to send response: {e:?}"
-                )))
+                .send(service_error(
+                    ServiceKind::MapStream,
+                    ErrorKind::InternalError(format!("Failed to send response: {e:?}")),
+                ))
                 .await;
             return;
         }
@@ -388,15 +392,16 @@ async fn manage_grpc_stream(
         Some(err) => err,
         None => match request_handler.await {
             Ok(_) => return,
-            Err(e) => {
-                Server::<()>::internal_error(format!("MapStream request handler aborted: {e:?}"))
-            }
+            Err(e) => service_error(
+                ServiceKind::MapStream,
+                ErrorKind::InternalError(format!("MapStream request handler aborted: {e:?}")),
+            ),
         },
     };
 
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Server::<()>::grpc_internal_error(err.to_string())))
+        .send(Err(Status::internal(err.to_string())))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -413,8 +418,8 @@ async fn perform_handshake(
     let handshake_request = stream
         .message()
         .await
-        .map_err(|e| Server::<()>::grpc_internal_error(format!("Handshake failed: {}", e)))?
-        .ok_or_else(|| Server::<()>::grpc_internal_error("Stream closed before handshake"))?;
+        .map_err(|e| Status::internal(format!("Handshake failed: {}", e)))?
+        .ok_or_else(|| Status::internal("Stream closed before handshake"))?;
 
     if let Some(handshake) = handshake_request.handshake {
         stream_response_tx
@@ -425,17 +430,10 @@ async fn perform_handshake(
                 status: None,
             }))
             .await
-            .map_err(|e| {
-                Server::<()>::grpc_internal_error(format!(
-                    "Failed to send handshake response: {}",
-                    e
-                ))
-            })?;
+            .map_err(|e| Status::internal(format!("Failed to send handshake response: {}", e)))?;
         Ok(())
     } else {
-        Err(Server::<()>::grpc_invalid_argument_error(
-            "Handshake not present",
-        ))
+        Err(Status::invalid_argument("Handshake not present"))
     }
 }
 
@@ -453,7 +451,7 @@ impl<T> Server<T> {
             MapStreamConfig::SOCK_ADDR,
             MapStreamConfig::SERVER_INFO_FILE,
         );
-        let cleanup = SocketCleanup::new(config.sock_addr.clone());
+        let cleanup = SocketCleanup::new(MapStreamConfig::SOCK_ADDR.into());
 
         Self {
             config,
@@ -465,8 +463,9 @@ impl<T> Server<T> {
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/mapstream.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.config = self.config.with_socket_file(file);
-        self._cleanup = SocketCleanup::new(self.config.sock_addr.clone());
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path);
         self
     }
 
@@ -507,8 +506,8 @@ impl<T> Server<T> {
     {
         let info = shared::ServerInfo::new(ContainerType::MapStream);
         let listener = shared::create_listener_stream(
-            &self.config.sock_addr,
-            &self.config.server_info_file,
+            &self.config.socket_file(),
+            &self.config.server_info_file(),
             info,
         )?;
         let handler = self.svc.take().unwrap();
@@ -522,8 +521,8 @@ impl<T> Server<T> {
         };
 
         let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
-            .max_encoding_message_size(self.config.max_message_size)
-            .max_decoding_message_size(self.config.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -541,13 +540,6 @@ impl<T> Server<T> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
-    }
-}
-
-/// Implementation of ServiceError trait for Mapstream service
-impl<T> ServiceError for Server<T> {
-    fn service_name() -> &'static str {
-        "mapstream"
     }
 }
 
