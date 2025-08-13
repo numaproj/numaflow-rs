@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,17 +12,21 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::Error::SourceError;
 use crate::error::{Error, ErrorKind};
-use crate::servers::source as proto;
-use crate::shared::{self, prost_timestamp_from_utc, ContainerType};
-use crate::source::proto::{AckRequest, AckResponse, ReadRequest, ReadResponse};
+use crate::proto::source as proto;
+use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
+use crate::shared;
+use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, SocketCleanup};
 
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+/// Default socket address for source service
+const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
+
+/// Default server info file for source service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
+/// Default channel size for source service
+const CHANNEL_SIZE: usize = 1000;
 
 struct SourceService<T> {
     handler: Arc<T>,
@@ -107,7 +111,7 @@ where
                     handshake: None,
                 }))
                 .await
-                .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+                .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
         }
 
         // send end of transmission on success
@@ -123,7 +127,7 @@ where
                 handshake: None,
             }))
             .await
-            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
 
         Ok(())
     }
@@ -136,7 +140,7 @@ where
         request: proto::read_request::Request,
     ) -> crate::error::Result<()> {
         // tx,rx pair for sending data over to user-defined source
-        let (stx, srx) = mpsc::channel::<Message>(DEFAULT_CHANNEL_SIZE);
+        let (stx, srx) = mpsc::channel::<Message>(CHANNEL_SIZE);
 
         // spawn the rx side so that when the handler is invoked, we can stream the handler's read data
         // to the grpc response stream.
@@ -156,10 +160,9 @@ where
             .await;
 
         // wait for the spawned grpc writer to end
-        grpc_writer_handle
+        let _ = grpc_writer_handle
             .await
-            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
-            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
 
         Ok(())
     }
@@ -180,7 +183,7 @@ where
         let handler_fn = Arc::clone(&self.handler);
 
         // tx (read from client), rx (write to client) pair for gRPC response
-        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) = mpsc::channel::<Result<ReadResponse, Status>>(CHANNEL_SIZE);
 
         // this _tx ends up writing to the client side
         let grpc_tx = tx.clone();
@@ -200,10 +203,10 @@ where
                     // will be sent over to the client.
                     read_request = req_stream.message() => {
                         let read_request = read_request
-                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
-                        let request = read_request.request.ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
+                        let request = read_request.request.ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         // start the ud-source rx asynchronously and start populating the gRPC
                         // response, so it can be streamed to the gRPC client (numaflow).
@@ -230,7 +233,7 @@ where
                 error!("shutting down the gRPC channel, {}", e);
                 tx.send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))
+                    .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
                 // if there are any failures, we propagate those failures so that the server can shut down.
@@ -251,7 +254,7 @@ where
         request: Request<Streaming<AckRequest>>,
     ) -> Result<Response<Self::AckFnStream>, Status> {
         let mut ack_stream = request.into_inner();
-        let (ack_tx, ack_rx) = mpsc::channel::<Result<AckResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+        let (ack_tx, ack_rx) = mpsc::channel::<Result<AckResponse, Status>>(CHANNEL_SIZE);
 
         let handler_fn = Arc::clone(&self.handler);
 
@@ -269,11 +272,11 @@ where
                     }
                     ack_request = ack_stream.message() => {
                         let ack_request = ack_request
-                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         let request = ack_request.request
-                            .ok_or_else(|| SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
                         let offsets = request.offsets
                             .iter()
@@ -295,7 +298,7 @@ where
                                 handshake: None,
                             }))
                             .await
-                            .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
                     }
                 }
             }
@@ -309,7 +312,7 @@ where
                 ack_tx
                     .send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| SourceError(ErrorKind::InternalError(e.to_string())))
+                    .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
                 shutdown_tx
@@ -433,55 +436,60 @@ pub struct Message {
 /// gRPC server for starting a [`Sourcer`] service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
+
+        Self {
+            config,
             svc: Some(source_svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/source.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/source.sock`
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size()
     }
 
-    /// Change the file in which numflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcer-server-info`
+    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sourcer-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -493,8 +501,11 @@ impl<T> Server<T> {
         T: Sourcer + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::Source);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            self.config.socket_file(),
+            self.config.server_info_file(),
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -506,8 +517,8 @@ impl<T> Server<T> {
         };
 
         let source_svc = proto::source_server::SourceServer::new(source_service)
-            .max_decoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_decoding_message_size(self.config.max_message_size())
+            .max_encoding_message_size(self.config.max_message_size());
 
         let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -519,7 +530,7 @@ impl<T> Server<T> {
         Ok(())
     }
 
-    /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
+    /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signals arrives.
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sourcer + Send + Sync + 'static,
@@ -528,15 +539,6 @@ impl<T> Server<T> {
         self.start_with_shutdown(shutdown_rx).await
     }
 }
-
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;

@@ -1,8 +1,13 @@
+//! Shared utilities, and common functionality
+//!
+//! This module contains utilities, constants, types, and server configuration
+//! that are shared across different parts of the Numaflow SDK.
+
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
@@ -12,10 +17,13 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-pub(crate) const MAP_MODE_KEY: &str = "MAP_MODE";
-pub(crate) const UNARY_MAP: &str = "unary-map";
-pub(crate) const BATCH_MAP: &str = "batch-map";
-pub(crate) const STREAM_MAP: &str = "stream-map";
+// Map mode constants
+const MAP_MODE_KEY: &str = "MAP_MODE";
+const UNARY_MAP: &str = "unary-map";
+const BATCH_MAP: &str = "batch-map";
+const STREAM_MAP: &str = "stream-map";
+
+pub const DROP: &str = "U+005C__DROP__";
 
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
@@ -81,6 +89,7 @@ pub(crate) struct ServerInfo {
     #[serde(default)]
     metadata: Option<HashMap<String, String>>, // Metadata is optional
 }
+
 impl ServerInfo {
     pub fn new(container_type: ContainerType) -> Self {
         let mut metadata: HashMap<String, String> = HashMap::new();
@@ -108,6 +117,84 @@ impl ServerInfo {
             version: SDK_VERSION.to_string(),
             metadata: Option::from(metadata),
         }
+    }
+}
+
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
+/// Common server configuration that all services share
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    sock_addr: PathBuf,
+    max_message_size: usize,
+    server_info_file: PathBuf,
+}
+
+impl ServerConfig {
+    /// Create new server configuration with defaults for the given service
+    pub fn new(default_sock_addr: &str, default_server_info_file: &str) -> Self {
+        Self {
+            sock_addr: default_sock_addr.into(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            server_info_file: default_server_info_file.into(),
+        }
+    }
+
+    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
+    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.sock_addr = file.into();
+        self
+    }
+
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
+    pub(crate) fn socket_file(&self) -> &std::path::Path {
+        self.sock_addr.as_path()
+    }
+
+    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
+    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
+        self.max_message_size = message_size;
+        self
+    }
+
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
+    pub(crate) fn max_message_size(&self) -> usize {
+        self.max_message_size
+    }
+
+    /// Set the file in which numaflow server information is stored
+    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.server_info_file = file.into();
+        self
+    }
+
+    /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/serving-server-info`
+    pub(crate) fn server_info_file(&self) -> &std::path::Path {
+        self.server_info_file.as_path()
+    }
+}
+
+/// It is used to clean up the socket file when the server is dropped.
+#[derive(Debug)]
+pub struct SocketCleanup {
+    sock_addr: PathBuf,
+    server_info_file: PathBuf,
+}
+
+impl SocketCleanup {
+    pub fn new(sock_addr: PathBuf, server_info_file: PathBuf) -> Self {
+        Self {
+            sock_addr,
+            server_info_file,
+        }
+    }
+}
+
+impl Drop for SocketCleanup {
+    /// Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the same address.
+    /// UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_addr);
+        let _ = fs::remove_file(&self.server_info_file);
     }
 }
 

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -11,14 +11,18 @@ use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
-use crate::servers::map::{self as proto, MapResponse};
-use crate::shared::{self, shutdown_signal, ContainerType};
+use crate::proto::map::{self as proto, MapResponse};
+use crate::shared;
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
 
-const DEFAULT_CHANNEL_SIZE: usize = 1000;
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-const DEFAULT_SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
-const DEFAULT_SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
-const DROP: &str = "U+005C__DROP__";
+/// Default socket address for map service
+const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
+
+/// Default server info file for map service
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+
+/// Default channel size for map service
+const CHANNEL_SIZE: usize = 1000;
 
 struct MapService<T> {
     handler: Arc<T>,
@@ -197,7 +201,7 @@ where
         let handler = Arc::clone(&self.handler);
 
         let (stream_response_tx, stream_response_rx) =
-            mpsc::channel::<Result<MapResponse, Status>>(DEFAULT_CHANNEL_SIZE);
+            mpsc::channel::<Result<MapResponse, Status>>(CHANNEL_SIZE);
 
         // perform handshake
         perform_handshake(&mut stream, &stream_response_tx).await?;
@@ -382,54 +386,59 @@ async fn perform_handshake(
 /// gRPC server to start a map service
 #[derive(Debug)]
 pub struct Server<T> {
-    sock_addr: PathBuf,
-    max_message_size: usize,
-    server_info_file: PathBuf,
+    config: ServerConfig,
     svc: Option<T>,
+    _cleanup: SocketCleanup,
 }
 
 impl<T> Server<T> {
     pub fn new(map_svc: T) -> Self {
-        Server {
-            sock_addr: DEFAULT_SOCK_ADDR.into(),
-            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            server_info_file: DEFAULT_SERVER_INFO_FILE.into(),
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
+
+        Self {
+            config,
             svc: Some(map_svc),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/map.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/map.sock`
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -441,8 +450,11 @@ impl<T> Server<T> {
         T: Mapper + Send + Sync + 'static,
     {
         let info = shared::ServerInfo::new(ContainerType::Map);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let listener = shared::create_listener_stream(
+            self.config.socket_file(),
+            self.config.server_info_file(),
+            info,
+        )?;
         let handler = self.svc.take().unwrap();
         let cln_token = CancellationToken::new();
 
@@ -455,8 +467,8 @@ impl<T> Server<T> {
         };
 
         let map_svc = proto::map_server::MapServer::new(map_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
@@ -478,15 +490,6 @@ impl<T> Server<T> {
     }
 }
 
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.sock_addr);
-        let _ = fs::remove_file(&self.server_info_file);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
@@ -499,8 +502,8 @@ mod tests {
     use tower::service_fn;
 
     use crate::map;
-    use crate::map::proto;
-    use crate::map::proto::map_client::MapClient;
+    use crate::proto::map as proto;
+    use crate::proto::map::map_client::MapClient;
 
     #[tokio::test]
     async fn map_server() -> Result<(), Box<dyn Error>> {

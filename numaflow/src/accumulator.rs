@@ -1,4 +1,4 @@
-pub use crate::servers::accumulator as proto;
+pub use crate::proto::accumulator as proto;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,12 +10,15 @@ use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::accumulator::proto::accumulator_request::window_operation::Event;
-use crate::error::Error;
-use crate::error::Error::AccumulatorError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::error::{Error, ErrorKind};
 use crate::shared;
+use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 const KEY_JOIN_DELIMITER: &str = ":";
+
+const SOCK_ADDR: &str = "/var/run/numaflow/accumulator.sock";
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/accumulator-server-info";
+const CHANNEL_SIZE: usize = 100;
 
 /// Accumulator is the interface which can be used to implement the accumulator operation.
 #[async_trait]
@@ -401,8 +404,8 @@ impl AccumulatorTask {
         accumulator: A,
         response_tx: mpsc::Sender<Result<proto::AccumulatorResponse, Error>>,
     ) -> Self {
-        let (input_tx, input_rx) = mpsc::channel::<AccumulatorRequest>(100);
-        let (output_tx, mut output_rx) = mpsc::channel::<Message>(100);
+        let (input_tx, input_rx) = mpsc::channel::<AccumulatorRequest>(CHANNEL_SIZE);
+        let (output_tx, mut output_rx) = mpsc::channel::<Message>(CHANNEL_SIZE);
         let (done_tx, done_rx) = oneshot::channel();
 
         // Clone response_tx before moving into closures
@@ -463,10 +466,9 @@ impl AccumulatorTask {
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
-                    .send(Err(AccumulatorError(UserDefinedError(format!(
-                        "Task error: {}",
-                        e
-                    )))))
+                    .send(Err(Error::AccumulatorError(ErrorKind::UserDefinedError(
+                        format!("Task error: {}", e),
+                    ))))
                     .await;
             }
 
@@ -483,10 +485,12 @@ impl AccumulatorTask {
 
     /// Send data to the task
     async fn send(&self, request: AccumulatorRequest) -> Result<(), Error> {
-        self.input_tx
-            .send(request)
-            .await
-            .map_err(|e| AccumulatorError(InternalError(format!("Failed to send to task: {}", e))))
+        self.input_tx.send(request).await.map_err(|e| {
+            Error::AccumulatorError(ErrorKind::InternalError(format!(
+                "Failed to send to task: {}",
+                e
+            )))
+        })
     }
 
     /// Close the task input (blocking)
@@ -527,7 +531,7 @@ where
 
     /// Start the task manager actor
     fn start(mut self) -> mpsc::Sender<TaskManagerCommand> {
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<TaskManagerCommand>(100);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<TaskManagerCommand>(CHANNEL_SIZE);
 
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -569,7 +573,7 @@ where
         payload: Option<proto::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(AccumulatorError(InternalError(
+            return Err(Error::AccumulatorError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
@@ -577,7 +581,7 @@ where
         let key = generate_key(&keyed_window);
 
         if self.tasks.contains_key(&key) {
-            return Err(AccumulatorError(InternalError(format!(
+            return Err(Error::AccumulatorError(ErrorKind::InternalError(format!(
                 "Task already exists for key: {}",
                 key
             ))));
@@ -606,7 +610,7 @@ where
         payload: Option<proto::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(AccumulatorError(InternalError(
+            return Err(Error::AccumulatorError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
@@ -671,11 +675,11 @@ where
 
         // Create response channel for gRPC client
         let (grpc_response_tx, grpc_response_rx) =
-            mpsc::channel::<Result<proto::AccumulatorResponse, Status>>(100);
+            mpsc::channel::<Result<proto::AccumulatorResponse, Status>>(CHANNEL_SIZE);
 
         // Internal response channel for task manager
         let (response_tx, mut response_rx) =
-            mpsc::channel::<Result<proto::AccumulatorResponse, Error>>(100);
+            mpsc::channel::<Result<proto::AccumulatorResponse, Error>>(CHANNEL_SIZE);
 
         // Start task manager
         let task_manager = AccumulatorTaskManager::new(creator, response_tx);
@@ -767,15 +771,16 @@ async fn handle_accumulator_request(
     request: proto::AccumulatorRequest,
     task_manager_tx: &mpsc::Sender<TaskManagerCommand>,
 ) -> Result<(), Error> {
-    let operation = request
-        .operation
-        .as_ref()
-        .ok_or_else(|| AccumulatorError(InternalError("Missing operation".to_string())))?;
+    let operation = request.operation.as_ref().ok_or_else(|| {
+        Error::AccumulatorError(ErrorKind::InternalError("Missing operation".to_string()))
+    })?;
 
     let keyed_window = operation
         .keyed_window
         .as_ref()
-        .ok_or_else(|| AccumulatorError(InternalError("Missing keyed window".to_string())))?
+        .ok_or_else(|| {
+            Error::AccumulatorError(ErrorKind::InternalError("Missing keyed window".to_string()))
+        })?
         .clone();
 
     match Event::try_from(operation.event) {
@@ -789,13 +794,13 @@ async fn handle_accumulator_request(
                 })
                 .await
                 .map_err(|e| {
-                    AccumulatorError(InternalError(format!(
+                    Error::AccumulatorError(ErrorKind::InternalError(format!(
                         "Failed to send create task command: {}",
                         e
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                AccumulatorError(InternalError(format!(
+                Error::AccumulatorError(ErrorKind::InternalError(format!(
                     "Failed to receive create task response: {}",
                     e
                 )))
@@ -811,13 +816,13 @@ async fn handle_accumulator_request(
                 })
                 .await
                 .map_err(|e| {
-                    AccumulatorError(InternalError(format!(
+                    Error::AccumulatorError(ErrorKind::InternalError(format!(
                         "Failed to send append task command: {}",
                         e
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                AccumulatorError(InternalError(format!(
+                Error::AccumulatorError(ErrorKind::InternalError(format!(
                     "Failed to receive append task response: {}",
                     e
                 )))
@@ -828,14 +833,14 @@ async fn handle_accumulator_request(
                 .send(TaskManagerCommand::CloseTask { keyed_window })
                 .await
                 .map_err(|e| {
-                    AccumulatorError(InternalError(format!(
+                    Error::AccumulatorError(ErrorKind::InternalError(format!(
                         "Failed to send close task command: {}",
                         e
                     )))
                 })?;
             Ok(())
         }
-        Err(_) => Err(AccumulatorError(InternalError(format!(
+        Err(_) => Err(Error::AccumulatorError(ErrorKind::InternalError(format!(
             "Unknown operation event: {}",
             operation.event
         )))),
@@ -904,57 +909,62 @@ impl From<(&Message, proto::KeyedWindow)> for proto::AccumulatorResponse {
 /// gRPC server for accumulator service
 #[derive(Debug)]
 pub struct Server<C> {
-    sock_addr: std::path::PathBuf,
-    max_message_size: usize,
-    server_info_file: std::path::PathBuf,
+    config: ServerConfig,
     creator: Option<C>,
+    _cleanup: SocketCleanup,
 }
 
 impl<C> Server<C> {
     /// Create a new Server with the given accumulator service
     pub fn new(creator: C) -> Self {
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
+
         Server {
-            sock_addr: "/var/run/numaflow/accumulator.sock".into(),
-            max_message_size: 64 * 1024 * 1024, // 64MB
-            server_info_file: "/var/run/numaflow/accumulator-server-info".into(),
+            config,
             creator: Some(creator),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/accumulator.sock`
     pub fn with_socket_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections.
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes.
     /// Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value.
     /// Default value is `/var/run/numaflow/accumulator-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored.
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -965,11 +975,12 @@ impl<C> Server<C> {
     where
         C: AccumulatorCreator + Send + Sync + 'static,
     {
-        use crate::shared::{self, ContainerType, ServerInfo};
-
-        let info = ServerInfo::new(ContainerType::Accumulator);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let info = crate::shared::ServerInfo::new(ContainerType::Accumulator);
+        let listener = shared::create_listener_stream(
+            self.config.socket_file(),
+            self.config.server_info_file(),
+            info,
+        )?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -981,8 +992,8 @@ impl<C> Server<C> {
         };
 
         let accumulator_svc = proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
-            .max_encoding_message_size(self.max_message_size)
-            .max_decoding_message_size(self.max_message_size);
+            .max_encoding_message_size(self.config.max_message_size())
+            .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown =
             shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
@@ -1003,14 +1014,6 @@ impl<C> Server<C> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
-    }
-}
-
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.sock_addr);
     }
 }
 

@@ -4,9 +4,12 @@ fn main() {
     if env::var("PROTO_CODE_GEN").unwrap_or("0".to_string()) != "1" {
         return;
     }
+    let generated_out_dir = "src/generated";
+    std::fs::create_dir_all(generated_out_dir)
+        .unwrap_or_else(|e| panic!("failed to create generated output directory: {:?}", e));
+
     tonic_build::configure()
-        .build_server(true)
-        .out_dir("src/servers")
+        .out_dir(generated_out_dir)
         .compile_protos(
             &[
                 "proto/source.proto",
@@ -21,5 +24,5 @@ fn main() {
             ],
             &["proto"],
         )
-        .unwrap_or_else(|e| panic!("failed to compile the proto, {:?}", e))
+        .unwrap_or_else(|e| panic!("failed to compile the proto, {:?}", e));
 }

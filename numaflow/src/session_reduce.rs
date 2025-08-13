@@ -1,4 +1,4 @@
-pub use crate::servers::sessionreduce as proto;
+pub use crate::proto::session_reduce as proto;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::panic;
@@ -11,13 +11,16 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::Error;
-use crate::error::Error::SessionReduceError;
-use crate::error::ErrorKind::{InternalError, UserDefinedError};
+use crate::error::{Error, ErrorKind};
 use crate::session_reduce::proto::session_reduce_request::window_operation::Event;
 use crate::shared;
+use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 const KEY_JOIN_DELIMITER: &str = ":";
+
+const SOCK_ADDR: &str = "/var/run/numaflow/sessionreduce.sock";
+const SERVER_INFO_FILE: &str = "/var/run/numaflow/sessionreducer-server-info";
+const CHANNEL_SIZE: usize = 100;
 
 /// SessionReducer is the trait which has to be implemented to do a session reduce operation.
 #[async_trait]
@@ -180,8 +183,8 @@ impl SessionReduceTask {
         session_reducer: R,
         response_tx: mpsc::Sender<Result<proto::SessionReduceResponse, Error>>,
     ) -> Self {
-        let (input_tx, input_rx) = mpsc::channel::<SessionReduceRequest>(100);
-        let (output_tx, mut output_rx) = mpsc::channel::<Message>(100);
+        let (input_tx, input_rx) = mpsc::channel::<SessionReduceRequest>(CHANNEL_SIZE);
+        let (output_tx, mut output_rx) = mpsc::channel::<Message>(CHANNEL_SIZE);
         let (done_tx, done_rx) = oneshot::channel();
 
         let keyed_window_arc = Arc::new(RwLock::new(keyed_window.clone()));
@@ -251,10 +254,9 @@ impl SessionReduceTask {
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
-                    .send(Err(SessionReduceError(UserDefinedError(format!(
-                        "Task error: {}",
-                        e
-                    )))))
+                    .send(Err(Error::SessionReduceError(ErrorKind::UserDefinedError(
+                        format!("Task error: {}", e),
+                    ))))
                     .await;
             }
 
@@ -275,7 +277,10 @@ impl SessionReduceTask {
     /// Send data to the task
     async fn send(&self, request: SessionReduceRequest) -> Result<(), Error> {
         self.input_tx.send(request).await.map_err(|e| {
-            SessionReduceError(InternalError(format!("Failed to send to task: {}", e)))
+            Error::SessionReduceError(ErrorKind::InternalError(format!(
+                "Failed to send to task: {}",
+                e
+            )))
         })
     }
 
@@ -341,7 +346,7 @@ where
 
     /// Start the task manager actor
     fn start(mut self) -> mpsc::Sender<TaskManagerCommand> {
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<TaskManagerCommand>(100);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<TaskManagerCommand>(CHANNEL_SIZE);
 
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -406,7 +411,7 @@ where
         payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError(
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
@@ -414,10 +419,9 @@ where
         let key = generate_key(&keyed_window);
 
         if self.tasks.contains_key(&key) {
-            return Err(SessionReduceError(InternalError(format!(
-                "Task already exists for key: {}",
-                key
-            ))));
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
+                format!("Task already exists for key: {}", key),
+            )));
         }
 
         // Create new session reducer
@@ -443,7 +447,7 @@ where
         payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError(
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
@@ -482,13 +486,13 @@ where
         payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError(
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
 
         if keyed_windows.is_empty() {
-            return Err(SessionReduceError(InternalError(
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
                 "Merge operation requires at least one window".to_string(),
             )));
         }
@@ -546,10 +550,9 @@ where
                 task.mark_merged();
                 tasks_to_merge.push(task);
             } else {
-                return Err(SessionReduceError(InternalError(format!(
-                    "Task not found for merge operation: {}",
-                    key
-                ))));
+                return Err(Error::SessionReduceError(ErrorKind::InternalError(
+                    format!("Task not found for merge operation: {}", key),
+                )));
             }
         }
 
@@ -588,7 +591,7 @@ where
         payload: Option<proto::session_reduce_request::Payload>,
     ) -> Result<(), Error> {
         if self.is_shutdown.load(Ordering::Relaxed) {
-            return Err(SessionReduceError(InternalError(
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
                 "Task manager is shutdown".to_string(),
             )));
         }
@@ -597,10 +600,9 @@ where
         let new_key = generate_key(&new_window);
 
         let Some(task) = self.tasks.remove(&old_key) else {
-            return Err(SessionReduceError(InternalError(format!(
-                "Task not found for expand operation: {}",
-                old_key
-            ))));
+            return Err(Error::SessionReduceError(ErrorKind::InternalError(
+                format!("Task not found for expand operation: {}", old_key,),
+            )));
         };
 
         // Update the task's keyed window
@@ -661,11 +663,11 @@ where
 
         // Create response channel for gRPC client
         let (grpc_response_tx, grpc_response_rx) =
-            mpsc::channel::<Result<proto::SessionReduceResponse, Status>>(100);
+            mpsc::channel::<Result<proto::SessionReduceResponse, Status>>(CHANNEL_SIZE);
 
         // Internal response channel for task manager
         let (response_tx, mut response_rx) =
-            mpsc::channel::<Result<proto::SessionReduceResponse, Error>>(100);
+            mpsc::channel::<Result<proto::SessionReduceResponse, Error>>(CHANNEL_SIZE);
 
         // Start task manager
         let task_manager = SessionReduceTaskManager::new(creator, response_tx, shutdown_tx.clone());
@@ -762,19 +764,20 @@ async fn handle_session_reduce_request(
     request: proto::SessionReduceRequest,
     task_manager_tx: &mpsc::Sender<TaskManagerCommand>,
 ) -> Result<(), Error> {
-    let operation = request
-        .operation
-        .as_ref()
-        .ok_or_else(|| SessionReduceError(InternalError("Missing operation".to_string())))?;
+    let operation = request.operation.as_ref().ok_or_else(|| {
+        Error::SessionReduceError(ErrorKind::InternalError("Missing operation".to_string()))
+    })?;
 
     match Event::try_from(operation.event) {
         Ok(Event::Open) => {
             // Validate operation has exactly one window
             if operation.keyed_windows.len() != 1 {
-                return Err(SessionReduceError(InternalError(format!(
-                    "Open operation requires exactly one window, got {}",
-                    operation.keyed_windows.len()
-                ))));
+                return Err(Error::SessionReduceError(ErrorKind::InternalError(
+                    format!(
+                        "Open operation requires exactly one window, got {}",
+                        operation.keyed_windows.len(),
+                    ),
+                )));
             }
 
             let (response_tx, response_rx) = oneshot::channel();
@@ -786,25 +789,27 @@ async fn handle_session_reduce_request(
                 })
                 .await
                 .map_err(|e| {
-                    SessionReduceError(InternalError(format!(
+                    Error::SessionReduceError(ErrorKind::InternalError(format!(
                         "Failed to send create task command: {}",
-                        e
+                        e,
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                SessionReduceError(InternalError(format!(
+                Error::SessionReduceError(ErrorKind::InternalError(format!(
                     "Failed to receive create task response: {}",
-                    e
+                    e,
                 )))
             })?
         }
         Ok(Event::Append) => {
             // Validate operation has exactly one window
             if operation.keyed_windows.len() != 1 {
-                return Err(SessionReduceError(InternalError(format!(
-                    "Append operation requires exactly one window, got {}",
-                    operation.keyed_windows.len()
-                ))));
+                return Err(Error::SessionReduceError(ErrorKind::InternalError(
+                    format!(
+                        "Append operation requires exactly one window, got {}",
+                        operation.keyed_windows.len(),
+                    ),
+                )));
             }
 
             let (response_tx, response_rx) = oneshot::channel();
@@ -816,15 +821,15 @@ async fn handle_session_reduce_request(
                 })
                 .await
                 .map_err(|e| {
-                    SessionReduceError(InternalError(format!(
+                    Error::SessionReduceError(ErrorKind::InternalError(format!(
                         "Failed to send append task command: {}",
-                        e
+                        e,
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                SessionReduceError(InternalError(format!(
+                Error::SessionReduceError(ErrorKind::InternalError(format!(
                     "Failed to receive append task response: {}",
-                    e
+                    e,
                 )))
             })?
         }
@@ -835,9 +840,9 @@ async fn handle_session_reduce_request(
                 })
                 .await
                 .map_err(|e| {
-                    SessionReduceError(InternalError(format!(
+                    Error::SessionReduceError(ErrorKind::InternalError(format!(
                         "Failed to send close task command: {}",
-                        e
+                        e,
                     )))
                 })?;
             Ok(())
@@ -845,7 +850,7 @@ async fn handle_session_reduce_request(
         Ok(Event::Merge) => {
             // Validate operation has at least one window
             if operation.keyed_windows.is_empty() {
-                return Err(SessionReduceError(InternalError(
+                return Err(Error::SessionReduceError(ErrorKind::InternalError(
                     "Merge operation requires at least one window".to_string(),
                 )));
             }
@@ -859,22 +864,22 @@ async fn handle_session_reduce_request(
                 })
                 .await
                 .map_err(|e| {
-                    SessionReduceError(InternalError(format!(
+                    Error::SessionReduceError(ErrorKind::InternalError(format!(
                         "Failed to send merge tasks command: {}",
-                        e
+                        e,
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                SessionReduceError(InternalError(format!(
+                Error::SessionReduceError(ErrorKind::InternalError(format!(
                     "Failed to receive merge tasks response: {}",
-                    e
+                    e,
                 )))
             })?
         }
         Ok(Event::Expand) => {
             // Validate operation has exactly two windows (old and new)
             if operation.keyed_windows.len() != 2 {
-                return Err(SessionReduceError(InternalError(
+                return Err(Error::SessionReduceError(ErrorKind::InternalError(
                     "Expand operation requires exactly two windows (old and new)".to_string(),
                 )));
             }
@@ -889,22 +894,21 @@ async fn handle_session_reduce_request(
                 })
                 .await
                 .map_err(|e| {
-                    SessionReduceError(InternalError(format!(
+                    Error::SessionReduceError(ErrorKind::InternalError(format!(
                         "Failed to send expand task command: {}",
-                        e
+                        e,
                     )))
                 })?;
             response_rx.await.map_err(|e| {
-                SessionReduceError(InternalError(format!(
+                Error::SessionReduceError(ErrorKind::InternalError(format!(
                     "Failed to receive expand task response: {}",
-                    e
+                    e,
                 )))
             })?
         }
-        Err(_) => Err(SessionReduceError(InternalError(format!(
-            "Unknown operation event: {}",
-            operation.event
-        )))),
+        Err(_) => Err(Error::SessionReduceError(ErrorKind::InternalError(
+            format!("Unknown operation event: {}", operation.event,),
+        ))),
     }
 }
 
@@ -942,57 +946,62 @@ impl From<proto::session_reduce_request::Payload> for SessionReduceRequest {
 /// gRPC server for session reduce service
 #[derive(Debug)]
 pub struct Server<C> {
-    sock_addr: std::path::PathBuf,
-    max_message_size: usize,
-    server_info_file: std::path::PathBuf,
+    config: ServerConfig,
     creator: Option<C>,
+    _cleanup: SocketCleanup,
 }
 
 impl<C> Server<C> {
     /// Create a new Server with the given session reduce service
     pub fn new(creator: C) -> Self {
+        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
+        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
+
         Server {
-            sock_addr: "/var/run/numaflow/sessionreduce.sock".into(),
-            max_message_size: 64 * 1024 * 1024, // 64MB
-            server_info_file: "/var/run/numaflow/sessionreducer-server-info".into(),
+            config,
             creator: Some(creator),
+            _cleanup: cleanup,
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/sessionreduce.sock`
     pub fn with_socket_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        self.sock_addr = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_socket_file(&file_path);
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections.
     pub fn socket_file(&self) -> &std::path::Path {
-        self.sock_addr.as_path()
+        self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes.
     /// Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.max_message_size = message_size;
+        self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.max_message_size
+        self.config.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value.
     /// Default value is `/var/run/numaflow/sessionreducer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        self.server_info_file = file.into();
+        let file_path = file.into();
+        self.config = self.config.with_server_info_file(&file_path);
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored.
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.server_info_file.as_path()
+        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -1003,11 +1012,12 @@ impl<C> Server<C> {
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
-        use crate::shared::{self, ContainerType, ServerInfo};
-
-        let info = ServerInfo::new(ContainerType::SessionReduce);
-        let listener =
-            shared::create_listener_stream(&self.sock_addr, &self.server_info_file, info)?;
+        let info = crate::shared::ServerInfo::new(ContainerType::SessionReduce);
+        let listener = shared::create_listener_stream(
+            self.config.socket_file(),
+            self.config.server_info_file(),
+            info,
+        )?;
         let creator = self.creator.take().unwrap();
         let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
         let cln_token = CancellationToken::new();
@@ -1020,8 +1030,8 @@ impl<C> Server<C> {
 
         let session_reduce_svc =
             proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
-                .max_encoding_message_size(self.max_message_size)
-                .max_decoding_message_size(self.max_message_size);
+                .max_encoding_message_size(self.config.max_message_size())
+                .max_decoding_message_size(self.config.max_message_size());
 
         let shutdown =
             shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
@@ -1042,14 +1052,6 @@ impl<C> Server<C> {
     {
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
         self.start_with_shutdown(shutdown_rx).await
-    }
-}
-
-impl<C> Drop for Server<C> {
-    // Cleanup the socket file when the server is dropped so that when the server is restarted, it can bind to the
-    // same address. UnixListener doesn't implement Drop trait, so we have to manually remove the socket file.
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.sock_addr);
     }
 }
 
@@ -1534,7 +1536,10 @@ mod tests {
 
         if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined Error"))
+            assert!(
+                e.message().contains("Session Reduce")
+                    && e.message().contains("User Defined error")
+            )
         }
 
         for _ in 0..10 {
