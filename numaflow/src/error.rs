@@ -36,4 +36,10 @@ pub enum Error {
 
     #[error("ServingStore Error: {0}")]
     ServingStoreError(ErrorKind),
+
+    #[error("Session Reduce Error - {0}")]
+    SessionReduceError(ErrorKind),
+
+    #[error("Accumulator Error - {0}")]
+    AccumulatorError(ErrorKind),
 }

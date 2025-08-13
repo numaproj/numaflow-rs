@@ -1,0 +1,25 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: simple-map-cat
+spec:
+  vertices:
+    - name: in
+      source:
+        # A self data generating source
+        http: { }
+    - name: cat
+      scale:
+        min: 1
+      udf:
+        container:
+          image: quay.io/numaio/numaflow-rs/map-even-odd:stable
+    - name: out
+      sink:
+        # A simple log printing sink
+        log: { }
+  edges:
+    - from: in
+      to: cat
+    - from: cat
+      to: out
