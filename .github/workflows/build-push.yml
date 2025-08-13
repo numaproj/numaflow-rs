@@ -19,7 +19,8 @@ jobs:
           "examples/map-cat", "examples/map-tickgen-serde", "examples/mapt-event-time-filter",
           "examples/reduce-counter", "examples/sideinput", "examples/sideinput/udf",
           "examples/simple-source", "examples/sink-log", "examples/source-transformer-now",
-          "examples/batchmap-flatmap", "examples/batchmap-cat",
+          "examples/batchmap-flatmap", "examples/batchmap-cat", "examples/map-even-odd",
+          "examples/session-counter", "examples/stream-sorter","examples/flatmap-stream",
         ]
 
     steps:
