@@ -22,7 +22,8 @@ const MAP_MODE_KEY: &str = "MAP_MODE";
 const UNARY_MAP: &str = "unary-map";
 const BATCH_MAP: &str = "batch-map";
 const STREAM_MAP: &str = "stream-map";
-
+/// Environment variable for the container type
+pub(crate) const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 pub const DROP: &str = "U+005C__DROP__";
 
 #[derive(Eq, PartialEq, Hash)]

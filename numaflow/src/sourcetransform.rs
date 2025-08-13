@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use proto::SourceTransformResponse;
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
+use std::env;
+use tonic_types::pb::DebugInfo;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +16,7 @@ use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
-use crate::shared;
+use crate::shared::{self, ENV_CONTAINER_TYPE};
 use shared::{
     prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, SocketCleanup, DROP,
 };
@@ -307,7 +310,7 @@ async fn manage_grpc_stream(
 
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Status::internal(err.to_string())))
+        .send(Err(err.into_status()))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -396,11 +399,20 @@ async fn run_transform<T>(
             error!("Failed to run transform function: {e:?}");
             // only one panic is sent to error_tx which is shown in the UI.
             // `rx` will be dropped after recving first err.
-            let _ = error_tx
-                .send(Error::SourceTransformerError(ErrorKind::UserDefinedError(
-                    "panic in transform UDF".to_string(),
-                )))
-                .await;
+            //TODO:: implement panic hook to get the actual stack trace.
+            let stack_trace = Backtrace::force_capture().to_string();
+            let status_msg = format!(
+                "UDF_EXECUTION_ERROR({}): {}",
+                env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
+                e
+            );
+            let debug_info = DebugInfo {
+                detail: stack_trace.clone(),
+                stack_entries: vec![],
+            };
+            let status =
+                Status::with_details(tonic::Code::Internal, status_msg, debug_info.detail.into());
+            let _ = error_tx.send(Error::GrpcStatus(status)).await;
             return;
         }
     };

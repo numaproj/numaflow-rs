@@ -38,6 +38,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 thiserror = "2.0.12"
 hyper-util = "0.1.10"
 chrono = "0.4.38"
+tonic-types = "0.14.1"
 
 [build-dependencies]
 tonic-build = "0.13.0"

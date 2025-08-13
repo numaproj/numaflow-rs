@@ -13,7 +13,7 @@ use tracing::{debug, info};
 use crate::error::{Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
-use crate::shared;
+use crate::shared::{self, ENV_CONTAINER_TYPE};
 use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for sink service
@@ -30,9 +30,6 @@ const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
-
-/// Environment variable for the container type
-const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
