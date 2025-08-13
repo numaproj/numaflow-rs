@@ -25,25 +25,14 @@ const STREAM_MAP: &str = "stream-map";
 
 pub const DROP: &str = "U+005C__DROP__";
 
-pub enum ServiceKind {
-    Map,
-    Reduce,
-    Sink,
-    Source,
-    BatchMap,
-    SourceTransformer,
-    SideInput,
-    ServingStore,
-    MapStream,
-    Numaflow,
-}
-
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
     Map,
     BatchMap,
     MapStream,
     Reduce,
+    SessionReduce,
+    Accumulator,
     Sink,
     Source,
     SourceTransformer,
@@ -75,6 +64,8 @@ pub(crate) static MINIMUM_NUMAFLOW_VERSION: LazyLock<HashMap<ContainerType, &'st
         m.insert(ContainerType::Map, "1.4.0-z");
         m.insert(ContainerType::BatchMap, "1.4.0-z");
         m.insert(ContainerType::Reduce, "1.4.0-z");
+        m.insert(ContainerType::SessionReduce, "1.4.0-z");
+        m.insert(ContainerType::Accumulator, "1.4.0-z");
         m.insert(ContainerType::Sink, "1.4.0-z");
         m.insert(ContainerType::SourceTransformer, "1.4.0-z");
         m.insert(ContainerType::SideInput, "1.4.0-z");

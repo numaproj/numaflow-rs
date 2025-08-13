@@ -10,10 +10,10 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::map::{self as proto, MapResponse};
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
 
 /// Default socket address for map service
 const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
@@ -268,10 +268,9 @@ async fn manage_grpc_stream(
         Some(err) => err,
         None => match request_handler.await {
             Ok(_) => return,
-            Err(e) => service_error(
-                ServiceKind::Map,
-                ErrorKind::InternalError(format!("Map request handler aborted: {e:?}")),
-            ),
+            Err(e) => Error::MapError(ErrorKind::InternalError(format!(
+                "Map request handler aborted: {e:?}"
+            ))),
         },
     };
 
@@ -329,10 +328,9 @@ async fn run_map<T>(
         Err(e) => {
             error!("Failed to run map function: {e:?}");
             error_tx
-                .send(service_error(
-                    ServiceKind::Map,
-                    ErrorKind::UserDefinedError(format!("panicked: {e:?}")),
-                ))
+                .send(Error::MapError(ErrorKind::UserDefinedError(format!(
+                    "panicked: {e:?}"
+                ))))
                 .await
                 .expect("Sending error on channel");
             return;
@@ -353,10 +351,9 @@ async fn run_map<T>(
     };
 
     let _ = error_tx
-        .send(service_error(
-            ServiceKind::Map,
-            ErrorKind::InternalError(format!("Failed to send response: {e:?}")),
-        ))
+        .send(Error::MapError(ErrorKind::InternalError(format!(
+            "Failed to send response: {e:?}"
+        ))))
         .await;
 }
 

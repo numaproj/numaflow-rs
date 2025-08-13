@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use crate::shared::ServiceKind;
-
 /// The main Result type used throughout the Numaflow SDK
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -42,25 +40,15 @@ pub enum Error {
     #[error("ServingStore - {0}")]
     ServingStoreError(ErrorKind),
 
+    #[error("Session Reduce Error - {0}")]
+    SessionReduceError(ErrorKind),
+
+    #[error("Accumulator Error - {0}")]
+    AccumulatorError(ErrorKind),
+
     #[error("MapStream - {0}")]
     MapStreamError(ErrorKind),
 
     #[error("Numaflow - {0}")]
     DefaultError(ErrorKind),
-}
-
-/// Wraps the error kind from service in the appropriate error enum
-pub fn service_error(kind: ServiceKind, ek: ErrorKind) -> Error {
-    match kind {
-        ServiceKind::Map => Error::MapError(ek),
-        ServiceKind::Reduce => Error::ReduceError(ek),
-        ServiceKind::Sink => Error::SinkError(ek),
-        ServiceKind::Source => Error::SourceError(ek),
-        ServiceKind::BatchMap => Error::BatchMapError(ek),
-        ServiceKind::SourceTransformer => Error::SourceTransformerError(ek),
-        ServiceKind::SideInput => Error::SideInputError(ek),
-        ServiceKind::ServingStore => Error::ServingStoreError(ek),
-        ServiceKind::MapStream => Error::MapStreamError(ek),
-        ServiceKind::Numaflow => Error::DefaultError(ek),
-    }
 }

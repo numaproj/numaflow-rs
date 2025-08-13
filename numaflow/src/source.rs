@@ -12,11 +12,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
-use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceKind, SocketCleanup};
+use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for source service
 const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -111,9 +111,7 @@ where
                     handshake: None,
                 }))
                 .await
-                .map_err(|e| {
-                    service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
-                })?;
+                .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
         }
 
         // send end of transmission on success
@@ -129,9 +127,7 @@ where
                 handshake: None,
             }))
             .await
-            .map_err(|e| {
-                service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
-            })?;
+            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
 
         Ok(())
     }
@@ -164,9 +160,9 @@ where
             .await;
 
         // wait for the spawned grpc writer to end
-        let _ = grpc_writer_handle.await.map_err(|e| {
-            service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
-        })?;
+        let _ = grpc_writer_handle
+            .await
+            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
 
         Ok(())
     }
@@ -207,10 +203,10 @@ where
                     // will be sent over to the client.
                     read_request = req_stream.message() => {
                         let read_request = read_request
-                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?
-                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
-                        let request = read_request.request.ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
+                        let request = read_request.request.ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         // start the ud-source rx asynchronously and start populating the gRPC
                         // response, so it can be streamed to the gRPC client (numaflow).
@@ -237,9 +233,7 @@ where
                 error!("shutting down the gRPC channel, {}", e);
                 tx.send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| {
-                        service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
-                    })
+                    .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
                 // if there are any failures, we propagate those failures so that the server can shut down.
@@ -278,11 +272,11 @@ where
                     }
                     ack_request = ack_stream.message() => {
                         let ack_request = ack_request
-                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?
-                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Stream closed".to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Stream closed".to_string())))?;
 
                         let request = ack_request.request
-                            .ok_or_else(|| service_error(ServiceKind::Source, ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
+                            .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
                         let offsets = request.offsets
                             .iter()
@@ -304,7 +298,7 @@ where
                                 handshake: None,
                             }))
                             .await
-                            .map_err(|e| service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string())))?;
+                            .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))?;
                     }
                 }
             }
@@ -318,9 +312,7 @@ where
                 ack_tx
                     .send(Err(Status::internal(e.to_string())))
                     .await
-                    .map_err(|e| {
-                        service_error(ServiceKind::Source, ErrorKind::InternalError(e.to_string()))
-                    })
+                    .map_err(|e| Error::SourceError(ErrorKind::InternalError(e.to_string())))
                     .expect("writing error to grpc response channel should never fail");
 
                 shutdown_tx

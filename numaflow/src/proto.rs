@@ -37,3 +37,13 @@ pub mod source_transformer;
 #[path = "generated/serving.v1.rs"]
 #[rustfmt::skip]
 pub mod serving_store;
+
+/// Session reduce service protobuf definitions
+#[path = "generated/sessionreduce.v1.rs"]
+#[rustfmt::skip]
+pub mod session_reduce;
+
+/// Accumulator service protobuf definitions
+#[path = "generated/accumulator.v1.rs"]
+#[rustfmt::skip]
+pub mod accumulator;

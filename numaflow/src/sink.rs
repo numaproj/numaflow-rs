@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 use tracing::{debug, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
+use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for sink service
 const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -320,13 +320,10 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    return Err(service_error(
-                        ServiceKind::Sink,
-                        ErrorKind::InternalError(format!(
-                            "Error reading message from stream: {}",
-                            e
-                        )),
-                    ))
+                    return Err(Error::SinkError(ErrorKind::InternalError(format!(
+                        "Error reading message from stream: {}",
+                        e
+                    ))))
                 }
             };
 
@@ -338,21 +335,17 @@ where
 
             // message.request cannot be none
             let request = message.request.ok_or_else(|| {
-                service_error(
-                    ServiceKind::Sink,
-                    ErrorKind::InternalError("Invalid argument, request can't be None".to_string()),
-                )
+                Error::SinkError(ErrorKind::InternalError(
+                    "Invalid argument, request can't be None".to_string(),
+                ))
             })?;
 
             // write to the UDF's tx
             tx.send(request.into()).await.map_err(|e| {
-                service_error(
-                    ServiceKind::Sink,
-                    ErrorKind::InternalError(format!(
-                        "Error sending message to sink handler: {}",
-                        e
-                    )),
-                )
+                Error::SinkError(ErrorKind::InternalError(format!(
+                    "Error sending message to sink handler: {}",
+                    e
+                )))
             })?;
         }
 
@@ -360,12 +353,9 @@ where
         drop(tx);
 
         // wait for UDF task to return
-        sinker_handle.await.map_err(|e| {
-            service_error(
-                ServiceKind::Sink,
-                ErrorKind::UserDefinedError(e.to_string()),
-            )
-        })?;
+        sinker_handle
+            .await
+            .map_err(|e| Error::SinkError(ErrorKind::UserDefinedError(e.to_string())))?;
 
         Ok(global_stream_ended)
     }

@@ -7,10 +7,10 @@ use tonic::{async_trait, Request, Response, Status};
 
 use crate::shared;
 use crate::{
-    error::{service_error, ErrorKind},
+    error::{Error, ErrorKind},
     proto::side_input as proto,
 };
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup};
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for sideinput service
 const SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
@@ -116,12 +116,12 @@ where
                     }
                     Err(e) => {
                         shutdown_tx.send(()).await.expect("Failed to send shutdown signal");
-                        Err(Status::internal(service_error(ServiceKind::SideInput, ErrorKind::UserDefinedError(e.to_string())).to_string()))
+                        Err(Status::internal(Error::SideInputError(ErrorKind::UserDefinedError(e.to_string())).to_string()))
                     }
                 }
             }
             _ = self.cancellation_token.cancelled() => {
-                Err(Status::cancelled(service_error(ServiceKind::SideInput, ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
+                Err(Status::cancelled(Error::SideInputError(ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
             },
         }
     }

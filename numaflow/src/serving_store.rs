@@ -5,12 +5,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status};
 
-use crate::error::{service_error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::serving_store::{
     self as serving_pb, GetRequest, GetResponse, PutRequest, PutResponse,
 };
 use crate::shared;
-use shared::{ContainerType, ServerConfig, ServiceKind, SocketCleanup};
+use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for serving store service
 const SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
@@ -115,13 +115,13 @@ where
                             .send(())
                             .await
                             .expect("Sending shutdown signal to gRPC server");
-                        Err(Status::internal(service_error(ServiceKind::ServingStore, ErrorKind::UserDefinedError(e.to_string())).to_string()))
+                        Err(Status::internal(Error::ServingStoreError(ErrorKind::UserDefinedError(e.to_string())).to_string()))
                     }
                 }
             },
 
             _ = cancellation_token.cancelled() => {
-                Err(Status::internal(service_error(ServiceKind::ServingStore, ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
+                Err(Status::internal(Error::ServingStoreError(ErrorKind::InternalError("Server is shutting down".to_string())).to_string()))
             },
         }
     }
@@ -290,7 +290,7 @@ mod tests {
 
     use crate::proto::serving_store as serving_pb;
     use crate::proto::serving_store::serving_store_client::ServingStoreClient;
-    use crate::serving::{self as serving_store, Payload};
+    use crate::serving_store::{self as serving_store, Payload};
 
     struct TestStore {
         store: Arc<Mutex<HashMap<String, Vec<Payload>>>>,

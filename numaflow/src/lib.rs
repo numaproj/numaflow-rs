@@ -12,6 +12,7 @@
 //! [User Defined Sources]: https://numaflow.numaproj.io/user-guide/sources/user-defined-sources/
 //! [User Defined Source Transformer]: https://numaflow.numaproj.io/user-guide/sources/transformer/
 //! [User Defined Sinks]: https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/
+//! [Session reduce]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/session/
 
 /// Shared utilities, traits, and common functionality
 pub mod shared;
@@ -19,7 +20,7 @@ pub mod shared;
 /// Generated protobuf modules
 pub mod proto;
 
-/// Source functionality for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
+/// source is for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
 pub mod source;
 
 /// Source transform functionality for writing [source data transformers](https://numaflow.numaproj.io/user-guide/sources/transformer/overview/).
@@ -27,12 +28,6 @@ pub mod sourcetransform;
 
 /// Map functionality for writing the [map](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/) handlers.
 pub mod map;
-
-/// Batch map functionality for writing the map in [batch mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#batch-map-mode) handlers.
-pub mod batchmap;
-
-/// Map stream functionality for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
-pub mod mapstream;
 
 /// Reduce functionality for writing the [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
 pub mod reduce;
@@ -43,9 +38,19 @@ pub mod sink;
 /// Side input functionality for building [side input](https://numaflow.numaproj.io/user-guide/reference/side-inputs/) handlers.
 pub mod sideinput;
 
-/// Serving functionality for serving stores and related operations.
-#[path = "serving_store.rs"]
-pub mod serving;
+/// batchmap is for writing the map in [batch mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#batch-map-mode) handlers.
+pub mod batchmap;
+
+/// mapstream is for writing the map in [stream mode](https://numaflow.numaproj.io/user-guide/user-defined-functions/map/map/#streaming-mode) handlers.
+pub mod mapstream;
+
+pub mod serving_store;
+
+/// session_reduce is for implementing [session reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/session) handlers.
+pub mod session_reduce;
+
+/// accumulator is for implementing [accumulator](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/accumulator) handlers.
+pub mod accumulator;
 
 // Error handling on Numaflow SDKs!
 //

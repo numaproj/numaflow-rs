@@ -11,11 +11,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
 
 /// Default socket address for mapstream service
 const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
@@ -324,10 +324,9 @@ async fn run_map_stream<T>(
         async move {
             if let Err(e) = map_stream_task.await {
                 let _ = error_tx
-                    .send(service_error(
-                        ServiceKind::MapStream,
-                        ErrorKind::UserDefinedError(format!("panicked: {e:?}")),
-                    ))
+                    .send(Error::MapStreamError(ErrorKind::UserDefinedError(format!(
+                        "panicked: {e:?}"
+                    ))))
                     .await;
                 return Err(e);
             }
@@ -348,10 +347,9 @@ async fn run_map_stream<T>(
 
         if let Err(e) = send_response_result {
             let _ = error_tx
-                .send(service_error(
-                    ServiceKind::MapStream,
-                    ErrorKind::InternalError(format!("Failed to send response: {e:?}")),
-                ))
+                .send(Error::MapStreamError(ErrorKind::InternalError(format!(
+                    "Failed to send response: {e:?}"
+                ))))
                 .await;
             return;
         }
@@ -387,10 +385,9 @@ async fn manage_grpc_stream(
         Some(err) => err,
         None => match request_handler.await {
             Ok(_) => return,
-            Err(e) => service_error(
-                ServiceKind::MapStream,
-                ErrorKind::InternalError(format!("MapStream request handler aborted: {e:?}")),
-            ),
+            Err(e) => Error::MapStreamError(ErrorKind::InternalError(format!(
+                "MapStream request handler aborted: {e:?}"
+            ))),
         },
     };
 

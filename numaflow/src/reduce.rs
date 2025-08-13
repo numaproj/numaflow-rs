@@ -10,12 +10,10 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 pub use crate::proto::reduce as proto;
 use crate::shared;
-use shared::{
-    prost_timestamp_from_utc, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP,
-};
+use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, SocketCleanup, DROP};
 
 /// Default socket address for reduce service
 const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
@@ -320,13 +318,10 @@ where
                     }
                     Some(Err(e)) => {
                         response_tx
-                            .send(Err(service_error(
-                                ServiceKind::Reduce,
-                                ErrorKind::InternalError(format!(
-                                    "Failed to receive request: {}",
-                                    e
-                                )),
-                            )))
+                            .send(Err(Error::ReduceError(ErrorKind::InternalError(format!(
+                                "Failed to receive request: {}",
+                                e
+                            )))))
                             .await
                             .expect("error_tx send failed");
                         break;
@@ -449,13 +444,10 @@ impl Task {
 
                 if let Err(e) = send_result {
                     let _ = udf_response_tx
-                        .send(Err(service_error(
-                            ServiceKind::Reduce,
-                            ErrorKind::InternalError(format!(
-                                "Failed to send response back: {}",
-                                e
-                            )),
-                        )))
+                        .send(Err(Error::ReduceError(ErrorKind::InternalError(format!(
+                            "Failed to send response back: {}",
+                            e
+                        )))))
                         .await;
                     return;
                 }
@@ -468,10 +460,9 @@ impl Task {
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
                 let _ = handler_tx
-                    .send(Err(service_error(
-                        ServiceKind::Reduce,
-                        ErrorKind::UserDefinedError(format!(" {}", e)),
-                    )))
+                    .send(Err(Error::ReduceError(ErrorKind::UserDefinedError(
+                        format!(" {}", e),
+                    ))))
                     .await;
             }
 
@@ -493,10 +484,10 @@ impl Task {
     async fn send(&self, rr: ReduceRequest) {
         if let Err(e) = self.udf_tx.send(rr).await {
             self.response_tx
-                .send(Err(service_error(
-                    ServiceKind::Reduce,
-                    ErrorKind::InternalError(format!("Failed to send message to task: {}", e)),
-                )))
+                .send(Err(Error::ReduceError(ErrorKind::InternalError(format!(
+                    "Failed to send message to task: {}",
+                    e
+                )))))
                 .await
                 .expect("failed to send message to error channel");
         }
@@ -564,7 +555,7 @@ where
                                     Some(payload) => payload.keys.clone(),
                                     None => {
                                         task_set
-                                            .handle_error(service_error(ServiceKind::Reduce, ErrorKind::InternalError(
+                                            .handle_error(Error::ReduceError(ErrorKind::InternalError(
                                                 "Invalid ReduceRequest".to_string(),
                                             )))
                                             .await;
@@ -624,10 +615,9 @@ where
         if let Some(task) = self.tasks.get(&keys.join(KEY_JOIN_DELIMITER)) {
             task.send(reduce_request).await;
         } else {
-            self.handle_error(service_error(
-                ServiceKind::Reduce,
-                ErrorKind::InternalError("Task not found".to_string()),
-            ))
+            self.handle_error(Error::ReduceError(ErrorKind::InternalError(
+                "Task not found".to_string(),
+            )))
             .await;
         }
     }
@@ -647,10 +637,9 @@ where
         if let Some(task) = self.tasks.get(&task_name) {
             task.send(reduce_request).await;
         } else {
-            self.handle_error(service_error(
-                ServiceKind::Reduce,
-                ErrorKind::InternalError("Task not found".to_string()),
-            ))
+            self.handle_error(Error::ReduceError(ErrorKind::InternalError(
+                "Task not found".to_string(),
+            )))
             .await;
         }
     }
@@ -665,10 +654,9 @@ where
         let (payload, windows) = match (rr.payload, rr.operation) {
             (Some(payload), Some(operation)) => (payload, operation.windows),
             _ => {
-                self.handle_error(service_error(
-                    ServiceKind::Reduce,
-                    ErrorKind::InternalError("Invalid ReduceRequest".to_string()),
-                ))
+                self.handle_error(Error::ReduceError(ErrorKind::InternalError(
+                    "Invalid ReduceRequest".to_string(),
+                )))
                 .await;
                 return None;
             }
@@ -676,10 +664,9 @@ where
 
         // Check if there is exactly one window in the ReduceRequest
         if windows.len() != 1 {
-            self.handle_error(service_error(
-                ServiceKind::Reduce,
-                ErrorKind::InternalError("Exactly one window is required".to_string()),
-            ))
+            self.handle_error(Error::ReduceError(ErrorKind::InternalError(
+                "Exactly one window is required".to_string(),
+            )))
             .await;
             return None;
         }
@@ -727,10 +714,10 @@ where
             .await;
 
         if let Err(e) = send_eof {
-            self.handle_error(service_error(
-                ServiceKind::Reduce,
-                ErrorKind::InternalError(format!("Failed to send EOF message: {}", e)),
-            ))
+            self.handle_error(Error::ReduceError(ErrorKind::InternalError(format!(
+                "Failed to send EOF message: {}",
+                e
+            ))))
             .await;
         }
     }

@@ -11,12 +11,12 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, ServiceKind, SocketCleanup, DROP};
+use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
 
 /// Default socket address for batchmap service
 const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -348,13 +348,10 @@ where
                     break;
                 }
                 Err(e) => {
-                    return Err(service_error(
-                        ServiceKind::BatchMap,
-                        ErrorKind::InternalError(format!(
-                            "Error reading message from stream: {}",
-                            e
-                        )),
-                    ))
+                    return Err(Error::BatchMapError(ErrorKind::InternalError(format!(
+                        "Error reading message from stream: {}",
+                        e
+                    ))))
                 }
             };
 
@@ -365,21 +362,17 @@ where
             }
 
             // write to the UDF's tx
-            tx.send(message.try_into().map_err(|e| {
-                service_error(
-                    ServiceKind::BatchMap,
-                    ErrorKind::InternalError(format!("{:?}", e)),
-                )
-            })?)
+            tx.send(
+                message.try_into().map_err(|e| {
+                    Error::BatchMapError(ErrorKind::InternalError(format!("{:?}", e)))
+                })?,
+            )
             .await
             .map_err(|e| {
-                service_error(
-                    ServiceKind::BatchMap,
-                    ErrorKind::InternalError(format!(
-                        "Error sending message to map handler: {}",
-                        e
-                    )),
-                )
+                Error::BatchMapError(ErrorKind::InternalError(format!(
+                    "Error sending message to map handler: {}",
+                    e
+                )))
             })?;
         }
 
@@ -387,12 +380,9 @@ where
         drop(tx);
 
         // wait for UDF task to return
-        batch_mapper_handle.await.map_err(|e| {
-            service_error(
-                ServiceKind::BatchMap,
-                ErrorKind::UserDefinedError(e.to_string()),
-            )
-        })?;
+        batch_mapper_handle
+            .await
+            .map_err(|e| Error::BatchMapError(ErrorKind::UserDefinedError(e.to_string())))?;
 
         Ok(global_stream_ended)
     }

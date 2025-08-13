@@ -1,0 +1,43 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: stream-sorter
+spec:
+  vertices:
+    - name: in
+      source:
+        # A self data generating source with some randomness
+        generator:
+          rpu: 50
+          duration: 1s
+          keyCount: 3
+          value: 10
+          jitter: 0.1
+    - name: sorter
+      containerTemplate:
+        env:
+          - name: NUMAFLOW_DEBUG
+            value: "true"
+      udf:
+        container:
+          # Stream sorter accumulator that sorts events by event-time
+          image: quay.io/numaio/numaflow-rs/stream-sorter:stable
+        groupBy:
+          window:
+            # Use a session window to allow for accumulation
+            session:
+              timeout: 30s
+          keyed: true
+          storage:
+            persistentVolumeClaim:
+              volumeSize: 10Gi
+              accessMode: ReadWriteOnce
+    - name: out
+      sink:
+        # A simple log printing sink
+        log: {}
+  edges:
+    - from: in
+      to: sorter
+    - from: sorter
+      to: out

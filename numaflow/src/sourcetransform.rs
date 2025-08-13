@@ -11,12 +11,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::error::{service_error, Error, ErrorKind};
+use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
 use crate::shared;
 use shared::{
-    prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, ServiceKind,
-    SocketCleanup, DROP,
+    prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, SocketCleanup, DROP,
 };
 
 /// Default socket address for source transformer service
@@ -300,12 +299,9 @@ async fn manage_grpc_stream(
         Some(err) => err,
         None => match request_handler.await {
             Ok(_) => return,
-            Err(e) => service_error(
-                ServiceKind::SourceTransformer,
-                ErrorKind::InternalError(format!(
-                    "Source transformer request handler aborted: {e:?}"
-                )),
-            ),
+            Err(e) => Error::SourceTransformerError(ErrorKind::InternalError(format!(
+                "Source transformer request handler aborted: {e:?}"
+            ))),
         },
     };
 
@@ -401,10 +397,9 @@ async fn run_transform<T>(
             // only one panic is sent to error_tx which is shown in the UI.
             // `rx` will be dropped after recving first err.
             let _ = error_tx
-                .send(service_error(
-                    ServiceKind::SourceTransformer,
-                    ErrorKind::UserDefinedError("panic in transform UDF".to_string()),
-                ))
+                .send(Error::SourceTransformerError(ErrorKind::UserDefinedError(
+                    "panic in transform UDF".to_string(),
+                )))
                 .await;
             return;
         }
@@ -423,12 +418,9 @@ async fn run_transform<T>(
     };
 
     let _ = error_tx
-        .send(service_error(
-            ServiceKind::SourceTransformer,
-            ErrorKind::InternalError(format!(
-                "sending source transform response over gRPC stream: {e:?}"
-            )),
-        ))
+        .send(Error::SourceTransformerError(ErrorKind::InternalError(
+            format!("sending source transform response over gRPC stream: {e:?}"),
+        )))
         .await;
 }
 
