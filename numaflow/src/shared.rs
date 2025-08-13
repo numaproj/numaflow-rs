@@ -6,9 +6,11 @@
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
+use std::backtrace::Backtrace;
 use std::fs;
+use std::panic;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::{collections::HashMap, io};
 use tokio::net::UnixListener;
 use tokio::signal;
@@ -25,6 +27,17 @@ const STREAM_MAP: &str = "stream-map";
 /// Environment variable for the container type
 pub(crate) const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 pub const DROP: &str = "U+005C__DROP__";
+
+/// Thread-safe storage for panic information
+static PANIC_INFO: Mutex<Option<PanicInfo>> = Mutex::new(None);
+
+/// Panic information captured by the panic hook
+#[derive(Clone, Debug)]
+pub(crate) struct PanicInfo {
+    pub(crate) message: String,
+    pub(crate) location: Option<String>,
+    pub(crate) backtrace: String,
+}
 
 #[derive(Eq, PartialEq, Hash)]
 pub(crate) enum ContainerType {
@@ -356,7 +369,6 @@ mod tests {
 
         Ok(())
     }
-
     #[tokio::test]
     async fn test_shutdown_signal() {
         // Create a channel to send shutdown signal
@@ -381,5 +393,133 @@ mod tests {
 
         // If we reach this point, it means that the shutdown_signal function has correctly handled the shutdown signal
         assert!(result.is_ok());
+    }
+}
+
+/// Initialize panic hook to capture detailed panic information
+/// This should be called once when the server starts
+pub(crate) fn init_panic_hook() {
+    // Set environment variable to enable backtrace capture
+    std::env::set_var("RUST_BACKTRACE", "full");
+
+    panic::set_hook(Box::new(|panic_info| {
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
+
+        // Capture backtrace immediately when panic occurs
+        let backtrace = Backtrace::force_capture();
+
+        let info = PanicInfo {
+            message,
+            location,
+            backtrace: backtrace.to_string(),
+        };
+
+        // Store panic info for later retrieval (only if none exists yet)
+        // We want to store the panic info only if it is the first panic
+        if let Ok(mut panic_storage) = PANIC_INFO.lock() {
+            if panic_storage.is_none() {
+                *panic_storage = Some(info.clone());
+            }
+        }
+    }));
+}
+
+/// Retrieve stored panic information without clearing it
+/// Returns the first panic that occurred, if any
+pub(crate) fn get_panic_info() -> Option<PanicInfo> {
+    PANIC_INFO
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().cloned())
+}
+
+/// Create a formatted panic message including location information
+pub(crate) fn format_panic_message(panic_info: &PanicInfo) -> String {
+    match &panic_info.location {
+        Some(location) => format!("{} at {}", panic_info.message, location),
+        None => panic_info.message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+    use std::sync::Once;
+
+    // Initialize panic hook only once for all tests
+    static INIT_PANIC_HOOK: Once = Once::new();
+
+    // Test helper to ensure panic hook is initialized once
+    fn ensure_panic_hook_initialized() {
+        INIT_PANIC_HOOK.call_once(|| {
+            init_panic_hook();
+        });
+    }
+
+    // Test helper to clear panic info between tests
+    fn clear_panic_info_for_test() {
+        if let Ok(mut guard) = PANIC_INFO.lock() {
+            *guard = None;
+        }
+    }
+
+    #[test]
+    fn test_panic_hook_functionality() {
+        // Ensure panic hook is initialized (only once across all tests)
+        ensure_panic_hook_initialized();
+
+        // Clear any existing panic info first
+        clear_panic_info_for_test();
+
+        // Verify no panic info exists initially
+        assert!(
+            get_panic_info().is_none(),
+            "Panic info should be cleared initially"
+        );
+
+        // Test panic hook captures panic information
+        let result = std::panic::catch_unwind(|| {
+            panic!("Test panic message");
+        });
+
+        assert!(result.is_err(), "catch_unwind should capture the panic");
+
+        // Give a small moment for the panic hook to execute
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Verify panic info was captured
+        let panic_info = get_panic_info();
+        assert!(
+            panic_info.is_some(),
+            "Panic info should be captured by the hook"
+        );
+
+        let info = panic_info.unwrap();
+        assert_eq!(info.message, "Test panic message");
+        assert!(info.location.is_some(), "Panic location should be captured");
+        assert!(!info.backtrace.is_empty(), "Backtrace should not be empty");
+
+        // Verify format_panic_message works correctly
+        let formatted = format_panic_message(&info);
+        assert!(formatted.contains("Test panic message"));
+        assert!(formatted.contains("shared.rs"));
+
+        // Verify panic info persists (second call returns same info - "first panic wins")
+        let second_call = get_panic_info();
+        assert!(second_call.is_some(), "Panic info should persist");
+        assert_eq!(second_call.unwrap().message, "Test panic message");
+
+        // Clean up for next test
+        clear_panic_info_for_test();
     }
 }

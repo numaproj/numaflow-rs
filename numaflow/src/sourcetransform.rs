@@ -1,12 +1,11 @@
 use chrono::{DateTime, Utc};
 use proto::SourceTransformResponse;
-use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::env;
-use tonic_types::pb::DebugInfo;
+use std::sync::Arc;
+use tonic_types::{ErrorDetails, StatusExt};
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -16,9 +15,11 @@ use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
-use crate::shared::{self, ENV_CONTAINER_TYPE};
+use crate::shared;
+use shared::ENV_CONTAINER_TYPE;
 use shared::{
-    prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, SocketCleanup, DROP,
+    format_panic_message, get_panic_info, init_panic_hook, prost_timestamp_from_utc,
+    utc_from_timestamp, ContainerType, ServerConfig, SocketCleanup, DROP,
 };
 
 /// Default socket address for source transformer service
@@ -397,22 +398,28 @@ async fn run_transform<T>(
         Ok(messages) => messages,
         Err(e) => {
             error!("Failed to run transform function: {e:?}");
-            // only one panic is sent to error_tx which is shown in the UI.
-            // `rx` will be dropped after recving first err.
-            //TODO:: implement panic hook to get the actual stack trace.
-            let stack_trace = Backtrace::force_capture().to_string();
-            let status_msg = format!(
-                "UDF_EXECUTION_ERROR({}): {}",
-                env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
-                e
-            );
-            let debug_info = DebugInfo {
-                detail: stack_trace.clone(),
-                stack_entries: vec![],
-            };
-            let status =
-                Status::with_details(tonic::Code::Internal, status_msg, debug_info.detail.into());
-            let _ = error_tx.send(Error::GrpcStatus(status)).await;
+
+            // Check if this is a panic or a regular error
+            if let Some(panic_info) = get_panic_info() {
+                // This is a panic - send detailed panic information
+                let panic_message = format_panic_message(&panic_info);
+                let status_msg = format!(
+                    "UDF_EXECUTION_ERROR({}): {}",
+                    env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
+                    panic_message
+                );
+
+                let details = ErrorDetails::with_debug_info(vec![], panic_info.backtrace);
+                let status = Status::with_error_details(tonic::Code::Internal, status_msg, details);
+                let _ = error_tx.send(Error::GrpcStatus(status)).await;
+            } else {
+                // This is a non-panic error
+                let _ = error_tx
+                    .send(Error::SourceTransformerError(ErrorKind::InternalError(
+                        format!("Transform task execution failed: {e:?}"),
+                    )))
+                    .await;
+            }
             return;
         }
     };
@@ -502,6 +509,8 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture detailed panic information
+        init_panic_hook();
         let info = shared::ServerInfo::new(ContainerType::SourceTransformer);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
