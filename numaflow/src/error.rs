@@ -40,11 +40,11 @@ pub enum Error {
     #[error("ServingStore - {0}")]
     ServingStoreError(ErrorKind),
 
-#[error("Session Reduce - {0}")]
-SessionReduceError(ErrorKind),
+    #[error("Session Reduce - {0}")]
+    SessionReduceError(ErrorKind),
 
-#[error("Accumulator - {0}")]
-AccumulatorError(ErrorKind),
+    #[error("Accumulator - {0}")]
+    AccumulatorError(ErrorKind),
 
     #[error("MapStream - {0}")]
     MapStreamError(ErrorKind),

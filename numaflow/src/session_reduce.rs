@@ -1537,7 +1537,7 @@ mod tests {
         if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
             assert!(
-                e.message().contains("Session Reduce Error")
+                e.message().contains("Session Reduce")
                     && e.message().contains("User Defined error")
             )
         }
