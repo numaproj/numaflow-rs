@@ -34,8 +34,7 @@ pub mod side_input_client {
     /// it during each message processing.
     /// Through this service we should should be able to:-
     ///
-    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should
-    ///   check for updates and return its latest value.
+    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
     /// 1. Provide a health check endpoint to indicate whether the service is ready to be used.
     #[derive(Debug, Clone)]
     pub struct SideInputClient<T> {
@@ -199,8 +198,7 @@ pub mod side_input_server {
     /// it during each message processing.
     /// Through this service we should should be able to:-
     ///
-    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should
-    ///   check for updates and return its latest value.
+    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
     /// 1. Provide a health check endpoint to indicate whether the service is ready to be used.
     #[derive(Debug)]
     pub struct SideInputServer<T> {
