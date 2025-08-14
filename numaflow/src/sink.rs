@@ -323,7 +323,7 @@ where
                     return Err(Error::SinkError(ErrorKind::InternalError(format!(
                         "Error reading message from stream: {}",
                         e
-                    ))))
+                    ))));
                 }
             };
 
@@ -552,9 +552,9 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
+    use crate::proto::sink::TransmissionStatus;
     use crate::proto::sink::sink_client::SinkClient;
     use crate::proto::sink::sink_request::Request;
-    use crate::proto::sink::TransmissionStatus;
     use crate::proto::sink::{Handshake, SinkRequest};
     use crate::sink;
 
