@@ -1,9 +1,10 @@
 [package]
 name = "map-even-odd"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-tonic = "0.13.0"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tonic.workspace = true
+tokio.workspace = true
 numaflow = { path = "../../numaflow" }

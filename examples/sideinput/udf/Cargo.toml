@@ -1,12 +1,13 @@
 [package]
 name = "sideinput-udf"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tonic = "0.13.0"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tonic.workspace = true
+tokio.workspace = true
 numaflow = { path = "../../../numaflow" }
-notify = "8.0.0"
+notify.workspace = true
