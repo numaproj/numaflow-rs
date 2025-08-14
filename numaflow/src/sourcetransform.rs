@@ -8,14 +8,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
 use crate::shared;
 use shared::{
-    prost_timestamp_from_utc, utc_from_timestamp, ContainerType, ServerConfig, SocketCleanup, DROP,
+    ContainerType, DROP, ServerConfig, SocketCleanup, prost_timestamp_from_utc, utc_from_timestamp,
 };
 
 /// Default socket address for source transformer service

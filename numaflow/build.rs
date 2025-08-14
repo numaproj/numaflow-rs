@@ -8,7 +8,7 @@ fn main() {
     std::fs::create_dir_all(generated_out_dir)
         .unwrap_or_else(|e| panic!("failed to create generated output directory: {:?}", e));
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .out_dir(generated_out_dir)
         .compile_protos(
             &[

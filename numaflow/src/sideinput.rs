@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status};
+use tonic::{Request, Response, Status, async_trait};
 
 use crate::shared;
 use crate::{
     error::{Error, ErrorKind},
     proto::side_input as proto,
 };
-use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup};
+use shared::{ContainerType, ServerConfig, SocketCleanup, shutdown_signal};
 
 /// Default socket address for sideinput service
 const SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";

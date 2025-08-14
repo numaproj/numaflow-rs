@@ -16,7 +16,7 @@ use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
+use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
 
 /// Default socket address for batchmap service
 const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -351,7 +351,7 @@ where
                     return Err(Error::BatchMapError(ErrorKind::InternalError(format!(
                         "Error reading message from stream: {}",
                         e
-                    ))))
+                    ))));
                 }
             };
 
@@ -572,7 +572,7 @@ mod tests {
     use crate::batchmap;
     use crate::batchmap::{BatchResponse, Datum, Message};
     use crate::proto::map::map_client::MapClient;
-    use crate::proto::map::{map_request::Request, Handshake, MapRequest};
+    use crate::proto::map::{Handshake, MapRequest, map_request::Request};
 
     #[tokio::test]
     async fn batch_map_server() -> Result<(), Box<dyn Error>> {

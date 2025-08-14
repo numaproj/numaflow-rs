@@ -3,17 +3,17 @@ use std::collections::HashMap;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{Sender, channel};
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status};
+use tonic::{Request, Response, Status, async_trait};
 
 use crate::error::{Error, ErrorKind};
 pub use crate::proto::reduce as proto;
 use crate::shared;
-use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, SocketCleanup, DROP};
+use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, prost_timestamp_from_utc};
 
 /// Default socket address for reduce service
 const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
@@ -856,8 +856,8 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::sleep;
     use tokio_stream::wrappers::ReceiverStream;
-    use tonic::transport::Uri;
     use tonic::Request;
+    use tonic::transport::Uri;
     use tower::service_fn;
 
     use crate::reduce;

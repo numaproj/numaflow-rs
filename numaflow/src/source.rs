@@ -9,14 +9,14 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
-use shared::{prost_timestamp_from_utc, ContainerType, ServerConfig, SocketCleanup};
+use shared::{ContainerType, ServerConfig, SocketCleanup, prost_timestamp_from_utc};
 
 /// Default socket address for source service
 const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -342,10 +342,12 @@ where
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
         let partitions = self.handler.partitions().await.unwrap_or_else(|| {
-            vec![std::env::var("NUMAFLOW_REPLICA")
-                .unwrap_or_default()
-                .parse::<i32>()
-                .unwrap_or_default()]
+            vec![
+                std::env::var("NUMAFLOW_REPLICA")
+                    .unwrap_or_default()
+                    .parse::<i32>()
+                    .unwrap_or_default(),
+            ]
         });
         Ok(Response::new(proto::PartitionsResponse {
             result: Some(proto::partitions_response::Result { partitions }),
@@ -551,12 +553,12 @@ mod tests {
     use tokio::sync::mpsc::Sender;
     use tokio::sync::{mpsc, oneshot};
     use tokio_stream::wrappers::ReceiverStream;
-    use tonic::transport::Uri;
     use tonic::Request;
+    use tonic::transport::Uri;
     use tower::service_fn;
     use uuid::Uuid;
 
-    use super::{proto, Message, Offset, SourceReadRequest};
+    use super::{Message, Offset, SourceReadRequest, proto};
     use crate::source;
 
     // A source that repeats the `num` for the requested count

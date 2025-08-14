@@ -8,14 +8,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
-use shared::{shutdown_signal, ContainerType, ServerConfig, SocketCleanup, DROP};
+use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
 
 /// Default socket address for mapstream service
 const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
