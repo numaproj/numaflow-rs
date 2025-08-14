@@ -9,8 +9,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 mod counter {
     use numaflow::session_reduce::{Message, SessionReduceRequest, SessionReducer};
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::sync::mpsc;
     use tonic::async_trait;
 

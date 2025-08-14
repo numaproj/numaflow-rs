@@ -1,10 +1,11 @@
 [package]
 name = "source-transformer-event-time-filter"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 numaflow = { path = "../../numaflow" }
-tokio = "1.38.0"
-tonic = "0.13.0"
-chrono = "0.4.38"
+tokio.workspace = true
+tonic.workspace = true
+chrono.workspace = true
