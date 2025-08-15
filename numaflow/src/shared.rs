@@ -399,9 +399,6 @@ mod tests {
 /// Initialize panic hook to capture detailed panic information
 /// This should be called once when the server starts
 pub(crate) fn init_panic_hook() {
-    // Set environment variable to enable backtrace capture
-    std::env::set_var("RUST_BACKTRACE", "full");
-
     panic::set_hook(Box::new(|panic_info| {
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()

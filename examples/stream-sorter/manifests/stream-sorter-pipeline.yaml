@@ -4,20 +4,21 @@ metadata:
   name: stream-sorter
 spec:
   vertices:
-    - name: in
+    - name: input-one
       source:
         # A self data generating source with some randomness
         generator:
           rpu: 50
           duration: 1s
           keyCount: 3
-          value: 10
-          jitter: 0.1
+    - name: input-two
+      source:
+        # A self data generating source with some randomness
+        generator:
+          rpu: 50
+          duration: 1s
+          keyCount: 3
     - name: sorter
-      containerTemplate:
-        env:
-          - name: NUMAFLOW_DEBUG
-            value: "true"
       udf:
         container:
           # Stream sorter accumulator that sorts events by event-time
@@ -35,9 +36,11 @@ spec:
     - name: out
       sink:
         # A simple log printing sink
-        log: {}
+        log: { }
   edges:
-    - from: in
+    - from: input-one
+      to: sorter
+    - from: input-two
       to: sorter
     - from: sorter
       to: out

@@ -1,8 +1,8 @@
 [package]
 name = "numaflow"
-version = "0.2.1"
-edition = "2021"
-rust-version = "1.84"
+version = "0.3.0"
+edition = "2024"
+rust-version.workspace = true
 description = "Rust SDK for Numaflow"
 authors = ["Numaflow Developers"]
 license = "Apache-2.0"
@@ -25,24 +25,25 @@ name = "numaflow"
 path = "src/lib.rs"
 
 [dependencies]
-tonic = "0.13.0"
-prost = "0.13.5"
-prost-types = "0.13.5"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
-tokio-util = "0.7.12"
-tokio-stream = { version = "0.1.16", features = ["net"] }
-serde = { version = "1.0.210", features = ["derive"] }
-serde_json = "1.0.128"
-tracing = "0.1.40"
-uuid = { version = "1.10.0", features = ["v4"] }
-thiserror = "2.0.12"
-hyper-util = "0.1.10"
-chrono = "0.4.38"
-tonic-types = "0.13.0"
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+hyper-util.workspace = true
+chrono.workspace = true
+tonic-types.workspace=true
 
 [build-dependencies]
-tonic-build = "0.13.0"
+tonic-prost-build.workspace = true
 
 [dev-dependencies]
-tempfile = "3.9.0"
-tower = { version = "0.5.2", features = ["util"] }
+tempfile.workspace = true
+tower.workspace = true

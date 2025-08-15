@@ -2,13 +2,13 @@ pub use crate::proto::session_reduce as proto;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::panic;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, RwLock};
-use tokio_stream::wrappers::ReceiverStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{async_trait, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
@@ -1066,8 +1066,8 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::sleep;
     use tokio_stream::wrappers::ReceiverStream;
-    use tonic::transport::Uri;
     use tonic::Request;
+    use tonic::transport::Uri;
     use tower::service_fn;
 
     use crate::session_reduce;

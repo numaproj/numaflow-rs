@@ -7,16 +7,8 @@ spec:
     - name: in
       source:
         # A self data generating source
-        generator:
-          rpu: 100
-          duration: 1s
-          keyCount: 5
-          value: 5
+        http: { }
     - name: session-counter
-      containerTemplate:
-        env:
-          - name: NUMAFLOW_DEBUG
-            value: "true"
       udf:
         container:
           # count element in sessions
