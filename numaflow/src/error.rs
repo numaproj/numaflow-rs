@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tonic::Status;
 
 /// The main Result type used throughout the Numaflow SDK
 pub type Result<T> = std::result::Result<T, Error>;
@@ -51,4 +52,18 @@ pub enum Error {
 
     #[error("Numaflow - {0}")]
     DefaultError(ErrorKind),
+
+    #[error("gRPC Status - {0}")]
+    GrpcStatus(Status),
+}
+
+impl Error {
+    /// Extract the gRPC Status if this error is a GrpcStatus variant,
+    /// otherwise create a Status::internal with the error message
+    pub fn into_status(self) -> Status {
+        match self {
+            Error::GrpcStatus(status) => status,
+            other => Status::internal(other.to_string()),
+        }
+    }
 }

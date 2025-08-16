@@ -21,7 +21,10 @@ clippy:
 # run cargo test on the repository root
 .PHONY: test
 test:
+	@echo "Running tests"
 	cargo test --workspace
+	@echo "Running gated panic tests sequentially..."
+	cargo test --workspace --features test-panic -- --test-threads=1
 
 .PHONY: codegen
 codegen:
