@@ -678,6 +678,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn source_transformer_panic() -> Result<(), Box<dyn Error>> {
         struct PanicTransformer;

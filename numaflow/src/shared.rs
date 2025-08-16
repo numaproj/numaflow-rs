@@ -448,7 +448,7 @@ pub(crate) fn format_panic_message(panic_info: &PanicInfo) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-panic"))]
 mod panic_tests {
     use super::*;
     use std::sync::Once;

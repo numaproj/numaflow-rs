@@ -44,6 +44,11 @@ tonic-types.workspace=true
 [build-dependencies]
 tonic-prost-build.workspace = true
 
+[features]
+# Feature flag to enable panic tests with single-threaded execution
+# Tests are run sequentially (--test-threads=1) to prevent global state interference among services
+test-panic = []
+
 [dev-dependencies]
 tempfile.workspace = true
 tower.workspace = true
