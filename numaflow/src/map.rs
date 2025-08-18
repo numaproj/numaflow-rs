@@ -629,6 +629,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn map_server_panic() -> Result<(), Box<dyn Error>> {
         struct PanicMapper;
@@ -737,6 +738,7 @@ mod tests {
     // tests for panic when we have multiple inflight requests, only one of the requests
     // causes panic, the other requests should be processed successfully and the server
     // should shut down gracefully.
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn panic_with_multiple_requests() -> Result<(), Box<dyn Error>> {
         struct PanicMapper;

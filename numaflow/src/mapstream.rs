@@ -776,6 +776,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn map_stream_server_panic() -> Result<(), Box<dyn Error>> {
         struct PanicStreamer;
