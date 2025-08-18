@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
-use tonic_types::{ErrorDetails, StatusExt};
+
 use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
@@ -16,7 +16,7 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{
-    ContainerType, ENV_CONTAINER_TYPE, ServerConfig, SocketCleanup, format_panic_message,
+    ContainerType, ENV_CONTAINER_TYPE, ServerConfig, SocketCleanup, build_panic_status,
     get_panic_info, init_panic_hook,
 };
 
@@ -364,16 +364,7 @@ where
                 // Check if this is a panic or a regular error
                 if let Some(panic_info) = get_panic_info() {
                     // This is a panic - send detailed panic information
-                    let panic_message = format_panic_message(&panic_info);
-                    let status_msg = format!(
-                        "UDF_EXECUTION_ERROR({}): {}",
-                        env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
-                        panic_message
-                    );
-
-                    let details = ErrorDetails::with_debug_info(vec![], panic_info.backtrace);
-                    let status =
-                        Status::with_error_details(tonic::Code::Internal, status_msg, details);
+                    let status = build_panic_status(&panic_info);
 
                     // Return detailed error to trigger shutdown
                     return Err(Error::GrpcStatus(status));

@@ -441,11 +441,28 @@ pub(crate) fn get_panic_info() -> Option<PanicInfo> {
 }
 
 /// Create a formatted panic message including location information
-pub(crate) fn format_panic_message(panic_info: &PanicInfo) -> String {
+fn format_panic_message(panic_info: &PanicInfo) -> String {
     match &panic_info.location {
         Some(location) => format!("{} at {}", panic_info.message, location),
         None => panic_info.message.clone(),
     }
+}
+
+/// This function creates a standardized tonic Status response when a UDF execution
+/// encounters a panic, including detailed panic information and backtrace.
+pub(crate) fn build_panic_status(panic_info: &PanicInfo) -> tonic::Status {
+    use std::env;
+    use tonic_types::{ErrorDetails, StatusExt};
+
+    let panic_message = format_panic_message(panic_info);
+    let status_msg = format!(
+        "UDF_EXECUTION_ERROR({}): {}",
+        env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
+        panic_message
+    );
+
+    let details = ErrorDetails::with_debug_info(vec![], panic_info.backtrace.clone());
+    tonic::Status::with_error_details(tonic::Code::Internal, status_msg, details)
 }
 
 #[cfg(all(test, feature = "test-panic"))]

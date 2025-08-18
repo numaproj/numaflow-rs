@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming, async_trait};
-use tonic_types::{ErrorDetails, StatusExt};
+
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
@@ -17,8 +17,8 @@ use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
 use shared::{
-    ContainerType, DROP, ENV_CONTAINER_TYPE, ServerConfig, SocketCleanup, format_panic_message,
-    get_panic_info, init_panic_hook, shutdown_signal,
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, shutdown_signal,
 };
 
 /// Default socket address for mapstream service
@@ -332,16 +332,7 @@ async fn run_map_stream<T>(
                 // Check if we have detailed panic info from our hook
                 if let Some(panic_info) = get_panic_info() {
                     // This is a panic - send detailed panic information
-                    let panic_message = format_panic_message(&panic_info);
-                    let status_msg = format!(
-                        "UDF_EXECUTION_ERROR({}): {}",
-                        std::env::var(ENV_CONTAINER_TYPE).unwrap_or_default(),
-                        panic_message
-                    );
-
-                    let details = ErrorDetails::with_debug_info(vec![], panic_info.backtrace);
-                    let status =
-                        Status::with_error_details(tonic::Code::Internal, status_msg, details);
+                    let status = build_panic_status(&panic_info);
                     let _ = error_tx.send(Error::GrpcStatus(status)).await;
                 } else {
                     // This is a non-panic error
