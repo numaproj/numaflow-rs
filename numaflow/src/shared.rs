@@ -1,20 +1,36 @@
-//! Utility functions for the Numaflow SDK
+//! Shared utilities, and common functionality
 //!
-//! This module contains utility functions for timestamp conversion and other
-//! common operations used across the SDK.
+//! This module contains utilities, constants, types, and server configuration
+//! that are shared across different parts of the Numaflow SDK.
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 
+pub(crate) mod panic;
+pub(crate) mod server;
+
+/// Environment variable for the container type
+pub(crate) const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
+
+/// Drop message constant
+pub const DROP: &str = "U+005C__DROP__";
+
+// Re-export commonly used items
+pub(crate) use panic::{build_panic_status, get_panic_info, init_panic_hook};
+pub use server::ServerConfig;
+pub(crate) use server::{
+    ContainerType, ServerInfo, SocketCleanup, create_listener_stream, shutdown_signal,
+};
+
 /// Convert a protobuf Timestamp to a UTC DateTime
-pub fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
+pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {
     t.map_or(Utc.timestamp_nanos(-1), |t| {
         DateTime::from_timestamp(t.seconds, t.nanos as u32).unwrap_or(Utc.timestamp_nanos(-1))
     })
 }
 
 /// Convert a UTC DateTime to a protobuf Timestamp
-pub fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
+pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     Some(Timestamp {
         seconds: t.timestamp(),
         nanos: t.nanosecond() as i32,

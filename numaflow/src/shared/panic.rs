@@ -7,22 +7,22 @@ use std::backtrace::Backtrace;
 use std::panic;
 use std::sync::Mutex;
 
-use crate::shared::types::ENV_CONTAINER_TYPE;
+use crate::shared::ENV_CONTAINER_TYPE;
 
 /// Thread-safe storage for panic information
 static PANIC_INFO: Mutex<Option<PanicInfo>> = Mutex::new(None);
 
 /// Panic information captured by the panic hook
 #[derive(Clone, Debug)]
-pub struct PanicInfo {
-    pub message: String,
-    pub location: Option<String>,
-    pub backtrace: String,
+pub(crate) struct PanicInfo {
+    pub(crate) message: String,
+    pub(crate) location: Option<String>,
+    pub(crate) backtrace: String,
 }
 
 /// Initialize panic hook to capture detailed panic information
 /// This should be called once when the server starts
-pub fn init_panic_hook() {
+pub(crate) fn init_panic_hook() {
     panic::set_hook(Box::new(|panic_info| {
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()
@@ -57,7 +57,7 @@ pub fn init_panic_hook() {
 
 /// Retrieve stored panic information without clearing it
 /// Returns the first panic that occurred, if any
-pub fn get_panic_info() -> Option<PanicInfo> {
+pub(crate) fn get_panic_info() -> Option<PanicInfo> {
     PANIC_INFO
         .lock()
         .ok()
@@ -74,7 +74,7 @@ fn format_panic_message(panic_info: &PanicInfo) -> String {
 
 /// This function creates a standardized tonic Status response when a UDF execution
 /// encounters a panic, including detailed panic information and backtrace.
-pub fn build_panic_status(panic_info: &PanicInfo) -> tonic::Status {
+pub(crate) fn build_panic_status(panic_info: &PanicInfo) -> tonic::Status {
     use std::env;
     use tonic_types::{ErrorDetails, StatusExt};
 
@@ -150,7 +150,7 @@ mod tests {
         // Verify format_panic_message works correctly
         let formatted = format_panic_message(&info);
         assert!(formatted.contains("Test panic message"));
-        assert!(formatted.contains("shared.rs"));
+        assert!(formatted.contains("panic.rs"));
 
         // Verify panic info persists (second call returns same info - "first panic wins")
         let second_call = get_panic_info();
