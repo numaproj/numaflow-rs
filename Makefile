@@ -21,7 +21,15 @@ clippy:
 # run cargo test on the repository root
 .PHONY: test
 test:
+	@echo "Running tests"
 	cargo test --workspace
+	@echo "Running panic tests sequentially..."
+	cargo test --workspace --features test-panic sink::tests::sink_panic -- --test-threads=1
+	cargo test --workspace --features test-panic sourcetransform::tests::source_transformer_panic -- --test-threads=1
+	cargo test --workspace --features test-panic map::tests::map_server_panic -- --test-threads=1
+	cargo test --workspace --features test-panic mapstream::tests::map_stream_server_panic -- --test-threads=1
+	cargo test --workspace --features test-panic batchmap::tests::batchmap_panic -- --test-threads=1
+	cargo test --workspace --features test-panic shared::panic_tests::test_panic_hook_functionality -- --test-threads=1
 
 .PHONY: codegen
 codegen:

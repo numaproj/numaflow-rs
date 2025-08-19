@@ -2,8 +2,9 @@ use chrono::{DateTime, Utc};
 use proto::SourceTransformResponse;
 use std::collections::HashMap;
 
-use std::path::PathBuf;
 use std::sync::Arc;
+
+use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -14,8 +15,10 @@ use tracing::{error, info};
 use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
 use crate::shared;
+
 use shared::{
-    ContainerType, DROP, ServerConfig, SocketCleanup, prost_timestamp_from_utc, utc_from_timestamp,
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, prost_timestamp_from_utc, utc_from_timestamp,
 };
 
 /// Default socket address for source transformer service
@@ -307,7 +310,7 @@ async fn manage_grpc_stream(
 
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Status::internal(err.to_string())))
+        .send(Err(err.into_status()))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -394,13 +397,20 @@ async fn run_transform<T>(
         Ok(messages) => messages,
         Err(e) => {
             error!("Failed to run transform function: {e:?}");
-            // only one panic is sent to error_tx which is shown in the UI.
-            // `rx` will be dropped after recving first err.
-            let _ = error_tx
-                .send(Error::SourceTransformerError(ErrorKind::UserDefinedError(
-                    "panic in transform UDF".to_string(),
-                )))
-                .await;
+
+            // Check if this is a panic or a regular error
+            if let Some(panic_info) = get_panic_info() {
+                // This is a panic - send detailed panic information
+                let status = build_panic_status(&panic_info);
+                let _ = error_tx.send(Error::GrpcStatus(status)).await;
+            } else {
+                // This is a non-panic error
+                let _ = error_tx
+                    .send(Error::SourceTransformerError(ErrorKind::InternalError(
+                        format!("Transform task execution failed: {e:?}"),
+                    )))
+                    .await;
+            }
             return;
         }
     };
@@ -490,6 +500,8 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture detailed panic information
+        init_panic_hook();
         let info = shared::ServerInfo::new(ContainerType::SourceTransformer);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -657,6 +669,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn source_transformer_panic() -> Result<(), Box<dyn Error>> {
         struct PanicTransformer;

@@ -33,9 +33,8 @@ pub mod side_input_client {
     /// which allows access to slow updated data or configuration without needing to retrieve
     /// it during each message processing.
     /// Through this service we should should be able to:-
-    ///
-    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
-    /// 1. Provide a health check endpoint to indicate whether the service is ready to be used.
+    /// (1) Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
+    /// (2) Provide a health check endpoint to indicate whether the service is ready to be used.
     #[derive(Debug, Clone)]
     pub struct SideInputClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -197,9 +196,8 @@ pub mod side_input_server {
     /// which allows access to slow updated data or configuration without needing to retrieve
     /// it during each message processing.
     /// Through this service we should should be able to:-
-    ///
-    /// 1. Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
-    /// 1. Provide a health check endpoint to indicate whether the service is ready to be used.
+    /// (1) Invoke retrieval request for a single Side Input parameter, which in turn should check for updates and return its latest value.
+    /// (2) Provide a health check endpoint to indicate whether the service is ready to be used.
     #[derive(Debug)]
     pub struct SideInputServer<T> {
         inner: Arc<T>,

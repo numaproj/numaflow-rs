@@ -9,13 +9,17 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming, async_trait};
+
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
-use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
+use shared::{
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, shutdown_signal,
+};
 
 /// Default socket address for mapstream service
 const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
@@ -323,14 +327,23 @@ async fn run_map_stream<T>(
         let error_tx = error_tx.clone();
         async move {
             if let Err(e) = map_stream_task.await {
-                let _ = error_tx
-                    .send(Error::MapStreamError(ErrorKind::UserDefinedError(format!(
-                        "panicked: {e:?}"
-                    ))))
-                    .await;
-                return Err(e);
+                error!("Failed to run mapstream function: {e:?}");
+
+                // Check if we have detailed panic info from our hook
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+                    let _ = error_tx.send(Error::GrpcStatus(status)).await;
+                } else {
+                    // This is a non-panic error
+                    let _ = error_tx
+                        .send(Error::MapStreamError(ErrorKind::InternalError(format!(
+                            "MapStream task execution failed: {e:?}"
+                        ))))
+                        .await;
+                }
             }
-            Ok(())
+            Ok::<(), tokio::task::JoinError>(())
         }
     })
     .await;
@@ -393,7 +406,7 @@ async fn manage_grpc_stream(
 
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Status::internal(err.to_string())))
+        .send(Err(err.into_status()))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -495,6 +508,9 @@ impl<T> Server<T> {
     where
         T: MapStreamer + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture panic information
+        init_panic_hook();
+
         let info = shared::ServerInfo::new(ContainerType::MapStream);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -751,6 +767,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn map_stream_server_panic() -> Result<(), Box<dyn Error>> {
         struct PanicStreamer;
@@ -828,7 +845,13 @@ mod tests {
 
         if let Err(e) = stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("panicked"));
+            // Check for enhanced panic error message
+            assert!(
+                e.message().contains("UDF_EXECUTION_ERROR")
+                    || e.message().contains("Panic in Map Stream"),
+                "Expected enhanced panic message, got: {}",
+                e.message()
+            );
         } else {
             return Err("Expected error from server".into());
         }

@@ -8,12 +8,16 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming, async_trait};
+
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::map::{self as proto, MapResponse};
 use crate::shared;
-use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
+use shared::{
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, shutdown_signal,
+};
 
 /// Default socket address for map service
 const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
@@ -276,7 +280,7 @@ async fn manage_grpc_stream(
 
     error!("Shutting down gRPC channel: {err:?}");
     stream_response_tx
-        .send(Err(Status::internal(err.to_string())))
+        .send(Err(err.into_status()))
         .await
         .expect("Sending error message to gRPC response channel");
     server_shutdown_tx
@@ -327,12 +331,20 @@ async fn run_map<T>(
         Ok(messages) => messages,
         Err(e) => {
             error!("Failed to run map function: {e:?}");
-            error_tx
-                .send(Error::MapError(ErrorKind::UserDefinedError(format!(
-                    "panicked: {e:?}"
-                ))))
-                .await
-                .expect("Sending error on channel");
+
+            // Check if we have detailed panic info from our hook
+            if let Some(panic_info) = get_panic_info() {
+                // This is a panic - send detailed panic information
+                let status = build_panic_status(&panic_info);
+                let _ = error_tx.send(Error::GrpcStatus(status)).await;
+            } else {
+                // This is a non-panic error
+                let _ = error_tx
+                    .send(Error::MapError(ErrorKind::InternalError(format!(
+                        "Map task execution failed: {e:?}",
+                    ))))
+                    .await;
+            }
             return;
         }
     };
@@ -449,6 +461,9 @@ impl<T> Server<T> {
     where
         T: Mapper + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture panic information
+        init_panic_hook();
+
         let info = shared::ServerInfo::new(ContainerType::Map);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -606,6 +621,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn map_server_panic() -> Result<(), Box<dyn Error>> {
         struct PanicMapper;
@@ -688,7 +704,13 @@ mod tests {
 
         if let Err(e) = stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("Panic in mapper"));
+            // Check for enhanced panic error message
+            assert!(
+                e.message().contains("UDF_EXECUTION_ERROR")
+                    || e.message().contains("Panic in mapper"),
+                "Expected enhanced panic message, got: {}",
+                e.message()
+            );
         } else {
             return Err("Expected error from server".into());
         }
@@ -708,6 +730,7 @@ mod tests {
     // tests for panic when we have multiple inflight requests, only one of the requests
     // causes panic, the other requests should be processed successfully and the server
     // should shut down gracefully.
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn panic_with_multiple_requests() -> Result<(), Box<dyn Error>> {
         struct PanicMapper;
@@ -787,8 +810,18 @@ mod tests {
         };
         tx.send(request).await.unwrap();
 
-        let resp = stream.message().await;
-        assert!(resp.is_err());
+        if let Err(e) = stream.message().await {
+            assert_eq!(e.code(), tonic::Code::Internal);
+            // Check for enhanced panic error message
+            assert!(
+                e.message().contains("UDF_EXECUTION_ERROR")
+                    || e.message().contains("Panic in mapper"),
+                "Expected enhanced panic message, got: {}",
+                e.message()
+            );
+        } else {
+            return Err("Expected error from server".into());
+        }
 
         drop(tx);
         // server should shut down gracefully because there was a panic in the handler.

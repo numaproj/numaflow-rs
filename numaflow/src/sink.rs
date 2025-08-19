@@ -8,13 +8,17 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
-use tracing::{debug, info};
+
+use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, SocketCleanup};
+use shared::{
+    ContainerType, ENV_CONTAINER_TYPE, ServerConfig, SocketCleanup, build_panic_status,
+    get_panic_info, init_panic_hook,
+};
 
 /// Default socket address for sink service
 const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -30,9 +34,6 @@ const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
-
-/// Environment variable for the container type
-const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
@@ -352,10 +353,27 @@ where
         // drop the sender to signal the sink handler that the batch has ended
         drop(tx);
 
-        // wait for UDF task to return
-        sinker_handle
-            .await
-            .map_err(|e| Error::SinkError(ErrorKind::UserDefinedError(e.to_string())))?;
+        // Wait for UDF task to return with panic detection
+        match sinker_handle.await {
+            Ok(_) => {
+                // UDF completed successfully
+            }
+            Err(e) => {
+                error!("Failed to run sink function: {e:?}");
+
+                // Check if this is a panic or a regular error
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+
+                    // Return detailed error to trigger shutdown
+                    return Err(Error::GrpcStatus(status));
+                } else {
+                    // This is a non-panic error
+                    return Err(Error::SinkError(ErrorKind::UserDefinedError(e.to_string())));
+                }
+            }
+        }
 
         Ok(global_stream_ended)
     }
@@ -373,7 +391,7 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Status::internal(e.to_string())))
+                            .send(Err(e.into_status()))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
@@ -502,6 +520,9 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture panic information
+        init_panic_hook();
+
         let info = shared::ServerInfo::new(ContainerType::Sink);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -702,6 +723,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn sink_panic() -> Result<(), Box<dyn Error>> {
         struct PanicSink;
@@ -804,7 +826,8 @@ mod tests {
 
         if let Err(e) = err_resp {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined error"));
+            assert!(e.message().contains("UDF_EXECUTION_ERROR"));
+            assert!(e.message().contains("Should not cross 5"));
         }
 
         // server should shut down gracefully because there was a panic in the handler.
