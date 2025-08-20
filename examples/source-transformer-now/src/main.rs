@@ -4,6 +4,7 @@ use numaflow::sourcetransform;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt::init();
     sourcetransform::Server::new(NowCat).start().await
 }
 

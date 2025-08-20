@@ -5,67 +5,63 @@
 
 use std::backtrace::Backtrace;
 use std::panic;
-use std::sync::Mutex;
+use std::sync::{Once, OnceLock};
 
 use crate::shared::ENV_CONTAINER_TYPE;
 
-/// Thread-safe storage for panic information
-static PANIC_INFO: Mutex<Option<PanicInfo>> = Mutex::new(None);
+/// OnceLock to store panic information
+static PANIC_INFO: OnceLock<Option<CapturedPanicInfo>> = OnceLock::new();
+
+/// Ensures panic hook is initialized only once
+static INIT_PANIC_HOOK: Once = Once::new();
 
 /// Panic information captured by the panic hook
 #[derive(Clone, Debug)]
-pub(crate) struct PanicInfo {
+pub(crate) struct CapturedPanicInfo {
     pub(crate) message: String,
     pub(crate) location: Option<String>,
     pub(crate) backtrace: String,
 }
 
-/// Initialize panic hook to capture detailed panic information
-/// This should be called once when the server starts
+/// Initialize panic hook only once to capture panic information
 pub(crate) fn init_panic_hook() {
-    panic::set_hook(Box::new(|panic_info| {
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
+    INIT_PANIC_HOOK.call_once(|| {
+        panic::set_hook(Box::new(|panic_info| {
+            let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
 
-        let location = panic_info
-            .location()
-            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
+            let location = panic_info
+                .location()
+                .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
 
-        // Capture backtrace immediately when panic occurs
-        let backtrace = Backtrace::force_capture();
+            // Capture backtrace immediately when panic occurs
+            let backtrace = Backtrace::force_capture();
 
-        let info = PanicInfo {
-            message,
-            location,
-            backtrace: backtrace.to_string(),
-        };
+            let info = CapturedPanicInfo {
+                message,
+                location,
+                backtrace: backtrace.to_string(),
+            };
 
-        // Store panic info for later retrieval (only if none exists yet)
-        // We want to store the panic info only if it is the first panic
-        if let Ok(mut panic_storage) = PANIC_INFO.lock() {
-            if panic_storage.is_none() {
-                *panic_storage = Some(info.clone());
-            }
-        }
-    }));
+            // Store panic info for later retrieval (only if none exists yet)
+            // The subsequent panics will not overwrite the original
+            let _ = PANIC_INFO.set(Some(info));
+        }));
+    });
 }
 
-/// Retrieve stored panic information without clearing it
 /// Returns the first panic that occurred, if any
-pub(crate) fn get_panic_info() -> Option<PanicInfo> {
-    PANIC_INFO
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().cloned())
+pub(crate) fn get_panic_info() -> Option<CapturedPanicInfo> {
+    PANIC_INFO.get().and_then(|guard| guard.as_ref().cloned())
 }
 
 /// Create a formatted panic message including location information
-fn format_panic_message(panic_info: &PanicInfo) -> String {
+fn format_panic_message(panic_info: &CapturedPanicInfo) -> String {
     match &panic_info.location {
         Some(location) => format!("{} at {}", panic_info.message, location),
         None => panic_info.message.clone(),
@@ -74,7 +70,7 @@ fn format_panic_message(panic_info: &PanicInfo) -> String {
 
 /// This function creates a standardized tonic Status response when a UDF execution
 /// encounters a panic, including detailed panic information and backtrace.
-pub(crate) fn build_panic_status(panic_info: &PanicInfo) -> tonic::Status {
+pub(crate) fn build_panic_status(panic_info: &CapturedPanicInfo) -> tonic::Status {
     use std::env;
     use tonic_types::{ErrorDetails, StatusExt};
 
@@ -92,23 +88,15 @@ pub(crate) fn build_panic_status(panic_info: &PanicInfo) -> tonic::Status {
 #[cfg(all(test, feature = "test-panic"))]
 mod tests {
     use super::*;
-    use std::sync::Once;
-
-    // Initialize panic hook only once for all tests
-    static INIT_PANIC_HOOK: Once = Once::new();
 
     // Test helper to ensure panic hook is initialized once
     fn ensure_panic_hook_initialized() {
-        INIT_PANIC_HOOK.call_once(|| {
-            init_panic_hook();
-        });
+        init_panic_hook();
     }
 
     // Test helper to clear panic info between tests
     fn clear_panic_info_for_test() {
-        if let Ok(mut guard) = PANIC_INFO.lock() {
-            *guard = None;
-        }
+        let _ = PANIC_INFO.set(None);
     }
 
     #[test]

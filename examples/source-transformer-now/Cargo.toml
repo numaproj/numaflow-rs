@@ -7,5 +7,6 @@ rust-version.workspace = true
 [dependencies]
 tonic.workspace = true
 tokio.workspace = true
+tracing-subscriber.workspace = true
 numaflow = { path = "../../numaflow" }
 chrono.workspace = true
