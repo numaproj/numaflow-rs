@@ -13,8 +13,11 @@ use tonic::{Request, Response, Status, async_trait};
 use crate::error::{Error, ErrorKind};
 pub use crate::proto::reduce as proto;
 use crate::shared;
-use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, prost_timestamp_from_utc};
-
+use shared::{
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, prost_timestamp_from_utc,
+};
+use tracing::error;
 /// Default socket address for reduce service
 const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 
@@ -359,9 +362,9 @@ where
                                 }
                             }
                             Some(Err(error)) => {
-                                tracing::error!("Error from task: {:?}", error);
+                                error!("Error from task: {:?}", error);
                                 grpc_response_tx
-                                    .send(Err(Status::internal(error.to_string())))
+                                    .send(Err(error.into_status()))
                                     .await
                                     .expect("send to grpc response channel failed");
                                 // stop reading new messages from the stream.
@@ -459,11 +462,21 @@ impl Task {
         let handler_tx = response_tx.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
-                let _ = handler_tx
-                    .send(Err(Error::ReduceError(ErrorKind::UserDefinedError(
-                        format!(" {}", e),
-                    ))))
-                    .await;
+                error!("Failed to run reduce function: {e:?}");
+
+                // Check if this is a panic or a regular error
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+                    let _ = handler_tx.send(Err(Error::GrpcStatus(status))).await;
+                } else {
+                    // This is a non-panic error
+                    let _ = handler_tx
+                        .send(Err(Error::ReduceError(ErrorKind::UserDefinedError(
+                            format!("Reduce task execution failed: {}", e),
+                        ))))
+                        .await;
+                }
             }
 
             // Send a message indicating that the task has finished
@@ -805,6 +818,7 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
+        init_panic_hook();
         let info = shared::ServerInfo::new(ContainerType::Reduce);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -1180,6 +1194,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
         let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
@@ -1239,7 +1254,7 @@ mod tests {
 
         if let Err(e) = response_stream.message().await {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined error"))
+            assert!(e.message().contains("UDF_EXECUTION_ERROR"))
         }
 
         for _ in 0..10 {
@@ -1256,6 +1271,7 @@ mod tests {
     // test panic in reduce method when there are multiple inflight requests
     // panic only happens for one of the requests, the other request should be
     // processed successfully since we do graceful shutdown of the server.
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
         struct PanicReducerCreator;
@@ -1390,7 +1406,7 @@ mod tests {
 
             if let Err(e) = response_stream.message().await {
                 assert_eq!(e.code(), tonic::Code::Internal);
-                assert!(e.message().contains("User Defined error"))
+                assert!(e.message().contains("UDF_EXECUTION_ERROR"))
             }
         });
 
