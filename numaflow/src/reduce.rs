@@ -1171,122 +1171,37 @@ mod tests {
         Ok(())
     }
 
-    struct PanicReducer;
-
-    #[tonic::async_trait]
-    impl reduce::Reducer for PanicReducer {
-        async fn reduce(
-            &self,
-            _keys: Vec<String>,
-            _input: mpsc::Receiver<reduce::ReduceRequest>,
-            _md: &reduce::Metadata,
-        ) -> Vec<reduce::Message> {
-            panic!("Panic in reduce method");
-        }
-    }
-
-    struct PanicReducerCreator;
-
-    impl reduce::ReducerCreator for PanicReducerCreator {
-        type R = PanicReducer;
-        fn create(&self) -> PanicReducer {
-            PanicReducer {}
-        }
-    }
-
     #[cfg(feature = "test-panic")]
-    #[tokio::test]
-    async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
+    mod panic_tests {
+        use super::*;
 
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let mut client = setup_client(sock_file.clone()).await?;
-
-        let (tx, rx) = mpsc::channel(1);
-
-        // Spawn a task to send ReduceRequests to the channel
-        tokio::spawn(async move {
-            let rr = reduce::proto::ReduceRequest {
-                payload: Some(reduce::proto::reduce_request::Payload {
-                    keys: vec!["key1".to_string()],
-                    value: vec![],
-                    watermark: None,
-                    event_time: None,
-                    headers: Default::default(),
-                }),
-                operation: Some(reduce::proto::reduce_request::WindowOperation {
-                    event: 0,
-                    windows: vec![reduce::proto::Window {
-                        start: Some(Timestamp {
-                            seconds: 60000,
-                            nanos: 0,
-                        }),
-                        end: Some(Timestamp {
-                            seconds: 120000,
-                            nanos: 0,
-                        }),
-                        slot: "slot-0".to_string(),
-                    }],
-                }),
-            };
-
-            for _ in 0..10 {
-                tx.send(rr.clone()).await.unwrap();
-                sleep(Duration::from_millis(10)).await;
-            }
-        });
-
-        // Convert the receiver end of the channel into a stream
-        let stream = ReceiverStream::new(rx);
-
-        // Create a tonic::Request from the stream
-        let request = Request::new(stream);
-
-        // Send the request to the server
-        let resp = client.reduce_fn(request).await?;
-
-        let mut response_stream = resp.into_inner();
-
-        if let Err(e) = response_stream.message().await {
-            assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("UDF_EXECUTION_ERROR"))
-        }
-
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if task.is_finished() {
-                break;
-            }
-        }
-        assert!(task.is_finished(), "gRPC server is still running");
-
-        Ok(())
-    }
-
-    // test panic in reduce method when there are multiple inflight requests
-    // panic only happens for one of the requests, the other request should be
-    // processed successfully since we do graceful shutdown of the server.
-    #[cfg(feature = "test-panic")]
-    #[tokio::test]
-    async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
-        struct PanicReducerCreator;
-
-        impl reduce::ReducerCreator for PanicReducerCreator {
-            type R = PanicReducer;
-            fn create(&self) -> PanicReducer {
-                PanicReducer {}
-            }
-        }
-
-        struct PanicReducer;
+        struct SimplePanicReducer;
 
         #[tonic::async_trait]
-        impl reduce::Reducer for PanicReducer {
+        impl reduce::Reducer for SimplePanicReducer {
+            async fn reduce(
+                &self,
+                _keys: Vec<String>,
+                _input: mpsc::Receiver<reduce::ReduceRequest>,
+                _md: &reduce::Metadata,
+            ) -> Vec<reduce::Message> {
+                panic!("Panic in reduce method");
+            }
+        }
+
+        struct SimplePanicReducerCreator;
+
+        impl reduce::ReducerCreator for SimplePanicReducerCreator {
+            type R = SimplePanicReducer;
+            fn create(&self) -> SimplePanicReducer {
+                SimplePanicReducer {}
+            }
+        }
+
+        struct ConditionalPanicReducer;
+
+        #[tonic::async_trait]
+        impl reduce::Reducer for ConditionalPanicReducer {
             async fn reduce(
                 &self,
                 keys: Vec<String>,
@@ -1303,121 +1218,211 @@ mod tests {
                 vec![]
             }
         }
-        let (mut server, sock_file, _) = setup_server(PanicReducerCreator).await?;
 
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        struct ConditionalPanicReducerCreator;
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let client = setup_client(sock_file.clone()).await?;
-
-        let (tx1, rx1) = mpsc::channel(1);
-
-        let (tx2, rx2) = mpsc::channel(1);
-
-        // Spawn a task to send ReduceRequests to the channel
-        tokio::spawn(async move {
-            let rr = reduce::proto::ReduceRequest {
-                payload: Some(reduce::proto::reduce_request::Payload {
-                    keys: vec!["key1".to_string()],
-                    value: vec![],
-                    watermark: None,
-                    event_time: None,
-                    headers: Default::default(),
-                }),
-                operation: Some(reduce::proto::reduce_request::WindowOperation {
-                    event: 0,
-                    windows: vec![reduce::proto::Window {
-                        start: Some(Timestamp {
-                            seconds: 60000,
-                            nanos: 0,
-                        }),
-                        end: Some(Timestamp {
-                            seconds: 120000,
-                            nanos: 0,
-                        }),
-                        slot: "slot-0".to_string(),
-                    }],
-                }),
-            };
-
-            for _ in 0..20 {
-                tx1.send(rr.clone()).await.unwrap();
-                sleep(Duration::from_millis(10)).await;
+        impl reduce::ReducerCreator for ConditionalPanicReducerCreator {
+            type R = ConditionalPanicReducer;
+            fn create(&self) -> ConditionalPanicReducer {
+                ConditionalPanicReducer {}
             }
-        });
+        }
 
-        tokio::spawn(async move {
-            let rr = reduce::proto::ReduceRequest {
-                payload: Some(reduce::proto::reduce_request::Payload {
-                    keys: vec!["key2".to_string()],
-                    value: vec![],
-                    watermark: None,
-                    event_time: None,
-                    headers: Default::default(),
-                }),
-                operation: Some(reduce::proto::reduce_request::WindowOperation {
-                    event: 0,
-                    windows: vec![reduce::proto::Window {
-                        start: Some(Timestamp {
-                            seconds: 60000,
-                            nanos: 0,
-                        }),
-                        end: Some(Timestamp {
-                            seconds: 120000,
-                            nanos: 0,
-                        }),
-                        slot: "slot-0".to_string(),
-                    }],
-                }),
-            };
+        #[tokio::test]
+        async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
+            let (mut server, sock_file, _) = setup_server(SimplePanicReducerCreator).await?;
 
-            for _ in 0..10 {
-                tx2.send(rr.clone()).await.unwrap();
-                sleep(Duration::from_millis(10)).await;
-            }
-        });
+            let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
-        // Convert the receiver end of the channel into a stream
-        let stream1 = ReceiverStream::new(rx1);
+            let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
-        let stream2 = ReceiverStream::new(rx2);
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Create a tonic::Request from the stream
-        let request1 = Request::new(stream1);
+            let mut client = setup_client(sock_file.clone()).await?;
 
-        let request2 = Request::new(stream2);
+            let (tx, rx) = mpsc::channel(1);
 
-        let mut first_client = client.clone();
-        tokio::spawn(async move {
-            let mut response_stream = first_client.reduce_fn(request1).await.unwrap().into_inner();
-            assert!(response_stream.message().await.is_ok());
-        });
+            // Spawn a task to send ReduceRequests to the channel
+            tokio::spawn(async move {
+                let rr = reduce::proto::ReduceRequest {
+                    payload: Some(reduce::proto::reduce_request::Payload {
+                        keys: vec!["key1".to_string()],
+                        value: vec![],
+                        watermark: None,
+                        event_time: None,
+                        headers: Default::default(),
+                    }),
+                    operation: Some(reduce::proto::reduce_request::WindowOperation {
+                        event: 0,
+                        windows: vec![reduce::proto::Window {
+                            start: Some(Timestamp {
+                                seconds: 60000,
+                                nanos: 0,
+                            }),
+                            end: Some(Timestamp {
+                                seconds: 120000,
+                                nanos: 0,
+                            }),
+                            slot: "slot-0".to_string(),
+                        }],
+                    }),
+                };
 
-        let mut second_client = client.clone();
-        tokio::spawn(async move {
-            let mut response_stream = second_client
-                .reduce_fn(request2)
-                .await
-                .unwrap()
-                .into_inner();
+                for _ in 0..10 {
+                    tx.send(rr.clone()).await.unwrap();
+                    sleep(Duration::from_millis(10)).await;
+                }
+            });
+
+            // Convert the receiver end of the channel into a stream
+            let stream = ReceiverStream::new(rx);
+
+            // Create a tonic::Request from the stream
+            let request = Request::new(stream);
+
+            // Send the request to the server
+            let resp = client.reduce_fn(request).await?;
+
+            let mut response_stream = resp.into_inner();
 
             if let Err(e) = response_stream.message().await {
                 assert_eq!(e.code(), tonic::Code::Internal);
                 assert!(e.message().contains("UDF_EXECUTION_ERROR"))
             }
-        });
 
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if task.is_finished() {
-                break;
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                if task.is_finished() {
+                    break;
+                }
             }
-        }
-        assert!(task.is_finished(), "gRPC server is still running");
+            assert!(task.is_finished(), "gRPC server is still running");
 
-        Ok(())
+            Ok(())
+        }
+
+        // test panic in reduce method when there are multiple inflight requests
+        // panic only happens for one of the requests, the other request should be
+        // processed successfully since we do graceful shutdown of the server.
+        #[tokio::test]
+        async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
+            let (mut server, sock_file, _) = setup_server(ConditionalPanicReducerCreator).await?;
+
+            let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+
+            let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let client = setup_client(sock_file.clone()).await?;
+
+            let (tx1, rx1) = mpsc::channel(1);
+
+            let (tx2, rx2) = mpsc::channel(1);
+
+            // Spawn a task to send ReduceRequests to the channel
+            tokio::spawn(async move {
+                let rr = reduce::proto::ReduceRequest {
+                    payload: Some(reduce::proto::reduce_request::Payload {
+                        keys: vec!["key1".to_string()],
+                        value: vec![],
+                        watermark: None,
+                        event_time: None,
+                        headers: Default::default(),
+                    }),
+                    operation: Some(reduce::proto::reduce_request::WindowOperation {
+                        event: 0,
+                        windows: vec![reduce::proto::Window {
+                            start: Some(Timestamp {
+                                seconds: 60000,
+                                nanos: 0,
+                            }),
+                            end: Some(Timestamp {
+                                seconds: 120000,
+                                nanos: 0,
+                            }),
+                            slot: "slot-0".to_string(),
+                        }],
+                    }),
+                };
+
+                for _ in 0..20 {
+                    tx1.send(rr.clone()).await.unwrap();
+                    sleep(Duration::from_millis(10)).await;
+                }
+            });
+
+            tokio::spawn(async move {
+                let rr = reduce::proto::ReduceRequest {
+                    payload: Some(reduce::proto::reduce_request::Payload {
+                        keys: vec!["key2".to_string()],
+                        value: vec![],
+                        watermark: None,
+                        event_time: None,
+                        headers: Default::default(),
+                    }),
+                    operation: Some(reduce::proto::reduce_request::WindowOperation {
+                        event: 0,
+                        windows: vec![reduce::proto::Window {
+                            start: Some(Timestamp {
+                                seconds: 60000,
+                                nanos: 0,
+                            }),
+                            end: Some(Timestamp {
+                                seconds: 120000,
+                                nanos: 0,
+                            }),
+                            slot: "slot-0".to_string(),
+                        }],
+                    }),
+                };
+
+                for _ in 0..10 {
+                    tx2.send(rr.clone()).await.unwrap();
+                    sleep(Duration::from_millis(10)).await;
+                }
+            });
+
+            // Convert the receiver end of the channel into a stream
+            let stream1 = ReceiverStream::new(rx1);
+
+            let stream2 = ReceiverStream::new(rx2);
+
+            // Create a tonic::Request from the stream
+            let request1 = Request::new(stream1);
+
+            let request2 = Request::new(stream2);
+
+            let mut first_client = client.clone();
+            tokio::spawn(async move {
+                let mut response_stream =
+                    first_client.reduce_fn(request1).await.unwrap().into_inner();
+                assert!(response_stream.message().await.is_ok());
+            });
+
+            let mut second_client = client.clone();
+            tokio::spawn(async move {
+                let mut response_stream = second_client
+                    .reduce_fn(request2)
+                    .await
+                    .unwrap()
+                    .into_inner();
+
+                if let Err(e) = response_stream.message().await {
+                    assert_eq!(e.code(), tonic::Code::Internal);
+                    assert!(e.message().contains("UDF_EXECUTION_ERROR"))
+                }
+            });
+
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if task.is_finished() {
+                    break;
+                }
+            }
+            assert!(task.is_finished(), "gRPC server is still running");
+
+            Ok(())
+        }
     }
 }
