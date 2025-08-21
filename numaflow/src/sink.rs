@@ -323,7 +323,7 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    debug!("Error reading message from stream: {}", e);
+                    error!("Error reading message from stream: {}", e);
                     global_stream_ended = true;
                     return Ok(global_stream_ended);
                 }

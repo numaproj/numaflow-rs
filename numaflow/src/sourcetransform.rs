@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming, async_trait};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::source_transformer as proto;
@@ -396,7 +396,7 @@ async fn run_transform<T>(
     let messages = match udf_transform_task.await {
         Ok(messages) => messages,
         Err(e) => {
-            debug!("Failed to run transform function: {e:?}");
+            error!("Failed to run transform function: {e:?}");
 
             // Check if this is a panic or a regular error
             if let Some(panic_info) = get_panic_info() {

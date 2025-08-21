@@ -32,6 +32,7 @@ test:
 	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_in_reduce -- --test-threads=1
 	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_with_multiple_keys -- --test-threads=1
 	cargo test --workspace --features test-panic session_reduce::tests::panic_tests::test_panic_in_session_reduce -- --test-threads=1
+	cargo test --workspace --features test-panic accumulator::tests::panic_tests::test_panic_in_accumulate -- --test-threads=1
 	cargo test --workspace --features test-panic shared::panic_tests::test_panic_hook_functionality -- --test-threads=1
 
 .PHONY: codegen
