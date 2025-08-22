@@ -287,26 +287,28 @@ where
         // spawn the UDF
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: responses.into_iter().map(|r| r.into()).collect(),
                     handshake: None,
                     status: None,
                 }))
                 .await
-                .ok()?;
+                .is_err()
+            {
+                return;
+            }
 
             // send an EOT message to the client to indicate the end of transmission for this batch
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: vec![],
                     handshake: None,
                     status: Some(sink_pb::TransmissionStatus { eot: true }),
                 }))
                 .await
-                .ok()?;
-
-            Some(())
+                .is_err()
+            {}
         });
 
         let mut global_stream_ended = false;
@@ -356,12 +358,8 @@ where
 
         // Wait for UDF task to return with panic detection
         match sinker_handle.await {
-            Ok(Some(_)) => {
+            Ok(_) => {
                 // UDF completed successfully
-            }
-            Ok(None) => {
-                // UDF returned early (channel send failed)
-                debug!("UDF returned early due to channel send failure");
             }
             Err(e) => {
                 // Check if this is a panic or a regular error
