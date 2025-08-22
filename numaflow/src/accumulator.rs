@@ -12,7 +12,9 @@ use tracing::{error, info};
 use crate::accumulator::proto::accumulator_request::window_operation::Event;
 use crate::error::{Error, ErrorKind};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, SocketCleanup};
+use shared::{
+    ContainerType, ServerConfig, SocketCleanup, build_panic_status, get_panic_info, init_panic_hook,
+};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -465,11 +467,19 @@ impl AccumulatorTask {
         // code will immediately be propagated to the client.
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
-                let _ = handler_tx
-                    .send(Err(Error::AccumulatorError(ErrorKind::UserDefinedError(
-                        format!("Task error: {}", e),
-                    ))))
-                    .await;
+                // Check if this is a panic or a regular error
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+                    let _ = handler_tx.send(Err(Error::GrpcStatus(status))).await;
+                } else {
+                    // This is a non-panic error
+                    let _ = handler_tx
+                        .send(Err(Error::AccumulatorError(ErrorKind::UserDefinedError(
+                            format!("Accumulator task execution failed: {}", e),
+                        ))))
+                        .await;
+                }
             }
 
             // Send a message indicating that the task has finished
@@ -742,7 +752,7 @@ where
                             }
                             Some(Err(error)) => {
                                 error!("Error from accumulator task manager: {}", error);
-                                let _ = grpc_response_tx.send(Err(Status::internal(error.to_string()))).await;
+                                let _ = grpc_response_tx.send(Err(error.into_status())).await;
                                 // Signal request task to stop due to error
                                 response_cancellation_token.cancel();
                                 let _ = shutdown_tx.send(()).await;
@@ -975,6 +985,7 @@ impl<C> Server<C> {
     where
         C: AccumulatorCreator + Send + Sync + 'static,
     {
+        init_panic_hook();
         let info = crate::shared::ServerInfo::new(ContainerType::Accumulator);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -1431,5 +1442,119 @@ mod tests {
         assert_eq!(updated_message.watermark(), watermark);
 
         Ok(())
+    }
+
+    #[cfg(feature = "test-panic")]
+    mod panic_tests {
+        use super::*;
+
+        struct PanicAccumulator;
+
+        #[tonic::async_trait]
+        impl accumulator::Accumulator for PanicAccumulator {
+            async fn accumulate(
+                &self,
+                _input: mpsc::Receiver<accumulator::AccumulatorRequest>,
+                _output: mpsc::Sender<accumulator::Message>,
+            ) {
+                panic!("Panic in accumulate method");
+            }
+        }
+
+        struct PanicAccumulatorCreator;
+
+        impl accumulator::AccumulatorCreator for PanicAccumulatorCreator {
+            type A = PanicAccumulator;
+            fn create(&self) -> PanicAccumulator {
+                PanicAccumulator {}
+            }
+        }
+
+        #[tokio::test]
+        async fn test_panic_in_accumulate() -> Result<(), Box<dyn Error>> {
+            let (mut server, sock_file, _) = setup_server(PanicAccumulatorCreator).await?;
+
+            let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+
+            let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let mut client = setup_client(sock_file).await?;
+
+            let (tx, rx) = mpsc::channel(1);
+
+            // Spawn a task to send AccumulatorRequests to the channel
+            tokio::spawn(async move {
+                // Send an OPEN request with data that will trigger the panic
+                let panic_request = accumulator::proto::AccumulatorRequest {
+                    payload: Some(accumulator::proto::Payload {
+                        keys: vec!["panic_key".to_string()],
+                        value: "trigger_panic".as_bytes().to_vec(),
+                        watermark: Some(Timestamp {
+                            seconds: 60000,
+                            nanos: 0,
+                        }),
+                        event_time: Some(Timestamp {
+                            seconds: 60000,
+                            nanos: 0,
+                        }),
+                        id: "panic_msg".to_string(),
+                        headers: Default::default(),
+                    }),
+                    operation: Some(accumulator::proto::accumulator_request::WindowOperation {
+                        event:
+                            accumulator::proto::accumulator_request::window_operation::Event::Open
+                                as i32,
+                        keyed_window: Some(accumulator::proto::KeyedWindow {
+                            start: Some(Timestamp {
+                                seconds: 60000,
+                                nanos: 0,
+                            }),
+                            end: Some(Timestamp {
+                                seconds: 120000,
+                                nanos: 0,
+                            }),
+                            slot: "panic-slot".to_string(),
+                            keys: vec!["panic_key".to_string()],
+                        }),
+                    }),
+                };
+
+                // Send the request that will cause the panic
+                let _ = tx.send(panic_request).await;
+            });
+
+            // Convert the receiver end of the channel into a stream
+            let stream = ReceiverStream::new(rx);
+
+            // Create a tonic::Request from the stream
+            let request = Request::new(stream);
+
+            // Send the request to the server
+            let resp = client.accumulate_fn(request).await?;
+
+            let mut response_stream = resp.into_inner();
+
+            // The panic should cause an error when trying to receive from the stream
+            // Give some time for the panic to occur and propagate
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            if let Err(e) = response_stream.message().await {
+                assert_eq!(e.code(), tonic::Code::Internal);
+                assert!(e.message().contains("UDF_EXECUTION_ERROR"));
+                assert!(e.message().contains("Panic in accumulate method"));
+            }
+
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                if task.is_finished() {
+                    break;
+                }
+            }
+            assert!(task.is_finished(), "gRPC server is still running");
+
+            Ok(())
+        }
     }
 }

@@ -287,24 +287,28 @@ where
         // spawn the UDF
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: responses.into_iter().map(|r| r.into()).collect(),
                     handshake: None,
                     status: None,
                 }))
                 .await
-                .expect("Sending response to channel");
+                .is_err()
+            {
+                return;
+            }
 
             // send an EOT message to the client to indicate the end of transmission for this batch
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: vec![],
                     handshake: None,
                     status: Some(sink_pb::TransmissionStatus { eot: true }),
                 }))
                 .await
-                .expect("Sending EOT message to channel");
+                .is_err()
+            {}
         });
 
         let mut global_stream_ended = false;
@@ -321,10 +325,9 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    return Err(Error::SinkError(ErrorKind::InternalError(format!(
-                        "Error reading message from stream: {}",
-                        e
-                    ))));
+                    error!("Error reading message from stream: {}", e);
+                    global_stream_ended = true;
+                    return Ok(global_stream_ended);
                 }
             };
 
@@ -359,8 +362,6 @@ where
                 // UDF completed successfully
             }
             Err(e) => {
-                error!("Failed to run sink function: {e:?}");
-
                 // Check if this is a panic or a regular error
                 if let Some(panic_info) = get_panic_info() {
                     // This is a panic - send detailed panic information
@@ -390,11 +391,12 @@ where
                 match resp {
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
-                        resp_tx
-                            .send(Err(e.into_status()))
-                            .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                        resp_tx.send(Err(e.into_status())).await
+                            .inspect_err(|send_err| error!("Failed to send error to response channel (receiver likely dropped): {}", send_err))
+                            .ok();
+                        shutdown_tx.send(()).await
+                            .inspect_err(|send_err| error!("Failed to send shutdown signal: {}", send_err))
+                            .ok();
                     }
                     Err(e) => {
                         resp_tx
@@ -403,8 +405,11 @@ where
                                 e
                             ))))
                             .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                            .inspect_err(|send_err| error!("Failed to send error to response channel (receiver likely dropped): {}", send_err))
+                            .ok();
+                        shutdown_tx.send(()).await
+                            .inspect_err(|send_err| error!("Failed to send shutdown signal: {}", send_err))
+                            .ok();
                     }
                 }
             },
@@ -412,7 +417,8 @@ where
                 resp_tx
                     .send(Err(Status::cancelled("Sink handler cancelled")))
                     .await
-                    .expect("Sending error to response channel");
+                    .inspect_err(|send_err| error!("Token cancelled: Failed to send error to response channel: {}", send_err))
+                    .ok();
             }
         }
     }
