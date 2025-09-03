@@ -24,16 +24,16 @@ test:
 	@echo "Running tests"
 	cargo test --workspace
 	@echo "Running panic tests sequentially..."
-	cargo test --workspace --features test-panic sink::tests::sink_panic -- --test-threads=1
-	cargo test --workspace --features test-panic sourcetransform::tests::source_transformer_panic -- --test-threads=1
-	cargo test --workspace --features test-panic map::tests::map_server_panic -- --test-threads=1
-	cargo test --workspace --features test-panic mapstream::tests::map_stream_server_panic -- --test-threads=1
-	cargo test --workspace --features test-panic batchmap::tests::batchmap_panic -- --test-threads=1
-	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_in_reduce -- --test-threads=1
-	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_with_multiple_keys -- --test-threads=1
-	cargo test --workspace --features test-panic session_reduce::tests::panic_tests::test_panic_in_session_reduce -- --test-threads=1
-	cargo test --workspace --features test-panic accumulator::tests::panic_tests::test_panic_in_accumulate -- --test-threads=1
-	cargo test --workspace --features test-panic shared::panic_tests::test_panic_hook_functionality -- --test-threads=1
+	cargo test --workspace --features test-panic sink::tests::sink_panic
+	cargo test --workspace --features test-panic sourcetransform::tests::source_transformer_panic
+	cargo test --workspace --features test-panic map::tests::map_server_panic
+	cargo test --workspace --features test-panic mapstream::tests::map_stream_server_panic
+	cargo test --workspace --features test-panic batchmap::tests::batchmap_panic
+	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_in_reduce
+	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_with_multiple_keys
+	cargo test --workspace --features test-panic session_reduce::tests::panic_tests::test_panic_in_session_reduce
+	cargo test --workspace --features test-panic accumulator::tests::panic_tests::test_panic_in_accumulate
+	cargo test --workspace --features test-panic shared::panic_tests::test_panic_hook_functionality
 
 .PHONY: codegen
 codegen:
