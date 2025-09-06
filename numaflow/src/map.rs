@@ -16,10 +16,10 @@ use crate::shared;
 use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
 
 /// Default socket address for map service
-const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
 
 /// Default server info file for map service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 
 /// Default channel size for map service
 const CHANNEL_SIZE: usize = 1000;
@@ -662,9 +662,9 @@ mod tests {
             Duration::from_secs(2),
             client.map_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for map_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for map_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
@@ -763,9 +763,9 @@ mod tests {
             Duration::from_secs(2),
             client.map_fn(ReceiverStream::new(rx)),
         )
-        .await
-        .map_err(|_| "timeout while getting stream for map_fn")??
-        .into_inner();
+            .await
+            .map_err(|_| "timeout while getting stream for map_fn")??
+            .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
