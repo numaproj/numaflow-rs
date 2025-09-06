@@ -2,6 +2,7 @@ use numaflow::sink::{self, Response, SinkRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt::init();
     sink::Server::new(Logger).start().await
 }
 

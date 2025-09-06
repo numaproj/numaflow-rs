@@ -1,6 +1,6 @@
 [package]
 name = "numaflow"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version.workspace = true
 description = "Rust SDK for Numaflow"
@@ -39,9 +39,15 @@ uuid.workspace = true
 thiserror.workspace = true
 hyper-util.workspace = true
 chrono.workspace = true
+tonic-types.workspace=true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
+
+[features]
+# Feature flag to enable panic tests with single-threaded execution
+# Tests are run sequentially (--test-threads=1) to prevent global state interference among services
+test-panic = []
 
 [dev-dependencies]
 tempfile.workspace = true

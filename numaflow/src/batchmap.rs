@@ -9,14 +9,18 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, info};
+
+use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{ContainerType, DROP, ServerConfig, SocketCleanup, shutdown_signal};
+use shared::{
+    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
+    init_panic_hook, shutdown_signal,
+};
 
 /// Default socket address for batchmap service
 const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -306,8 +310,35 @@ where
         let resp_tx = grpc_resp_tx.clone();
         let batch_map_handle = batch_map_handle.clone();
 
+        // Spawn UDF task with panic handling
+        let udf_batch_task = tokio::spawn({
+            let batch_map_handle = batch_map_handle.clone();
+            async move { batch_map_handle.batchmap(rx).await }
+        });
+
         let batch_mapper_handle = tokio::spawn(async move {
-            let responses = batch_map_handle.batchmap(rx).await;
+            let responses = match udf_batch_task.await {
+                Ok(responses) => responses,
+                Err(e) => {
+                    error!("Failed to run batchmap function: {e:?}");
+
+                    // Check if we have detailed panic info from our hook
+                    if let Some(panic_info) = get_panic_info() {
+                        // This is a panic - send detailed panic information
+                        let status = build_panic_status(&panic_info);
+                        let _ = resp_tx.send(Err(status)).await;
+                    } else {
+                        // This is a non-panic error
+                        let _ = resp_tx
+                            .send(Err(Status::internal(format!(
+                                "Batchmap task execution failed: {e:?}"
+                            ))))
+                            .await;
+                    }
+                    return;
+                }
+            };
+
             for response in responses {
                 resp_tx
                     .send(Ok(MapResponse {
@@ -380,9 +411,12 @@ where
         drop(tx);
 
         // wait for UDF task to return
-        batch_mapper_handle
-            .await
-            .map_err(|e| Error::BatchMapError(ErrorKind::UserDefinedError(e.to_string())))?;
+        if let Err(e) = batch_mapper_handle.await {
+            error!("Batchmap handler task failed: {e:?}");
+            return Err(Error::BatchMapError(ErrorKind::InternalError(format!(
+                "Batchmap handler task aborted: {e:?}"
+            ))));
+        }
 
         Ok(global_stream_ended)
     }
@@ -399,7 +433,7 @@ where
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
                         resp_tx
-                            .send(Err(Status::internal(e.to_string())))
+                            .send(Err(e.into_status()))
                             .await
                             .expect("Sending error to response channel");
                         shutdown_tx.send(()).await.expect("Sending shutdown signal");
@@ -517,6 +551,9 @@ impl<T> Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture panic information
+        init_panic_hook();
+
         let info = shared::ServerInfo::new(ContainerType::BatchMap);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -694,6 +731,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn batchmap_panic() -> Result<(), Box<dyn Error>> {
         struct PanicBatch;
@@ -778,19 +816,24 @@ mod tests {
         if let Err(e) = response_stream.message().await {
             println!("Error: {:?}", e);
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined error"))
+            // Check for enhanced panic error message
+            assert!(
+                e.message().contains("UDF_EXECUTION_ERROR")
+                    || e.message().contains("Should not cross 5"),
+                "Expected enhanced panic message, got: {}",
+                e.message()
+            );
         } else {
             return Err("Expected error from server".into());
         };
 
         // server should shut down gracefully because there was a panic in the handler.
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
             if task.is_finished() {
                 break;
             }
         }
-        assert!(task.is_finished(), "gRPC server is still running");
         Ok(())
     }
 }

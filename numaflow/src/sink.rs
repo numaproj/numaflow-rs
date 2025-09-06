@@ -8,13 +8,17 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
-use tracing::{debug, info};
+
+use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, SocketCleanup};
+use shared::{
+    ContainerType, ENV_CONTAINER_TYPE, ServerConfig, SocketCleanup, build_panic_status,
+    get_panic_info, init_panic_hook,
+};
 
 /// Default socket address for sink service
 const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -30,9 +34,6 @@ const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
-
-/// Environment variable for the container type
-const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
@@ -286,24 +287,28 @@ where
         // spawn the UDF
         let sinker_handle = tokio::spawn(async move {
             let responses = sink_handle.sink(rx).await;
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: responses.into_iter().map(|r| r.into()).collect(),
                     handshake: None,
                     status: None,
                 }))
                 .await
-                .expect("Sending response to channel");
+                .is_err()
+            {
+                return;
+            }
 
             // send an EOT message to the client to indicate the end of transmission for this batch
-            resp_tx
+            if resp_tx
                 .send(Ok(SinkResponse {
                     results: vec![],
                     handshake: None,
                     status: Some(sink_pb::TransmissionStatus { eot: true }),
                 }))
                 .await
-                .expect("Sending EOT message to channel");
+                .is_err()
+            {}
         });
 
         let mut global_stream_ended = false;
@@ -320,10 +325,9 @@ where
                     break; // bidi stream ended
                 }
                 Err(e) => {
-                    return Err(Error::SinkError(ErrorKind::InternalError(format!(
-                        "Error reading message from stream: {}",
-                        e
-                    ))));
+                    error!("Error reading message from stream: {}", e);
+                    global_stream_ended = true;
+                    return Ok(global_stream_ended);
                 }
             };
 
@@ -352,10 +356,25 @@ where
         // drop the sender to signal the sink handler that the batch has ended
         drop(tx);
 
-        // wait for UDF task to return
-        sinker_handle
-            .await
-            .map_err(|e| Error::SinkError(ErrorKind::UserDefinedError(e.to_string())))?;
+        // Wait for UDF task to return with panic detection
+        match sinker_handle.await {
+            Ok(_) => {
+                // UDF completed successfully
+            }
+            Err(e) => {
+                // Check if this is a panic or a regular error
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+
+                    // Return detailed error to trigger shutdown
+                    return Err(Error::GrpcStatus(status));
+                } else {
+                    // This is a non-panic error
+                    return Err(Error::SinkError(ErrorKind::UserDefinedError(e.to_string())));
+                }
+            }
+        }
 
         Ok(global_stream_ended)
     }
@@ -372,11 +391,12 @@ where
                 match resp {
                     Ok(Ok(_)) => {},
                     Ok(Err(e)) => {
-                        resp_tx
-                            .send(Err(Status::internal(e.to_string())))
-                            .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                        resp_tx.send(Err(e.into_status())).await
+                            .inspect_err(|send_err| error!("Failed to send error to response channel (receiver likely dropped): {}", send_err))
+                            .ok();
+                        shutdown_tx.send(()).await
+                            .inspect_err(|send_err| error!("Failed to send shutdown signal: {}", send_err))
+                            .ok();
                     }
                     Err(e) => {
                         resp_tx
@@ -385,8 +405,11 @@ where
                                 e
                             ))))
                             .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
+                            .inspect_err(|send_err| error!("Failed to send error to response channel (receiver likely dropped): {}", send_err))
+                            .ok();
+                        shutdown_tx.send(()).await
+                            .inspect_err(|send_err| error!("Failed to send shutdown signal: {}", send_err))
+                            .ok();
                     }
                 }
             },
@@ -394,7 +417,8 @@ where
                 resp_tx
                     .send(Err(Status::cancelled("Sink handler cancelled")))
                     .await
-                    .expect("Sending error to response channel");
+                    .inspect_err(|send_err| error!("Token cancelled: Failed to send error to response channel: {}", send_err))
+                    .ok();
             }
         }
     }
@@ -502,6 +526,9 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
+        // Initialize panic hook to capture panic information
+        init_panic_hook();
+
         let info = shared::ServerInfo::new(ContainerType::Sink);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -702,6 +729,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-panic")]
     #[tokio::test]
     async fn sink_panic() -> Result<(), Box<dyn Error>> {
         struct PanicSink;
@@ -804,7 +832,8 @@ mod tests {
 
         if let Err(e) = err_resp {
             assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(e.message().contains("User Defined error"));
+            assert!(e.message().contains("UDF_EXECUTION_ERROR"));
+            assert!(e.message().contains("Should not cross 5"));
         }
 
         // server should shut down gracefully because there was a panic in the handler.

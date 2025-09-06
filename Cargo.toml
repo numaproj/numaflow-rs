@@ -5,7 +5,7 @@ default-members = ["numaflow"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.89.0"
+rust-version = "1.85.0"
 edition = "2024"
 
 [workspace.dependencies]
@@ -28,3 +28,4 @@ hyper-util = "0.1.10"
 notify = "8.0.0"
 tempfile = "3.9.0"
 tower = { version = "0.5.2", features = ["util"] }
+tonic-types = "0.14.1"

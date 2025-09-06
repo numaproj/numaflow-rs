@@ -14,7 +14,9 @@ use tracing::{error, info};
 use crate::error::{Error, ErrorKind};
 use crate::session_reduce::proto::session_reduce_request::window_operation::Event;
 use crate::shared;
-use shared::{ContainerType, ServerConfig, SocketCleanup};
+use shared::{
+    ContainerType, ServerConfig, SocketCleanup, build_panic_status, get_panic_info, init_panic_hook,
+};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -253,11 +255,19 @@ impl SessionReduceTask {
         let handler_tx = response_tx.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = task_join_handler.await {
-                let _ = handler_tx
-                    .send(Err(Error::SessionReduceError(ErrorKind::UserDefinedError(
-                        format!("Task error: {}", e),
-                    ))))
-                    .await;
+                // Check if this is a panic or a regular error
+                if let Some(panic_info) = get_panic_info() {
+                    // This is a panic - send detailed panic information
+                    let status = build_panic_status(&panic_info);
+                    let _ = handler_tx.send(Err(Error::GrpcStatus(status))).await;
+                } else {
+                    // This is a non-panic error
+                    let _ = handler_tx
+                        .send(Err(Error::SessionReduceError(ErrorKind::UserDefinedError(
+                            format!("Session reduce task execution failed: {}", e),
+                        ))))
+                        .await;
+                }
             }
 
             // Send a message indicating that the task has finished
@@ -736,7 +746,7 @@ where
                             }
                             Some(Err(error)) => {
                                 error!("Error from task manager: {}", error);
-                                let _ = grpc_response_tx.send(Err(Status::internal(error.to_string()))).await;
+                                let _ = grpc_response_tx.send(Err(error.into_status())).await;
                                 // Signal request task to stop due to error
                                 response_cancellation_token.cancel();
                                 break;
@@ -1012,6 +1022,7 @@ impl<C> Server<C> {
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
+        init_panic_hook();
         let info = crate::shared::ServerInfo::new(ContainerType::SessionReduce);
         let listener = shared::create_listener_stream(
             self.config.socket_file(),
@@ -1438,54 +1449,58 @@ mod tests {
         Ok(())
     }
 
-    struct PanicSessionReducer;
+    #[cfg(feature = "test-panic")]
+    mod panic_tests {
+        use super::*;
 
-    #[tonic::async_trait]
-    impl session_reduce::SessionReducer for PanicSessionReducer {
-        async fn session_reduce(
-            &self,
-            _keys: Vec<String>,
-            _input: mpsc::Receiver<session_reduce::SessionReduceRequest>,
-            _output: mpsc::Sender<session_reduce::Message>,
-        ) {
-            panic!("Panic in session reduce method");
+        struct PanicSessionReducer;
+
+        #[tonic::async_trait]
+        impl session_reduce::SessionReducer for PanicSessionReducer {
+            async fn session_reduce(
+                &self,
+                _keys: Vec<String>,
+                _input: mpsc::Receiver<session_reduce::SessionReduceRequest>,
+                _output: mpsc::Sender<session_reduce::Message>,
+            ) {
+                panic!("Panic in session reduce method");
+            }
+
+            async fn accumulator(&self) -> Vec<u8> {
+                vec![]
+            }
+
+            async fn merge_accumulator(&self, _accumulator: Vec<u8>) {
+                // No-op
+            }
         }
 
-        async fn accumulator(&self) -> Vec<u8> {
-            vec![]
+        struct PanicSessionReducerCreator;
+
+        impl session_reduce::SessionReducerCreator for PanicSessionReducerCreator {
+            type R = PanicSessionReducer;
+            fn create(&self) -> PanicSessionReducer {
+                PanicSessionReducer {}
+            }
         }
 
-        async fn merge_accumulator(&self, _accumulator: Vec<u8>) {
-            // No-op
-        }
-    }
+        #[tokio::test]
+        async fn test_panic_in_session_reduce() -> Result<(), Box<dyn Error>> {
+            let (mut server, sock_file, _) = setup_server(PanicSessionReducerCreator).await?;
 
-    struct PanicSessionReducerCreator;
+            let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
-    impl session_reduce::SessionReducerCreator for PanicSessionReducerCreator {
-        type R = PanicSessionReducer;
-        fn create(&self) -> PanicSessionReducer {
-            PanicSessionReducer {}
-        }
-    }
+            let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
 
-    #[tokio::test]
-    async fn test_panic_in_session_reduce() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(PanicSessionReducerCreator).await?;
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+            let mut client = setup_client(sock_file.clone()).await?;
 
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+            let (tx, rx) = mpsc::channel(1);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let mut client = setup_client(sock_file.clone()).await?;
-
-        let (tx, rx) = mpsc::channel(1);
-
-        // Spawn a task to send SessionReduceRequests to the channel
-        tokio::spawn(async move {
-            let rr = session_reduce::proto::SessionReduceRequest {
+            // Spawn a task to send SessionReduceRequests to the channel
+            tokio::spawn(async move {
+                let rr = session_reduce::proto::SessionReduceRequest {
                 payload: Some(session_reduce::proto::session_reduce_request::Payload {
                     keys: vec!["key1".to_string()],
                     value: vec![],
@@ -1510,47 +1525,45 @@ mod tests {
                 }),
             };
 
-            // Send the first request which will cause a panic
-            let _ = tx.send(rr.clone()).await;
+                // Send the first request which will cause a panic
+                let _ = tx.send(rr.clone()).await;
 
-            // Try to send more requests, but expect them to fail after the panic
-            for _ in 1..10 {
-                if tx.send(rr.clone()).await.is_err() {
-                    // Channel closed due to panic, which is expected
+                // Try to send more requests, but expect them to fail after the panic
+                for _ in 1..10 {
+                    if tx.send(rr.clone()).await.is_err() {
+                        // Channel closed due to panic, which is expected
+                        break;
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            });
+
+            // Convert the receiver end of the channel into a stream
+            let stream = ReceiverStream::new(rx);
+
+            // Create a tonic::Request from the stream
+            let request = Request::new(stream);
+
+            // Send the request to the server
+            let resp = client.session_reduce_fn(request).await?;
+
+            let mut response_stream = resp.into_inner();
+
+            if let Err(e) = response_stream.message().await {
+                assert_eq!(e.code(), tonic::Code::Internal);
+                assert!(e.message().contains("UDF_EXECUTION_ERROR"))
+            }
+
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                if task.is_finished() {
                     break;
                 }
-                sleep(Duration::from_millis(10)).await;
             }
-        });
+            assert!(task.is_finished(), "gRPC server is still running");
 
-        // Convert the receiver end of the channel into a stream
-        let stream = ReceiverStream::new(rx);
-
-        // Create a tonic::Request from the stream
-        let request = Request::new(stream);
-
-        // Send the request to the server
-        let resp = client.session_reduce_fn(request).await?;
-
-        let mut response_stream = resp.into_inner();
-
-        if let Err(e) = response_stream.message().await {
-            assert_eq!(e.code(), tonic::Code::Internal);
-            assert!(
-                e.message().contains("Session Reduce")
-                    && e.message().contains("User Defined error")
-            )
+            Ok(())
         }
-
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if task.is_finished() {
-                break;
-            }
-        }
-        assert!(task.is_finished(), "gRPC server is still running");
-
-        Ok(())
     }
 
     #[tokio::test]
