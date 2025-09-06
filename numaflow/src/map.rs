@@ -678,9 +678,9 @@ mod tests {
             Duration::from_secs(2),
             client.map_fn(ReceiverStream::new(rx)),
         )
-            .await
-            .map_err(|_| "timeout while getting stream for map_fn")??
-            .into_inner();
+        .await
+        .map_err(|_| "timeout while getting stream for map_fn")??
+        .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
@@ -786,9 +786,9 @@ mod tests {
             Duration::from_secs(2),
             client.map_fn(ReceiverStream::new(rx)),
         )
-            .await
-            .map_err(|_| "timeout while getting stream for map_fn")??
-            .into_inner();
+        .await
+        .map_err(|_| "timeout while getting stream for map_fn")??
+        .into_inner();
 
         let handshake_resp = stream.message().await?.unwrap();
         assert!(
