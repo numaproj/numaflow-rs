@@ -573,7 +573,6 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::error::Error;
     use std::time::Duration;
-    use std::vec;
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::mpsc::Sender;
@@ -587,7 +586,9 @@ mod tests {
     use super::{Message, Offset, SourceReadRequest, proto};
     use crate::source;
 
-    // A source that repeats the `num` for the requested count
+    /// A test source that repeats a number for the requested count.
+    /// Tracks acknowledgments to simulate realistic source behavior.
+    #[derive(Debug)]
     struct Repeater {
         num: usize,
         yet_to_ack: std::sync::RwLock<HashSet<String>>,
@@ -610,9 +611,11 @@ mod tests {
 
             for i in 0..request.count {
                 let mut headers = HashMap::new();
-                headers.insert(String::from("x-txn-id"), String::from(Uuid::new_v4()));
-                // we assume timestamp in nanoseconds would be unique on each read operation from our source
+                headers.insert("x-txn-id".to_string(), Uuid::new_v4().to_string());
+
+                // Create unique offset using timestamp and index
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+
                 transmitter
                     .send(Message {
                         value: self.num.to_le_bytes().to_vec(),
@@ -625,40 +628,35 @@ mod tests {
                         headers,
                     })
                     .await
-                    .unwrap();
-                message_offsets.push(offset)
+                    .expect("Failed to send message");
+
+                message_offsets.push(offset);
             }
-            self.yet_to_ack.write().unwrap().extend(message_offsets)
+
+            // Track unacknowledged messages
+            self.yet_to_ack.write().unwrap().extend(message_offsets);
         }
 
-        async fn ack(&self, offset: Vec<Offset>) {
-            for offset in offset {
-                self.yet_to_ack
-                    .write()
-                    .unwrap()
-                    .remove(&String::from_utf8(offset.offset).unwrap());
+        async fn ack(&self, offsets: Vec<Offset>) {
+            let mut pending = self.yet_to_ack.write().unwrap();
+            for offset in offsets {
+                let offset_str = String::from_utf8(offset.offset).expect("Invalid UTF-8 in offset");
+                pending.remove(&offset_str);
             }
         }
 
-        async fn nack(&self, offset: Vec<Offset>) {
-            // put these offsets to the front of the queue, so next read will pick them up
-            for offset in offset {
-                self.yet_to_ack
-                    .write()
-                    .unwrap()
-                    .remove(&String::from_utf8(offset.offset.clone()).unwrap());
-                self.yet_to_ack
-                    .write()
-                    .unwrap()
-                    .insert(String::from_utf8(offset.offset).unwrap());
+        async fn nack(&self, offsets: Vec<Offset>) {
+            let mut pending = self.yet_to_ack.write().unwrap();
+            for offset in offsets {
+                let offset_str = String::from_utf8(offset.offset).expect("Invalid UTF-8 in offset");
+                // For nack, we keep the offset in the pending set
+                // In a real implementation, this might requeue the message
+                pending.insert(offset_str);
             }
         }
 
         async fn pending(&self) -> Option<usize> {
-            // The pending function should return the number of pending messages that can be read from the source.
-            // However, for this source the pending messages will always be 0.
-            // For testing purposes, we return the number of messages that are not yet acknowledged as pending.
-            self.yet_to_ack.read().unwrap().len().into()
+            Some(self.yet_to_ack.read().unwrap().len())
         }
 
         async fn partitions(&self) -> Option<Vec<i32>> {
@@ -666,123 +664,325 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn source_server() -> Result<(), Box<dyn Error>> {
-        let tmp_dir = TempDir::new()?;
-        let sock_file = tmp_dir.path().join("source.sock");
-        let server_info_file = tmp_dir.path().join("sourcer-server-info");
+    /// Test utilities for setting up source server and client
+    mod test_utils {
+        use super::*;
+        use std::path::PathBuf;
+        use tokio::task::JoinHandle;
 
-        let mut server = source::Server::new(Repeater::new(8))
-            .with_server_info_file(&server_info_file)
-            .with_socket_file(&sock_file)
-            .with_max_message_size(10240);
+        /// Handle for managing test server lifecycle
+        pub struct TestServerHandle {
+            pub client: proto::source_client::SourceClient<tonic::transport::Channel>,
+            pub shutdown_tx: oneshot::Sender<()>,
+            pub server_task: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+        }
 
-        assert_eq!(server.max_message_size(), 10240);
-        assert_eq!(server.server_info_file(), server_info_file);
-        assert_eq!(server.socket_file(), sock_file);
+        impl TestServerHandle {
+            /// Gracefully shutdown the test server
+            pub async fn shutdown(self) -> Result<(), Box<dyn Error>> {
+                self.shutdown_tx
+                    .send(())
+                    .map_err(|_| "Failed to send shutdown signal")?;
+                tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
-            .connect_with_connector(service_fn(move |_: Uri| {
-                let sock_file = sock_file.clone();
-                async move {
-                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
-                        UnixStream::connect(sock_file).await?,
-                    ))
+                if !self.server_task.is_finished() {
+                    return Err("Server task did not finish".into());
                 }
-            }))
-            .await?;
 
-        let mut client = proto::source_client::SourceClient::new(channel);
-
-        // Test read_fn with bidirectional streaming
-        let (read_tx, read_rx) = mpsc::channel(4);
-        let handshake_request = proto::ReadRequest {
-            request: None,
-            handshake: Some(proto::Handshake { sot: true }),
-        };
-        read_tx.send(handshake_request).await.unwrap();
-
-        let read_request = proto::ReadRequest {
-            request: Some(proto::read_request::Request {
-                num_records: 5,
-                timeout_in_ms: 1000,
-            }),
-            handshake: None,
-        };
-        read_tx.send(read_request).await.unwrap();
-        drop(read_tx); // Close the sender to indicate no more requests
-
-        let mut response_stream = client
-            .read_fn(Request::new(ReceiverStream::new(read_rx)))
-            .await?
-            .into_inner();
-        let mut response_values = Vec::new();
-
-        while let Some(response) = response_stream.message().await? {
-            if let Some(status) = response.status {
-                if status.eot {
-                    break;
-                }
-            }
-
-            if let Some(result) = response.result {
-                response_values.push(result);
+                Ok(())
             }
         }
-        assert_eq!(response_values.len(), 5);
 
-        // Test pending_fn
-        let pending_before_ack = client.pending_fn(Request::new(())).await?.into_inner();
-        assert_eq!(pending_before_ack.result.unwrap().count, 5);
+        /// Start a test source server with the given repeater and return client handle
+        pub async fn start_test_server(
+            repeater: Repeater,
+        ) -> Result<TestServerHandle, Box<dyn Error>> {
+            let tmp_dir = TempDir::new()?;
+            let sock_file = tmp_dir.path().join("source.sock");
+            let server_info_file = tmp_dir.path().join("sourcer-server-info");
 
-        // Test ack_fn with client-side streaming
-        let (ack_tx, ack_rx) = mpsc::channel(10);
-        let ack_handshake_request = proto::AckRequest {
-            request: None,
-            handshake: Some(proto::Handshake { sot: true }),
-        };
-        ack_tx.send(ack_handshake_request).await.unwrap();
-        for resp in response_values.iter() {
-            let ack_request = proto::AckRequest {
-                request: Some(proto::ack_request::Request {
-                    offsets: vec![proto::Offset {
-                        offset: resp.offset.clone().unwrap().offset,
-                        partition_id: resp.offset.clone().unwrap().partition_id,
-                    }],
+            let mut server = source::Server::new(repeater)
+                .with_server_info_file(&server_info_file)
+                .with_socket_file(&sock_file)
+                .with_max_message_size(10240);
+
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let server_task =
+                tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+            // Wait for server to start
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let client = create_test_client(sock_file).await?;
+
+            Ok(TestServerHandle {
+                client,
+                shutdown_tx,
+                server_task,
+            })
+        }
+
+        /// Create a gRPC client connected to the test server
+        async fn create_test_client(
+            sock_file: PathBuf,
+        ) -> Result<proto::source_client::SourceClient<tonic::transport::Channel>, Box<dyn Error>>
+        {
+            let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+                .connect_with_connector(service_fn(move |_: Uri| {
+                    let sock_file = sock_file.clone();
+                    async move {
+                        Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                            UnixStream::connect(sock_file).await?,
+                        ))
+                    }
+                }))
+                .await?;
+
+            Ok(proto::source_client::SourceClient::new(channel))
+        }
+
+        /// Read messages from the source with proper handshake
+        pub async fn read_messages(
+            client: &mut proto::source_client::SourceClient<tonic::transport::Channel>,
+            num_records: u64,
+        ) -> Result<Vec<proto::read_response::Result>, Box<dyn Error>> {
+            let (read_tx, read_rx) = mpsc::channel(4);
+
+            // Send handshake
+            let handshake_request = proto::ReadRequest {
+                request: None,
+                handshake: Some(proto::Handshake { sot: true }),
+            };
+            read_tx.send(handshake_request).await?;
+
+            // Send read request
+            let read_request = proto::ReadRequest {
+                request: Some(proto::read_request::Request {
+                    num_records,
+                    timeout_in_ms: 1000,
                 }),
                 handshake: None,
             };
-            ack_tx.send(ack_request).await.unwrap();
+            read_tx.send(read_request).await?;
+            drop(read_tx);
+
+            let mut response_stream = client
+                .read_fn(Request::new(ReceiverStream::new(read_rx)))
+                .await?
+                .into_inner();
+
+            let mut messages = Vec::new();
+            while let Some(response) = response_stream.message().await? {
+                if let Some(status) = response.status {
+                    if status.eot {
+                        break;
+                    }
+                }
+                if let Some(result) = response.result {
+                    messages.push(result);
+                }
+            }
+
+            Ok(messages)
         }
-        drop(ack_tx); // Close the sender to indicate no more requests
 
-        let mut ack_response = client
-            .ack_fn(Request::new(ReceiverStream::new(ack_rx)))
-            .await?
-            .into_inner();
+        /// Acknowledge messages with proper handshake
+        pub async fn ack_messages(
+            client: &mut proto::source_client::SourceClient<tonic::transport::Channel>,
+            messages: &[proto::read_response::Result],
+        ) -> Result<(), Box<dyn Error>> {
+            let (ack_tx, ack_rx) = mpsc::channel(10);
 
-        // first response will be the handshake response
-        let ack_handshake_response = ack_response.message().await?.unwrap();
-        assert!(ack_handshake_response.handshake.unwrap().sot);
+            // Send handshake
+            let ack_handshake_request = proto::AckRequest {
+                request: None,
+                handshake: Some(proto::Handshake { sot: true }),
+            };
+            ack_tx.send(ack_handshake_request).await?;
 
-        for _ in 0..5 {
-            assert!(ack_response.message().await?.is_some());
+            // Send ack requests
+            for message in messages {
+                let ack_request = proto::AckRequest {
+                    request: Some(proto::ack_request::Request {
+                        offsets: vec![proto::Offset {
+                            offset: message.offset.as_ref().unwrap().offset.clone(),
+                            partition_id: message.offset.as_ref().unwrap().partition_id,
+                        }],
+                    }),
+                    handshake: None,
+                };
+                ack_tx.send(ack_request).await?;
+            }
+            drop(ack_tx);
+
+            let mut ack_response = client
+                .ack_fn(Request::new(ReceiverStream::new(ack_rx)))
+                .await?
+                .into_inner();
+
+            // Consume handshake response
+            let handshake_response = ack_response.message().await?.unwrap();
+            assert!(handshake_response.handshake.unwrap().sot);
+
+            // Consume ack responses
+            for _ in 0..messages.len() {
+                assert!(ack_response.message().await?.is_some());
+            }
+
+            Ok(())
         }
 
-        let pending_after_ack = client.pending_fn(Request::new(())).await?.into_inner();
-        assert_eq!(pending_after_ack.result.unwrap().count, 0);
+        /// Negatively acknowledge messages
+        pub async fn nack_messages(
+            client: &mut proto::source_client::SourceClient<tonic::transport::Channel>,
+            messages: &[proto::read_response::Result],
+        ) -> Result<(), Box<dyn Error>> {
+            for message in messages {
+                let nack_request = proto::NackRequest {
+                    request: Some(proto::nack_request::Request {
+                        offsets: vec![proto::Offset {
+                            offset: message.offset.as_ref().unwrap().offset.clone(),
+                            partition_id: message.offset.as_ref().unwrap().partition_id,
+                        }],
+                    }),
+                };
 
-        let partitions = client.partitions_fn(Request::new(())).await?.into_inner();
-        assert_eq!(partitions.result.unwrap().partitions, vec![2]);
+                client.nack_fn(Request::new(nack_request)).await?;
+            }
 
-        shutdown_tx.send(()).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(task.is_finished(), "gRPC server is still running");
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_source_read_ack_pending_partitions() -> Result<(), Box<dyn Error>> {
+        // Setup test server with Repeater source
+        let repeater = Repeater::new(42);
+        let mut handle = test_utils::start_test_server(repeater).await?;
+
+        // Test read operation
+        let messages = test_utils::read_messages(&mut handle.client, 3).await?;
+        assert_eq!(messages.len(), 3, "Should read exactly 3 messages");
+
+        // Verify message content
+        for message in &messages {
+            // The Repeater stores usize as bytes, so we need to convert back
+            let bytes: [u8; std::mem::size_of::<usize>()] = message
+                .payload
+                .as_slice()
+                .try_into()
+                .expect("Invalid payload size");
+            let value = usize::from_le_bytes(bytes);
+            assert_eq!(value, 42, "Message value should be 42");
+            assert!(message.offset.is_some(), "Message should have offset");
+            assert_eq!(message.offset.as_ref().unwrap().partition_id, 0);
+        }
+
+        // Test pending before ack
+        let pending_response = handle.client.pending_fn(Request::new(())).await?;
+        assert_eq!(
+            pending_response.into_inner().result.unwrap().count,
+            3,
+            "Should have 3 pending messages before ack"
+        );
+
+        // Test partitions
+        let partitions_response = handle.client.partitions_fn(Request::new(())).await?;
+        assert_eq!(
+            partitions_response.into_inner().result.unwrap().partitions,
+            vec![2],
+            "Should return partition [2]"
+        );
+
+        // Test ack operation
+        test_utils::ack_messages(&mut handle.client, &messages).await?;
+
+        // Test pending after ack
+        let pending_response = handle.client.pending_fn(Request::new(())).await?;
+        assert_eq!(
+            pending_response.into_inner().result.unwrap().count,
+            0,
+            "Should have 0 pending messages after ack"
+        );
+
+        // Cleanup
+        handle.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_source_read_nack_pending() -> Result<(), Box<dyn Error>> {
+        // Setup test server with Repeater source
+        let repeater = Repeater::new(100);
+        let mut handle = test_utils::start_test_server(repeater).await?;
+
+        // Test read operation
+        let messages = test_utils::read_messages(&mut handle.client, 2).await?;
+        assert_eq!(messages.len(), 2, "Should read exactly 2 messages");
+
+        // Verify message content
+        for message in &messages {
+            // The Repeater stores usize as bytes, so we need to convert back
+            let bytes: [u8; std::mem::size_of::<usize>()] = message
+                .payload
+                .as_slice()
+                .try_into()
+                .expect("Invalid payload size");
+            let value = usize::from_le_bytes(bytes);
+            assert_eq!(value, 100, "Message value should be 100");
+        }
+
+        // Test pending before nack
+        let pending_response = handle.client.pending_fn(Request::new(())).await?;
+        assert_eq!(
+            pending_response.into_inner().result.unwrap().count,
+            2,
+            "Should have 2 pending messages before nack"
+        );
+
+        // Test nack operation
+        test_utils::nack_messages(&mut handle.client, &messages).await?;
+
+        // Test pending after nack (messages should still be pending)
+        let pending_response = handle.client.pending_fn(Request::new(())).await?;
+        assert_eq!(
+            pending_response.into_inner().result.unwrap().count,
+            2,
+            "Should still have 2 pending messages after nack"
+        );
+
+        // Test that we can still ack the messages after nack
+        test_utils::ack_messages(&mut handle.client, &messages).await?;
+
+        // Test pending after ack
+        let pending_response = handle.client.pending_fn(Request::new(())).await?;
+        assert_eq!(
+            pending_response.into_inner().result.unwrap().count,
+            0,
+            "Should have 0 pending messages after ack"
+        );
+
+        // Cleanup
+        handle.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_source_server_configuration() -> Result<(), Box<dyn Error>> {
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("custom_source.sock");
+        let server_info_file = tmp_dir.path().join("custom-server-info");
+
+        let server = source::Server::new(Repeater::new(1))
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(8192);
+
+        // Test configuration getters
+        assert_eq!(server.max_message_size(), 8192);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
         Ok(())
     }
 }
