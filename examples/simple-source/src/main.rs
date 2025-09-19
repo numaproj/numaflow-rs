@@ -33,6 +33,7 @@ pub(crate) mod simple_source {
 
     #[tonic::async_trait]
     impl Sourcer for SimpleSource {
+        /// read generates a sequence of offsets and data.
         async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
             if !self.yet_to_ack.read().unwrap().is_empty() {
                 return;
@@ -68,12 +69,25 @@ pub(crate) mod simple_source {
             }
         }
 
+        /// returns the number of messages that are yet to be acknowledged & processed
         async fn pending(&self) -> Option<usize> {
             self.yet_to_ack.read().unwrap().len().into()
         }
 
+        /// returns the partitions from which the data is being read from.
         async fn partitions(&self) -> Option<Vec<i32>> {
             Some(vec![0])
+        }
+
+        /// negatively acknowledge the offsets, removes the offset from the set and adds it back to
+        /// the front of the queue
+        async fn nack(&self, offset: Vec<Offset>) {
+            // put these offsets to the front of the queue, so next read will pick them up
+            for offset in offset {
+                let x = &String::from_utf8(offset.offset).unwrap();
+                self.yet_to_ack.write().unwrap().remove(x);
+                self.yet_to_ack.write().unwrap().insert(x.clone());
+            }
         }
     }
 }

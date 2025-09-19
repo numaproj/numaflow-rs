@@ -56,6 +56,8 @@ pub trait Sourcer {
     async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>);
     /// Acknowledges the message that has been processed by the user-defined source.
     async fn ack(&self, offset: Vec<Offset>);
+    /// Negatively acknowledges the message that has been processed by the user-defined source.
+    async fn nack(&self, offset: Vec<Offset>);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     /// The None value can be returned if source doesn't support detecting the backlog.
     async fn pending(&self) -> Option<usize>;
@@ -278,13 +280,7 @@ where
                         let request = ack_request.request
                             .ok_or_else(|| Error::SourceError(ErrorKind::InternalError("Invalid request, request can't be empty".to_string())))?;
 
-                        let offsets = request.offsets
-                            .iter()
-                            .map(|offset| Offset {
-                                offset: offset.offset.clone(),
-                                partition_id: offset.partition_id,
-                            })
-                            .collect();
+                        let offsets: Vec<Offset> = request.offsets.into_iter().map(|offset| offset.into()).collect();
 
                         handler_fn
                             .ack(offsets)
@@ -325,6 +321,27 @@ where
         Ok(Response::new(ReceiverStream::new(ack_rx)))
     }
 
+    /// negatively acknowledge the offsets
+    async fn nack_fn(
+        &self,
+        request: Request<proto::NackRequest>,
+    ) -> Result<Response<proto::NackResponse>, Status> {
+        let request = request.into_inner().request.ok_or_else(|| {
+            Status::invalid_argument("Invalid request, request can't be empty".to_string())
+        })?;
+
+        let offsets: Vec<Offset> = request
+            .offsets
+            .into_iter()
+            .map(|offset| offset.into())
+            .collect();
+
+        self.handler.nack(offsets).await;
+        Ok(Response::new(proto::NackResponse {
+            result: Some(proto::nack_response::Result { success: Some(()) }),
+        }))
+    }
+
     async fn pending_fn(&self, _: Request<()>) -> Result<Response<proto::PendingResponse>, Status> {
         // invoke the user-defined source's pending handler
         let pending = match self.handler.pending().await {
@@ -356,6 +373,15 @@ where
 
     async fn is_ready(&self, _: Request<()>) -> Result<Response<proto::ReadyResponse>, Status> {
         Ok(Response::new(proto::ReadyResponse { ready: true }))
+    }
+}
+
+impl From<proto::Offset> for Offset {
+    fn from(offset: proto::Offset) -> Self {
+        Self {
+            offset: offset.offset,
+            partition_id: offset.partition_id,
+        }
     }
 }
 
@@ -611,6 +637,20 @@ mod tests {
                     .write()
                     .unwrap()
                     .remove(&String::from_utf8(offset.offset).unwrap());
+            }
+        }
+
+        async fn nack(&self, offset: Vec<Offset>) {
+            // put these offsets to the front of the queue, so next read will pick them up
+            for offset in offset {
+                self.yet_to_ack
+                    .write()
+                    .unwrap()
+                    .remove(&String::from_utf8(offset.offset.clone()).unwrap());
+                self.yet_to_ack
+                    .write()
+                    .unwrap()
+                    .insert(String::from_utf8(offset.offset).unwrap());
             }
         }
 
