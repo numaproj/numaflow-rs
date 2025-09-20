@@ -1467,7 +1467,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_panic_in_accumulate() -> Result<(), Box<dyn Error>> {
-            let (mut server, sock_file, _) = setup_server(PanicAccumulatorCreator).await?;
+            let (server, sock_file, _) = setup_server(PanicAccumulatorCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 

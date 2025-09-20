@@ -1219,7 +1219,7 @@ mod tests {
 
         #[tokio::test]
         async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
-            let (mut server, sock_file, _) = setup_server(SimplePanicReducerCreator).await?;
+            let (server, sock_file, _) = setup_server(SimplePanicReducerCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1295,7 +1295,7 @@ mod tests {
         // processed successfully since we do graceful shutdown of the server.
         #[tokio::test]
         async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
-            let (mut server, sock_file, _) = setup_server(ConditionalPanicReducerCreator).await?;
+            let (server, sock_file, _) = setup_server(ConditionalPanicReducerCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 

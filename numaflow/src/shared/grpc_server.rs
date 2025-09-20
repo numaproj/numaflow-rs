@@ -187,11 +187,6 @@ mod tests {
     }
 }
 
-/// Type alias for service builder function that creates a gRPC service
-/// Takes shutdown channel and cancellation token, returns a tonic Router
-pub type ServiceBuilder<T> =
-    Box<dyn FnOnce(T, mpsc::Sender<()>, CancellationToken) -> Router + Send>;
-
 /// Generic gRPC server that can handle any service type
 /// This eliminates the need for duplicate Server implementations across all service files
 #[derive(Debug)]
