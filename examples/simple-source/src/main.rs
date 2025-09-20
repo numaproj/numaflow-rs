@@ -19,6 +19,7 @@ pub(crate) mod simple_source {
     /// does not provide a mutable reference as explained in [`Sourcer`]
     pub(crate) struct SimpleSource {
         yet_to_ack: RwLock<HashSet<String>>,
+        nacked: RwLock<HashSet<String>>,
         counter: AtomicUsize,
     }
 
@@ -26,6 +27,7 @@ pub(crate) mod simple_source {
         pub(crate) fn new() -> Self {
             Self {
                 yet_to_ack: RwLock::new(HashSet::new()),
+                nacked: RwLock::new(HashSet::new()),
                 counter: AtomicUsize::new(0),
             }
         }
@@ -39,22 +41,27 @@ pub(crate) mod simple_source {
                 return;
             }
 
+            // if there are nacked message send them first and remove them from the nacked set
+            // and return early
+            let nacked = self.nacked.read().unwrap().clone();
+            if !nacked.is_empty() {
+                for offset in nacked {
+                    transmitter
+                        .send(self.create_message(offset).await)
+                        .await
+                        .unwrap();
+                }
+                // clear the nacked set
+                self.nacked.write().unwrap().clear();
+                return;
+            }
+
             let event_time = Utc::now();
             let mut message_offsets = Vec::with_capacity(request.count);
             for i in 0..request.count {
                 let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
-                let payload = self.counter.fetch_add(1, Ordering::Relaxed).to_string();
                 transmitter
-                    .send(Message {
-                        value: payload.into_bytes(),
-                        event_time,
-                        offset: Offset {
-                            offset: offset.clone().into_bytes(),
-                            partition_id: 0,
-                        },
-                        keys: vec![],
-                        headers: Default::default(),
-                    })
+                    .send(self.create_message(offset.clone()).await)
                     .await
                     .unwrap();
                 message_offsets.push(offset)
@@ -84,9 +91,27 @@ pub(crate) mod simple_source {
         async fn nack(&self, offset: Vec<Offset>) {
             // put these offsets to the front of the queue, so next read will pick them up
             for offset in offset {
+                println!("Nacking offset: {:?}", offset.offset);
                 let x = &String::from_utf8(offset.offset).unwrap();
                 self.yet_to_ack.write().unwrap().remove(x);
-                self.yet_to_ack.write().unwrap().insert(x.clone());
+                self.nacked.write().unwrap().insert(x.clone());
+                self.counter.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    impl SimpleSource {
+        async fn create_message(&self, offset: String) -> Message {
+            let payload = self.counter.fetch_add(1, Ordering::Relaxed).to_string();
+            Message {
+                value: payload.into_bytes(),
+                event_time: Utc::now(),
+                offset: Offset {
+                    offset: offset.clone().into_bytes(),
+                    partition_id: 0,
+                },
+                keys: vec![],
+                headers: Default::default(),
             }
         }
     }
