@@ -14,9 +14,7 @@ use tracing::{error, info};
 use crate::error::{Error, ErrorKind};
 use crate::session_reduce::proto::session_reduce_request::window_operation::Event;
 use crate::shared;
-use shared::{
-    ContainerType, build_panic_status, get_panic_info,
-};
+use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -963,7 +961,12 @@ impl<C> Server<C> {
     /// Create a new Server with the given session reduce service
     pub fn new(creator: C) -> Self {
         Self {
-            inner: shared::Server::new(creator, ContainerType::SessionReduce, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                creator,
+                ContainerType::SessionReduce,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -1011,20 +1014,25 @@ impl<C> Server<C> {
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(user_shutdown_rx, |creator, max_message_size, shutdown_tx, cln_token| {
-            let session_reduce_svc = SessionReduceService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                user_shutdown_rx,
+                |creator, max_message_size, shutdown_tx, cln_token| {
+                    let session_reduce_svc = SessionReduceService {
+                        creator: Arc::new(creator),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let session_reduce_svc =
-                proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
-                    .max_encoding_message_size(max_message_size)
-                    .max_decoding_message_size(max_message_size);
+                    let session_reduce_svc =
+                        proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
+                            .max_encoding_message_size(max_message_size)
+                            .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(session_reduce_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(session_reduce_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates
@@ -1033,20 +1041,22 @@ impl<C> Server<C> {
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
-        self.inner.start(|creator, max_message_size, shutdown_tx, cln_token| {
-            let session_reduce_svc = SessionReduceService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|creator, max_message_size, shutdown_tx, cln_token| {
+                let session_reduce_svc = SessionReduceService {
+                    creator: Arc::new(creator),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let session_reduce_svc =
-                proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
-                    .max_encoding_message_size(max_message_size)
-                    .max_decoding_message_size(max_message_size);
+                let session_reduce_svc =
+                    proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(session_reduce_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(session_reduce_svc)
+            })
+            .await
     }
 }
 

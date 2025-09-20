@@ -12,9 +12,7 @@ use tracing::{error, info};
 use crate::accumulator::proto::accumulator_request::window_operation::Event;
 use crate::error::{Error, ErrorKind};
 use crate::shared;
-use shared::{
-    ContainerType, build_panic_status, get_panic_info,
-};
+use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -926,7 +924,12 @@ impl<C> Server<C> {
     /// Create a new Server with the given accumulator service
     pub fn new(creator: C) -> Self {
         Self {
-            inner: shared::Server::new(creator, ContainerType::Accumulator, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                creator,
+                ContainerType::Accumulator,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -974,19 +977,25 @@ impl<C> Server<C> {
     where
         C: AccumulatorCreator + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(user_shutdown_rx, |creator, max_message_size, shutdown_tx, cln_token| {
-            let accumulator_svc = AccumulatorService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                user_shutdown_rx,
+                |creator, max_message_size, shutdown_tx, cln_token| {
+                    let accumulator_svc = AccumulatorService {
+                        creator: Arc::new(creator),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let accumulator_svc = proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                    let accumulator_svc =
+                        proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
+                            .max_encoding_message_size(max_message_size)
+                            .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(accumulator_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(accumulator_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates
@@ -995,19 +1004,22 @@ impl<C> Server<C> {
     where
         C: AccumulatorCreator + Send + Sync + 'static,
     {
-        self.inner.start(|creator, max_message_size, shutdown_tx, cln_token| {
-            let accumulator_svc = AccumulatorService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|creator, max_message_size, shutdown_tx, cln_token| {
+                let accumulator_svc = AccumulatorService {
+                    creator: Arc::new(creator),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let accumulator_svc = proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                let accumulator_svc =
+                    proto::accumulator_server::AccumulatorServer::new(accumulator_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(accumulator_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(accumulator_svc)
+            })
+            .await
     }
 }
 

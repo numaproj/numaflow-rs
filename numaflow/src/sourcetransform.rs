@@ -17,8 +17,8 @@ use crate::proto::source_transformer as proto;
 use crate::shared;
 
 use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info,
-    prost_timestamp_from_utc, utc_from_timestamp,
+    ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc,
+    utc_from_timestamp,
 };
 
 /// Default socket address for source transformer service
@@ -443,7 +443,12 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(sourcetransformer_svc: T) -> Self {
         Self {
-            inner: shared::Server::new(sourcetransformer_svc, ContainerType::SourceTransformer, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                sourcetransformer_svc,
+                ContainerType::SourceTransformer,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -489,20 +494,25 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
-            let sourcetrf_svc = SourceTransformerService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let sourcetrf_svc = SourceTransformerService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let sourcetrf_svc =
-                proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
-                    .max_encoding_message_size(max_message_size)
-                    .max_decoding_message_size(max_message_size);
+                    let sourcetrf_svc =
+                        proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
+                            .max_encoding_message_size(max_message_size)
+                            .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(sourcetrf_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(sourcetrf_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers singal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
@@ -510,20 +520,22 @@ impl<T> Server<T> {
     where
         T: SourceTransformer + Send + Sync + 'static,
     {
-        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
-            let sourcetrf_svc = SourceTransformerService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let sourcetrf_svc = SourceTransformerService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let sourcetrf_svc =
-                proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
-                    .max_encoding_message_size(max_message_size)
-                    .max_decoding_message_size(max_message_size);
+                let sourcetrf_svc =
+                    proto::source_transform_server::SourceTransformServer::new(sourcetrf_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(sourcetrf_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(sourcetrf_svc)
+            })
+            .await
     }
 }
 

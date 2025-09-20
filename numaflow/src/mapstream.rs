@@ -16,9 +16,7 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
-use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info,
-};
+use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for mapstream service
 const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
@@ -450,7 +448,12 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(map_stream_svc: T) -> Self {
         Self {
-            inner: shared::Server::new(map_stream_svc, ContainerType::MapStream, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                map_stream_svc,
+                ContainerType::MapStream,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -496,38 +499,45 @@ impl<T> Server<T> {
     where
         T: MapStreamer + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
-            let map_stream_svc = MapStreamService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let map_stream_svc = MapStreamService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                    let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(map_stream_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(map_stream_svc)
+                },
+            )
+            .await
     }
 
     pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: MapStreamer + Send + Sync + 'static,
     {
-        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
-            let map_stream_svc = MapStreamService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let map_stream_svc = MapStreamService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
+                    .max_encoding_message_size(max_message_size)
+                    .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(map_stream_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(map_stream_svc)
+            })
+            .await
     }
 }
 

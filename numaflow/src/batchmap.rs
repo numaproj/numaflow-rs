@@ -17,9 +17,7 @@ use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info,
-};
+use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for batchmap service
 const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -493,7 +491,12 @@ pub struct Server<T> {
 impl<T> Server<T> {
     pub fn new(batch_map_svc: T) -> Self {
         Self {
-            inner: shared::Server::new(batch_map_svc, ContainerType::BatchMap, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                batch_map_svc,
+                ContainerType::BatchMap,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -539,19 +542,24 @@ impl<T> Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
-            let map_svc = BatchMapService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let map_svc = BatchMapService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let map_svc = proto::map_server::MapServer::new(map_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                    let map_svc = proto::map_server::MapServer::new(map_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(map_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(map_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
@@ -559,19 +567,21 @@ impl<T> Server<T> {
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
-            let map_svc = BatchMapService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let map_svc = BatchMapService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let map_svc = proto::map_server::MapServer::new(map_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                let map_svc = proto::map_server::MapServer::new(map_svc)
+                    .max_encoding_message_size(max_message_size)
+                    .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(map_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(map_svc)
+            })
+            .await
     }
 }
 #[cfg(test)]

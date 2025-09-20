@@ -445,7 +445,12 @@ impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
         Self {
-            inner: shared::Server::new(source_svc, ContainerType::Source, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                source_svc,
+                ContainerType::Source,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
@@ -491,19 +496,24 @@ impl<T> Server<T> {
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
-            let source_service = SourceService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let source_service = SourceService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let source_svc = proto::source_server::SourceServer::new(source_service)
-                .max_decoding_message_size(max_message_size)
-                .max_encoding_message_size(max_message_size);
+                    let source_svc = proto::source_server::SourceServer::new(source_service)
+                        .max_decoding_message_size(max_message_size)
+                        .max_encoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(source_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(source_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signals arrives.
@@ -511,19 +521,21 @@ impl<T> Server<T> {
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
-            let source_service = SourceService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let source_service = SourceService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let source_svc = proto::source_server::SourceServer::new(source_service)
-                .max_decoding_message_size(max_message_size)
-                .max_encoding_message_size(max_message_size);
+                let source_svc = proto::source_server::SourceServer::new(source_service)
+                    .max_decoding_message_size(max_message_size)
+                    .max_encoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(source_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(source_svc)
+            })
+            .await
     }
 }
 #[cfg(test)]

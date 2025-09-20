@@ -31,10 +31,7 @@ impl ServerStarter {
         default_server_info_file: &str,
     ) -> Self {
         let config = ServerConfig::new(default_sock_addr, default_server_info_file);
-        let cleanup = SocketCleanup::new(
-            default_sock_addr.into(),
-            default_server_info_file.into(),
-        );
+        let cleanup = SocketCleanup::new(default_sock_addr.into(), default_server_info_file.into());
 
         Self {
             config,
@@ -54,10 +51,7 @@ impl ServerStarter {
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(
-            file_path,
-            self.config.server_info_file().to_path_buf(),
-        );
+        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
         self
     }
 
@@ -81,10 +75,7 @@ impl ServerStarter {
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_server_info_file(&file_path);
-        self._cleanup = SocketCleanup::new(
-            self.config.socket_file().to_path_buf(),
-            file_path,
-        );
+        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
         self
     }
 
@@ -146,14 +137,16 @@ mod tests {
 
     #[test]
     fn test_server_starter_creation() {
-        let starter = ServerStarter::new(
-            ContainerType::Map,
-            "/tmp/test.sock",
-            "/tmp/test-info",
-        );
+        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info");
 
-        assert_eq!(starter.socket_file(), std::path::Path::new("/tmp/test.sock"));
-        assert_eq!(starter.server_info_file(), std::path::Path::new("/tmp/test-info"));
+        assert_eq!(
+            starter.socket_file(),
+            std::path::Path::new("/tmp/test.sock")
+        );
+        assert_eq!(
+            starter.server_info_file(),
+            std::path::Path::new("/tmp/test-info")
+        );
         assert_eq!(starter.max_message_size(), 64 * 1024 * 1024); // 64MB default
     }
 
@@ -163,15 +156,11 @@ mod tests {
         let sock_file = tmp_dir.path().join("custom.sock");
         let info_file = tmp_dir.path().join("custom-info");
 
-        let starter = ServerStarter::new(
-            ContainerType::Map,
-            "/tmp/test.sock",
-            "/tmp/test-info",
-        )
-        .with_socket_file(&sock_file)
-        .with_server_info_file(&info_file)
-        .with_max_message_size(1024)
-        .with_panic_hook(false);
+        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info")
+            .with_socket_file(&sock_file)
+            .with_server_info_file(&info_file)
+            .with_max_message_size(1024)
+            .with_panic_hook(false);
 
         assert_eq!(starter.socket_file(), sock_file);
         assert_eq!(starter.server_info_file(), info_file);
@@ -187,14 +176,21 @@ mod tests {
             "/var/run/numaflow/reducer-server-info",
         );
 
-        assert_eq!(starter.socket_file(), std::path::Path::new("/var/run/numaflow/reduce.sock"));
-        assert_eq!(starter.server_info_file(), std::path::Path::new("/var/run/numaflow/reducer-server-info"));
+        assert_eq!(
+            starter.socket_file(),
+            std::path::Path::new("/var/run/numaflow/reduce.sock")
+        );
+        assert_eq!(
+            starter.server_info_file(),
+            std::path::Path::new("/var/run/numaflow/reducer-server-info")
+        );
     }
 }
 
 /// Type alias for service builder function that creates a gRPC service
 /// Takes shutdown channel and cancellation token, returns a tonic Router
-pub type ServiceBuilder<T> = Box<dyn FnOnce(T, mpsc::Sender<()>, CancellationToken) -> Router + Send>;
+pub type ServiceBuilder<T> =
+    Box<dyn FnOnce(T, mpsc::Sender<()>, CancellationToken) -> Router + Send>;
 
 /// Generic gRPC server that can handle any service type
 /// This eliminates the need for duplicate Server implementations across all service files
@@ -212,7 +208,8 @@ impl<T> Server<T> {
         default_sock_addr: &str,
         default_server_info_file: &str,
     ) -> Self {
-        let starter = ServerStarter::new(container_type, default_sock_addr, default_server_info_file);
+        let starter =
+            ServerStarter::new(container_type, default_sock_addr, default_server_info_file);
 
         Self {
             starter,
@@ -282,9 +279,11 @@ impl<T> Server<T> {
         let handler = self.svc.take().unwrap();
         let max_message_size = self.starter.max_message_size();
 
-        self.starter.start_server(Some(shutdown_rx), |shutdown_tx, cln_token| {
-            service_builder(handler, max_message_size, shutdown_tx, cln_token)
-        }).await
+        self.starter
+            .start_server(Some(shutdown_rx), |shutdown_tx, cln_token| {
+                service_builder(handler, max_message_size, shutdown_tx, cln_token)
+            })
+            .await
     }
 
     /// Starts the gRPC server with a custom service builder function.
@@ -300,8 +299,10 @@ impl<T> Server<T> {
         let handler = self.svc.take().unwrap();
         let max_message_size = self.starter.max_message_size();
 
-        self.starter.start_server(None, |shutdown_tx, cln_token| {
-            service_builder(handler, max_message_size, shutdown_tx, cln_token)
-        }).await
+        self.starter
+            .start_server(None, |shutdown_tx, cln_token| {
+                service_builder(handler, max_message_size, shutdown_tx, cln_token)
+            })
+            .await
     }
 }

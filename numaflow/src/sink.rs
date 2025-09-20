@@ -15,10 +15,7 @@ use crate::error::{Error, ErrorKind};
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
-use shared::{
-    ContainerType, ENV_CONTAINER_TYPE, build_panic_status,
-    get_panic_info,
-};
+use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
 
 /// Default socket address for sink service
 const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
@@ -469,7 +466,12 @@ impl<T> Server<T> {
         };
 
         Self {
-            inner: shared::Server::new_with_custom_paths(svc, ContainerType::Sink, sock_addr, server_info_file),
+            inner: shared::Server::new_with_custom_paths(
+                svc,
+                ContainerType::Sink,
+                sock_addr,
+                server_info_file,
+            ),
         }
     }
 
@@ -515,19 +517,24 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
-            let svc = SinkService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let svc = SinkService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let svc = sink_pb::sink_server::SinkServer::new(svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                    let svc = sink_pb::sink_server::SinkServer::new(svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the singal arrives.
@@ -535,19 +542,21 @@ impl<T> Server<T> {
     where
         T: Sinker + Send + Sync + 'static,
     {
-        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
-            let svc = SinkService {
-                handler: Arc::new(handler),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let svc = SinkService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let svc = sink_pb::sink_server::SinkServer::new(svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                let svc = sink_pb::sink_server::SinkServer::new(svc)
+                    .max_encoding_message_size(max_message_size)
+                    .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(svc)
-        }).await
+                tonic::transport::Server::builder().add_service(svc)
+            })
+            .await
     }
 }
 

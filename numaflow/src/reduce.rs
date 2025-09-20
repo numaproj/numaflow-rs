@@ -13,10 +13,7 @@ use tonic::{Request, Response, Status, async_trait};
 use crate::error::{Error, ErrorKind};
 pub use crate::proto::reduce as proto;
 use crate::shared;
-use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info,
-    prost_timestamp_from_utc,
-};
+use shared::{ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc};
 use tracing::error;
 /// Default socket address for reduce service
 const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
@@ -807,19 +804,24 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        self.inner.start_with_shutdown(user_shutdown_rx, |creator, max_message_size, shutdown_tx, cln_token| {
-            let reduce_svc = ReduceService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start_with_shutdown(
+                user_shutdown_rx,
+                |creator, max_message_size, shutdown_tx, cln_token| {
+                    let reduce_svc = ReduceService {
+                        creator: Arc::new(creator),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-            let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                    let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(reduce_svc)
-        }).await
+                    tonic::transport::Server::builder().add_service(reduce_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates
@@ -828,19 +830,21 @@ impl<C> Server<C> {
     where
         C: ReducerCreator + Send + Sync + 'static,
     {
-        self.inner.start(|creator, max_message_size, shutdown_tx, cln_token| {
-            let reduce_svc = ReduceService {
-                creator: Arc::new(creator),
-                shutdown_tx,
-                cancellation_token: cln_token,
-            };
+        self.inner
+            .start(|creator, max_message_size, shutdown_tx, cln_token| {
+                let reduce_svc = ReduceService {
+                    creator: Arc::new(creator),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
 
-            let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
-                .max_encoding_message_size(max_message_size)
-                .max_decoding_message_size(max_message_size);
+                let reduce_svc = proto::reduce_server::ReduceServer::new(reduce_svc)
+                    .max_encoding_message_size(max_message_size)
+                    .max_decoding_message_size(max_message_size);
 
-            tonic::transport::Server::builder().add_service(reduce_svc)
-        }).await
+                tonic::transport::Server::builder().add_service(reduce_svc)
+            })
+            .await
     }
 }
 
