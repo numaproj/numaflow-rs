@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -441,6 +440,21 @@ pub struct Server<T> {
     inner: shared::Server<T>,
 }
 
+impl<T> shared::ServerExtras<T> for Server<T> {
+    fn transform_inner<F>(self, f: F) -> Self
+    where
+        F: FnOnce(shared::Server<T>) -> shared::Server<T>,
+    {
+        Self {
+            inner: f(self.inner),
+        }
+    }
+
+    fn inner_ref(&self) -> &shared::Server<T> {
+        &self.inner
+    }
+}
+
 impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
@@ -452,40 +466,6 @@ impl<T> Server<T> {
                 SERVER_INFO_FILE,
             ),
         }
-    }
-
-    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    /// Default value is `/var/run/numaflow/source.sock`
-    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.inner = self.inner.with_socket_file(file);
-        self
-    }
-
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
-    pub fn socket_file(&self) -> &std::path::Path {
-        self.inner.socket_file()
-    }
-
-    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
-    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.inner = self.inner.with_max_message_size(message_size);
-        self
-    }
-
-    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
-    pub fn max_message_size(&self) -> usize {
-        self.inner.max_message_size()
-    }
-
-    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcer-server-info`
-    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        self.inner = self.inner.with_server_info_file(file);
-        self
-    }
-
-    /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sourcer-server-info`
-    pub fn server_info_file(&self) -> &std::path::Path {
-        self.inner.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
@@ -540,6 +520,7 @@ impl<T> Server<T> {
 }
 #[cfg(test)]
 mod tests {
+    use crate::shared::ServerExtras;
     use chrono::Utc;
     use std::collections::{HashMap, HashSet};
     use std::error::Error;

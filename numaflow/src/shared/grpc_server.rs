@@ -14,6 +14,64 @@ use super::{
     init_panic_hook, shutdown_signal,
 };
 
+/// Trait providing default implementations for common server configuration methods.
+/// This trait works with the builder pattern and eliminates boilerplate delegation code.
+pub trait ServerExtras<T> {
+    /// Extract the inner server, transform it, and wrap it back
+    fn transform_inner<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Server<T>) -> Server<T>,
+        Self: Sized;
+
+    /// Get a reference to the inner server
+    fn inner_ref(&self) -> &Server<T>;
+
+    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
+    fn with_socket_file(self, file: impl Into<PathBuf>) -> Self
+    where
+        Self: Sized,
+    {
+        self.transform_inner(|inner| inner.with_socket_file(file))
+    }
+
+    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
+    fn socket_file<'a>(&'a self) -> &'a std::path::Path
+    where
+        T: 'a,
+    {
+        self.inner_ref().socket_file()
+    }
+
+    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes.
+    fn with_max_message_size(self, message_size: usize) -> Self
+    where
+        Self: Sized,
+    {
+        self.transform_inner(|inner| inner.with_max_message_size(message_size))
+    }
+
+    /// Get the maximum size of an encoded and decoded gRPC message in bytes.
+    fn max_message_size(&self) -> usize {
+        self.inner_ref().max_message_size()
+    }
+
+    /// Change the file in which numaflow server information is stored on start up to the new value.
+    fn with_server_info_file(self, file: impl Into<PathBuf>) -> Self
+    where
+        Self: Sized,
+    {
+        self.transform_inner(|inner| inner.with_server_info_file(file))
+    }
+
+    /// Get the path to the file where numaflow server info is stored.
+    fn server_info_file<'a>(&'a self) -> &'a std::path::Path
+    where
+        T: 'a,
+    {
+        self.inner_ref().server_info_file()
+    }
+}
+
 /// Common server startup configuration and utilities
 #[derive(Debug)]
 pub struct ServerStarter {
