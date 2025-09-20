@@ -17,8 +17,7 @@ use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
 use shared::{
-    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
-    init_panic_hook, shutdown_signal,
+    ContainerType, DROP, build_panic_status, get_panic_info,
 };
 
 /// Default socket address for mapstream service
@@ -445,108 +444,90 @@ async fn perform_handshake(
 /// gRPC server to start a map stream service
 #[derive(Debug)]
 pub struct Server<T> {
-    config: ServerConfig,
-    svc: Option<T>,
-    _cleanup: SocketCleanup,
+    inner: shared::Server<T>,
 }
 
 impl<T> Server<T> {
     pub fn new(map_stream_svc: T) -> Self {
-        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
-
         Self {
-            config,
-            svc: Some(map_stream_svc),
-            _cleanup: cleanup,
+            inner: shared::Server::new(map_stream_svc, ContainerType::MapStream, SOCK_ADDR, SERVER_INFO_FILE),
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/mapstream.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
+        self.inner = self.inner.with_socket_file(file);
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/mapstream.sock`
     pub fn socket_file(&self) -> &std::path::Path {
-        self.config.socket_file()
+        self.inner.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.config = self.config.with_max_message_size(message_size);
+        self.inner = self.inner.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size()
+        self.inner.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_server_info_file(&file_path);
-        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
+        self.inner = self.inner.with_server_info_file(file);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/mapper-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file()
+        self.inner.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
-        &mut self,
+        self,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: MapStreamer + Send + Sync + 'static,
     {
-        // Initialize panic hook to capture panic information
-        init_panic_hook();
+        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
+            let map_stream_svc = MapStreamService {
+                handler: Arc::new(handler),
+                shutdown_tx,
+                cancellation_token: cln_token,
+            };
 
-        let info = shared::ServerInfo::new(ContainerType::MapStream);
-        let listener = shared::create_listener_stream(
-            self.config.socket_file(),
-            self.config.server_info_file(),
-            info,
-        )?;
-        let handler = self.svc.take().unwrap();
-        let cln_token = CancellationToken::new();
+            let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
+                .max_encoding_message_size(max_message_size)
+                .max_decoding_message_size(max_message_size);
 
-        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let map_stream_svc = MapStreamService {
-            handler: Arc::new(handler),
-            shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cln_token.clone(),
-        };
-
-        let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
-            .max_encoding_message_size(self.config.max_message_size())
-            .max_decoding_message_size(self.config.max_message_size());
-
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
-
-        tonic::transport::Server::builder()
-            .add_service(map_stream_svc)
-            .serve_with_incoming_shutdown(listener, shutdown)
-            .await?;
-
-        Ok(())
+            tonic::transport::Server::builder().add_service(map_stream_svc)
+        }).await
     }
 
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: MapStreamer + Send + Sync + 'static,
     {
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        self.start_with_shutdown(shutdown_rx).await
+        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
+            let map_stream_svc = MapStreamService {
+                handler: Arc::new(handler),
+                shutdown_tx,
+                cancellation_token: cln_token,
+            };
+
+            let map_stream_svc = proto::map_server::MapServer::new(map_stream_svc)
+                .max_encoding_message_size(max_message_size)
+                .max_decoding_message_size(max_message_size);
+
+            tonic::transport::Server::builder().add_service(map_stream_svc)
+        }).await
     }
 }
 

@@ -8,6 +8,7 @@ use prost_types::Timestamp;
 
 pub(crate) mod panic;
 pub(crate) mod server;
+pub mod grpc_server;
 
 /// Environment variable for the container type
 pub(crate) const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
@@ -21,6 +22,7 @@ pub use server::ServerConfig;
 pub(crate) use server::{
     ContainerType, ServerInfo, SocketCleanup, create_listener_stream, shutdown_signal,
 };
+pub use grpc_server::{Server, ServerStarter, create_server_config};
 
 /// Convert a protobuf Timestamp to a UTC DateTime
 pub(crate) fn utc_from_timestamp(t: Option<Timestamp>) -> DateTime<Utc> {

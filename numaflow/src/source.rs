@@ -16,7 +16,7 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
-use shared::{ContainerType, ServerConfig, SocketCleanup, prost_timestamp_from_utc};
+use shared::{ContainerType, prost_timestamp_from_utc};
 
 /// Default socket address for source service
 const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
@@ -438,107 +438,92 @@ pub struct Message {
 /// gRPC server for starting a [`Sourcer`] service
 #[derive(Debug)]
 pub struct Server<T> {
-    config: ServerConfig,
-    svc: Option<T>,
-    _cleanup: SocketCleanup,
+    inner: shared::Server<T>,
 }
 
 impl<T> Server<T> {
     /// Creates a new gRPC `Server` instance
     pub fn new(source_svc: T) -> Self {
-        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
-
         Self {
-            config,
-            svc: Some(source_svc),
-            _cleanup: cleanup,
+            inner: shared::Server::new(source_svc, ContainerType::Source, SOCK_ADDR, SERVER_INFO_FILE),
         }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
     /// Default value is `/var/run/numaflow/source.sock`
     pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
+        self.inner = self.inner.with_socket_file(file);
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections.
     pub fn socket_file(&self) -> &std::path::Path {
-        self.config.socket_file()
+        self.inner.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
     pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.config = self.config.with_max_message_size(message_size);
+        self.inner = self.inner.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
     pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size()
+        self.inner.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/sourcer-server-info`
     pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_server_info_file(&file_path);
-        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
+        self.inner = self.inner.with_server_info_file(file);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/sourcer-server-info`
     pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file()
+        self.inner.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
-        &mut self,
+        self,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        let info = shared::ServerInfo::new(ContainerType::Source);
-        let listener = shared::create_listener_stream(
-            self.config.socket_file(),
-            self.config.server_info_file(),
-            info,
-        )?;
-        let handler = self.svc.take().unwrap();
-        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let cln_token = CancellationToken::new();
+        self.inner.start_with_shutdown(shutdown_rx, |handler, max_message_size, shutdown_tx, cln_token| {
+            let source_service = SourceService {
+                handler: Arc::new(handler),
+                shutdown_tx,
+                cancellation_token: cln_token,
+            };
 
-        let source_service = SourceService {
-            handler: Arc::new(handler),
-            shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cln_token.clone(),
-        };
+            let source_svc = proto::source_server::SourceServer::new(source_service)
+                .max_decoding_message_size(max_message_size)
+                .max_encoding_message_size(max_message_size);
 
-        let source_svc = proto::source_server::SourceServer::new(source_service)
-            .max_decoding_message_size(self.config.max_message_size())
-            .max_encoding_message_size(self.config.max_message_size());
-
-        let shutdown = shared::shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
-
-        tonic::transport::Server::builder()
-            .add_service(source_svc)
-            .serve_with_incoming_shutdown(listener, shutdown)
-            .await?;
-
-        Ok(())
+            tonic::transport::Server::builder().add_service(source_svc)
+        }).await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signals arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: Sourcer + Send + Sync + 'static,
     {
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        self.start_with_shutdown(shutdown_rx).await
+        self.inner.start(|handler, max_message_size, shutdown_tx, cln_token| {
+            let source_service = SourceService {
+                handler: Arc::new(handler),
+                shutdown_tx,
+                cancellation_token: cln_token,
+            };
+
+            let source_svc = proto::source_server::SourceServer::new(source_service)
+                .max_decoding_message_size(max_message_size)
+                .max_encoding_message_size(max_message_size);
+
+            tonic::transport::Server::builder().add_service(source_svc)
+        }).await
     }
 }
 #[cfg(test)]
