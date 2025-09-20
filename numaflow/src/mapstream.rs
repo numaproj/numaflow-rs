@@ -562,7 +562,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("mapstream.sock");
         let server_info_file = tmp_dir.path().join("mapstream-server-info");
 
-        let mut server = Server::new(Cat)
+        let server = Server::new(Cat)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -661,7 +661,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("map_stream.sock");
         let server_info_file = tmp_dir.path().join("mapper-stream-server-info");
 
-        let mut server = Server::new(StreamCat)
+        let server = Server::new(StreamCat)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);

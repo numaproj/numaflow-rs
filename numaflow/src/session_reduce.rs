@@ -1146,7 +1146,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, server_info_file) = setup_server(SumCreator).await?;
+        let (server, sock_file, server_info_file) = setup_server(SumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -1180,7 +1180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_reduce_operations() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_input() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1552,7 +1552,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_operations() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 

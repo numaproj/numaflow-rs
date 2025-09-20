@@ -614,7 +614,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("batchmap.sock");
         let server_info_file = tmp_dir.path().join("batchmapper-server-info");
 
-        let mut server = batchmap::Server::new(Logger)
+        let server = batchmap::Server::new(Logger)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);

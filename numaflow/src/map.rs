@@ -518,7 +518,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("map.sock");
         let server_info_file = tmp_dir.path().join("mapper-server-info");
 
-        let mut server = map::Server::new(Cat)
+        let server = map::Server::new(Cat)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
