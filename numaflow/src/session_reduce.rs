@@ -49,11 +49,11 @@ pub trait SessionReducerCreator {
     fn create(&self) -> Self::R;
 }
 
-/// Message is the response from the user's [`SessionReducer::reduce`].
+/// Message is the response from the user's [SessionReducer::session_reduce].
 #[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
-    /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
+    /// be an empty collection. It is mainly used in creating a partition in [SessionReducer::session_reduce].
     pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
