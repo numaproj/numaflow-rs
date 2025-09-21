@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
 use tokio::sync::{mpsc, oneshot};
@@ -17,10 +16,7 @@ use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{
-    ContainerType, DROP, ServerConfig, SocketCleanup, build_panic_status, get_panic_info,
-    init_panic_hook, shutdown_signal,
-};
+use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for batchmap service
 const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -52,12 +48,13 @@ pub trait BatchMapper {
     /// A simple batch map.
     ///
     /// ```no_run
+    /// use std::error::Error;
     /// use numaflow::batchmap::{self, BatchResponse, Datum, Message};
     ///
     /// struct FlatMap;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), numaflow::error::Error> {
+    /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     ///     batchmap::Server::new(FlatMap).start().await
     /// }
     ///
@@ -488,125 +485,88 @@ where
 /// gRPC server to start a batch map service
 #[derive(Debug)]
 pub struct Server<T> {
-    config: ServerConfig,
-    svc: Option<T>,
-    _cleanup: SocketCleanup,
+    inner: shared::Server<T>,
 }
-impl<T> Server<T> {
-    pub fn new(batch_map_svc: T) -> Self {
-        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
 
+impl<T> shared::ServerExtras<T> for Server<T> {
+    fn transform_inner<F>(self, f: F) -> Self
+    where
+        F: FnOnce(shared::Server<T>) -> shared::Server<T>,
+    {
         Self {
-            config,
-            svc: Some(batch_map_svc),
-            _cleanup: cleanup,
+            inner: f(self.inner),
         }
     }
 
-    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    /// Default value is `/var/run/numaflow/batchmap.sock`
-    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
-        self
+    fn inner_ref(&self) -> &shared::Server<T> {
+        &self.inner
     }
-
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections. Default value is `/var/run/numaflow/batchmap.sock`
-    pub fn socket_file(&self) -> &std::path::Path {
-        self.config.socket_file()
-    }
-
-    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
-    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.config = self.config.with_max_message_size(message_size);
-        self
-    }
-
-    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
-    pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size()
-    }
-
-    /// Change the file in which numaflow server information is stored on start up to the new value. Default value is `/var/run/numaflow/batchmapper-server-info`
-    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_server_info_file(&file_path);
-        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
-        self
-    }
-
-    /// Get the path to the file where numaflow server info is stored. Default value is `/var/run/numaflow/mapper-server-info`
-    pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file()
+}
+impl<T> Server<T> {
+    pub fn new(batch_map_svc: T) -> Self {
+        Self {
+            inner: shared::Server::new(
+                batch_map_svc,
+                ContainerType::BatchMap,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
+        }
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
-        &mut self,
+        self,
         shutdown_rx: oneshot::Receiver<()>,
-    ) -> Result<(), Error>
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        // Initialize panic hook to capture panic information
-        init_panic_hook();
+        self.inner
+            .start_with_shutdown(
+                shutdown_rx,
+                |handler, max_message_size, shutdown_tx, cln_token| {
+                    let map_svc = BatchMapService {
+                        handler: Arc::new(handler),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-        let info = shared::ServerInfo::new(ContainerType::BatchMap);
-        let listener = match shared::create_listener_stream(
-            self.config.socket_file(),
-            self.config.server_info_file(),
-            info,
-        ) {
-            Ok(it) => it,
-            Err(_err) => {
-                return Err(Error::BatchMapError(ErrorKind::InternalError(
-                    "could not create unix listener stream".to_string(),
-                )));
-            }
-        };
-        let handler = self.svc.take().unwrap();
+                    let map_svc = proto::map_server::MapServer::new(map_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
 
-        let cln_token = CancellationToken::new();
-
-        // Create a channel to send shutdown signal to the server to do graceful shutdown in case of non retryable errors.
-        let (internal_shutdown_tx, internal_shutdown_rx) = channel(1);
-        let map_svc = BatchMapService {
-            handler: Arc::new(handler),
-            shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cln_token.clone(),
-        };
-
-        let map_svc = proto::map_server::MapServer::new(map_svc)
-            .max_encoding_message_size(self.config.max_message_size())
-            .max_decoding_message_size(self.config.max_message_size());
-
-        let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
-
-        match tonic::transport::Server::builder()
-            .add_service(map_svc)
-            .serve_with_incoming_shutdown(listener, shutdown)
+                    tonic::transport::Server::builder().add_service(map_svc)
+                },
+            )
             .await
-        {
-            Ok(it) => it,
-            Err(err) => return Err(Error::GrpcStatus(Status::from_error(Box::new(err)))),
-        };
-
-        Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Error>
+    pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         T: BatchMapper + Send + Sync + 'static,
     {
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        self.start_with_shutdown(shutdown_rx).await
+        self.inner
+            .start(|handler, max_message_size, shutdown_tx, cln_token| {
+                let map_svc = BatchMapService {
+                    handler: Arc::new(handler),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
+
+                let map_svc = proto::map_server::MapServer::new(map_svc)
+                    .max_encoding_message_size(max_message_size)
+                    .max_decoding_message_size(max_message_size);
+
+                tonic::transport::Server::builder().add_service(map_svc)
+            })
+            .await
     }
 }
 #[cfg(test)]
 mod tests {
+    use crate::shared::ServerExtras;
     use std::{error::Error, time::Duration};
 
     use tempfile::TempDir;
@@ -645,7 +605,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("batchmap.sock");
         let server_info_file = tmp_dir.path().join("batchmapper-server-info");
 
-        let mut server = batchmap::Server::new(Logger)
+        let server = batchmap::Server::new(Logger)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -756,7 +716,7 @@ mod tests {
         let sock_file = tmp_dir.path().join("batchmap.sock");
         let server_info_file = tmp_dir.path().join("mapper-server-info");
 
-        let mut server = batchmap::Server::new(PanicBatch)
+        let server = batchmap::Server::new(PanicBatch)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);

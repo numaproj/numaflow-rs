@@ -14,9 +14,7 @@ use tracing::{error, info};
 use crate::error::{Error, ErrorKind};
 use crate::session_reduce::proto::session_reduce_request::window_operation::Event;
 use crate::shared;
-use shared::{
-    ContainerType, ServerConfig, SocketCleanup, build_panic_status, get_panic_info, init_panic_hook,
-};
+use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
@@ -51,11 +49,11 @@ pub trait SessionReducerCreator {
     fn create(&self) -> Self::R;
 }
 
-/// Message is the response from the user's [`SessionReducer::reduce`].
+/// Message is the response from the user's [SessionReducer::session_reduce].
 #[derive(Debug, PartialEq)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
-    /// be an empty collection. It is mainly used in creating a partition in [`Reducer::reduce`].
+    /// be an empty collection. It is mainly used in creating a partition in [SessionReducer::session_reduce].
     pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
     pub value: Vec<u8>,
@@ -956,118 +954,94 @@ impl From<proto::session_reduce_request::Payload> for SessionReduceRequest {
 /// gRPC server for session reduce service
 #[derive(Debug)]
 pub struct Server<C> {
-    config: ServerConfig,
-    creator: Option<C>,
-    _cleanup: SocketCleanup,
+    inner: shared::Server<C>,
+}
+
+impl<C> shared::ServerExtras<C> for Server<C> {
+    fn transform_inner<F>(self, f: F) -> Self
+    where
+        F: FnOnce(shared::Server<C>) -> shared::Server<C>,
+    {
+        Self {
+            inner: f(self.inner),
+        }
+    }
+
+    fn inner_ref(&self) -> &shared::Server<C> {
+        &self.inner
+    }
 }
 
 impl<C> Server<C> {
     /// Create a new Server with the given session reduce service
     pub fn new(creator: C) -> Self {
-        let config = ServerConfig::new(SOCK_ADDR, SERVER_INFO_FILE);
-        let cleanup = SocketCleanup::new(SOCK_ADDR.into(), SERVER_INFO_FILE.into());
-
-        Server {
-            config,
-            creator: Some(creator),
-            _cleanup: cleanup,
+        Self {
+            inner: shared::Server::new(
+                creator,
+                ContainerType::SessionReduce,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
-    }
-
-    /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    /// Default value is `/var/run/numaflow/sessionreduce.sock`
-    pub fn with_socket_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_socket_file(&file_path);
-        self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
-        self
-    }
-
-    /// Get the unix domain socket file path where gRPC server listens for incoming connections.
-    pub fn socket_file(&self) -> &std::path::Path {
-        self.config.socket_file()
-    }
-
-    /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes.
-    /// Default value is 64MB.
-    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
-        self.config = self.config.with_max_message_size(message_size);
-        self
-    }
-
-    /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
-    pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size()
-    }
-
-    /// Change the file in which numaflow server information is stored on start up to the new value.
-    /// Default value is `/var/run/numaflow/sessionreducer-server-info`
-    pub fn with_server_info_file(mut self, file: impl Into<std::path::PathBuf>) -> Self {
-        let file_path = file.into();
-        self.config = self.config.with_server_info_file(&file_path);
-        self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
-        self
-    }
-
-    /// Get the path to the file where numaflow server info is stored.
-    pub fn server_info_file(&self) -> &std::path::Path {
-        self.config.server_info_file()
     }
 
     /// Starts the gRPC server. When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown(
-        &mut self,
+        self,
         user_shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
-        init_panic_hook();
-        let info = crate::shared::ServerInfo::new(ContainerType::SessionReduce);
-        let listener = shared::create_listener_stream(
-            self.config.socket_file(),
-            self.config.server_info_file(),
-            info,
-        )?;
-        let creator = self.creator.take().unwrap();
-        let (internal_shutdown_tx, internal_shutdown_rx) = mpsc::channel(1);
-        let cln_token = CancellationToken::new();
+        self.inner
+            .start_with_shutdown(
+                user_shutdown_rx,
+                |creator, max_message_size, shutdown_tx, cln_token| {
+                    let session_reduce_svc = SessionReduceService {
+                        creator: Arc::new(creator),
+                        shutdown_tx,
+                        cancellation_token: cln_token,
+                    };
 
-        let session_reduce_svc = SessionReduceService {
-            creator: Arc::new(creator),
-            shutdown_tx: internal_shutdown_tx,
-            cancellation_token: cln_token.clone(),
-        };
+                    let session_reduce_svc =
+                        proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
+                            .max_encoding_message_size(max_message_size)
+                            .max_decoding_message_size(max_message_size);
 
-        let session_reduce_svc =
-            proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
-                .max_encoding_message_size(self.config.max_message_size())
-                .max_decoding_message_size(self.config.max_message_size());
-
-        let shutdown =
-            shared::shutdown_signal(internal_shutdown_rx, Some(user_shutdown_rx), cln_token);
-
-        tonic::transport::Server::builder()
-            .add_service(session_reduce_svc)
-            .serve_with_incoming_shutdown(listener, shutdown)
-            .await?;
-
-        Ok(())
+                    tonic::transport::Server::builder().add_service(session_reduce_svc)
+                },
+            )
+            .await
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates
     /// graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         C: SessionReducerCreator + Send + Sync + 'static,
     {
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        self.start_with_shutdown(shutdown_rx).await
+        self.inner
+            .start(|creator, max_message_size, shutdown_tx, cln_token| {
+                let session_reduce_svc = SessionReduceService {
+                    creator: Arc::new(creator),
+                    shutdown_tx,
+                    cancellation_token: cln_token,
+                };
+
+                let session_reduce_svc =
+                    proto::session_reduce_server::SessionReduceServer::new(session_reduce_svc)
+                        .max_encoding_message_size(max_message_size)
+                        .max_decoding_message_size(max_message_size);
+
+                tonic::transport::Server::builder().add_service(session_reduce_svc)
+            })
+            .await
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::shared::ServerExtras;
     use std::path::PathBuf;
     use std::{error::Error, time::Duration};
 
@@ -1162,7 +1136,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, server_info_file) = setup_server(SumCreator).await?;
+        let (server, sock_file, server_info_file) = setup_server(SumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -1196,7 +1170,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_reduce_operations() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1365,7 +1339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_input() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1486,7 +1460,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_panic_in_session_reduce() -> Result<(), Box<dyn Error>> {
-            let (mut server, sock_file, _) = setup_server(PanicSessionReducerCreator).await?;
+            let (server, sock_file, _) = setup_server(PanicSessionReducerCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1568,7 +1542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_operations() -> Result<(), Box<dyn Error>> {
-        let (mut server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
