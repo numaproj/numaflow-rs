@@ -179,63 +179,6 @@ impl ServerStarter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_server_starter_creation() {
-        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info");
-
-        assert_eq!(
-            starter.socket_file(),
-            std::path::Path::new("/tmp/test.sock")
-        );
-        assert_eq!(
-            starter.server_info_file(),
-            std::path::Path::new("/tmp/test-info")
-        );
-        assert_eq!(starter.max_message_size(), 64 * 1024 * 1024); // 64MB default
-    }
-
-    #[test]
-    fn test_server_starter_configuration() {
-        let tmp_dir = TempDir::new().unwrap();
-        let sock_file = tmp_dir.path().join("custom.sock");
-        let info_file = tmp_dir.path().join("custom-info");
-
-        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info")
-            .with_socket_file(&sock_file)
-            .with_server_info_file(&info_file)
-            .with_max_message_size(1024)
-            .with_panic_hook(false);
-
-        assert_eq!(starter.socket_file(), sock_file);
-        assert_eq!(starter.server_info_file(), info_file);
-        assert_eq!(starter.max_message_size(), 1024);
-        assert!(!starter.init_panic_hook);
-    }
-
-    #[test]
-    fn test_create_server_config() {
-        let starter = ServerStarter::new(
-            ContainerType::Reduce,
-            "/var/run/numaflow/reduce.sock",
-            "/var/run/numaflow/reducer-server-info",
-        );
-
-        assert_eq!(
-            starter.socket_file(),
-            std::path::Path::new("/var/run/numaflow/reduce.sock")
-        );
-        assert_eq!(
-            starter.server_info_file(),
-            std::path::Path::new("/var/run/numaflow/reducer-server-info")
-        );
-    }
-}
-
 /// Generic gRPC server that can handle any service type
 /// This eliminates the need for duplicate Server implementations across all service files
 #[derive(Debug)]
@@ -342,5 +285,62 @@ impl<T> Server<T> {
                 service_builder(handler, max_message_size, shutdown_tx, cln_token)
             })
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_server_starter_creation() {
+        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info");
+
+        assert_eq!(
+            starter.socket_file(),
+            std::path::Path::new("/tmp/test.sock")
+        );
+        assert_eq!(
+            starter.server_info_file(),
+            std::path::Path::new("/tmp/test-info")
+        );
+        assert_eq!(starter.max_message_size(), 64 * 1024 * 1024); // 64MB default
+    }
+
+    #[test]
+    fn test_server_starter_configuration() {
+        let tmp_dir = TempDir::new().unwrap();
+        let sock_file = tmp_dir.path().join("custom.sock");
+        let info_file = tmp_dir.path().join("custom-info");
+
+        let starter = ServerStarter::new(ContainerType::Map, "/tmp/test.sock", "/tmp/test-info")
+            .with_socket_file(&sock_file)
+            .with_server_info_file(&info_file)
+            .with_max_message_size(1024)
+            .with_panic_hook(false);
+
+        assert_eq!(starter.socket_file(), sock_file);
+        assert_eq!(starter.server_info_file(), info_file);
+        assert_eq!(starter.max_message_size(), 1024);
+        assert!(!starter.init_panic_hook);
+    }
+
+    #[test]
+    fn test_create_server_config() {
+        let starter = ServerStarter::new(
+            ContainerType::Reduce,
+            "/var/run/numaflow/reduce.sock",
+            "/var/run/numaflow/reducer-server-info",
+        );
+
+        assert_eq!(
+            starter.socket_file(),
+            std::path::Path::new("/var/run/numaflow/reduce.sock")
+        );
+        assert_eq!(
+            starter.server_info_file(),
+            std::path::Path::new("/var/run/numaflow/reducer-server-info")
+        );
     }
 }
