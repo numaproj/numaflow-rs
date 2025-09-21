@@ -179,15 +179,6 @@ impl ServerStarter {
     }
 }
 
-/// Helper function to create a standard server configuration
-pub fn create_server_config(
-    container_type: ContainerType,
-    default_sock_addr: &str,
-    default_server_info_file: &str,
-) -> ServerStarter {
-    ServerStarter::new(container_type, default_sock_addr, default_server_info_file)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_create_server_config() {
-        let starter = create_server_config(
+        let starter = ServerStarter::new(
             ContainerType::Reduce,
             "/var/run/numaflow/reduce.sock",
             "/var/run/numaflow/reducer-server-info",
@@ -250,7 +241,7 @@ mod tests {
 #[derive(Debug)]
 pub struct Server<T> {
     starter: ServerStarter,
-    svc: Option<T>,
+    svc: T,
 }
 
 impl<T> Server<T> {
@@ -264,10 +255,7 @@ impl<T> Server<T> {
         let starter =
             ServerStarter::new(container_type, default_sock_addr, default_server_info_file);
 
-        Self {
-            starter,
-            svc: Some(svc),
-        }
+        Self { starter, svc }
     }
 
     /// Create a new server with custom socket paths (for sink fallback support)
@@ -279,10 +267,7 @@ impl<T> Server<T> {
     ) -> Self {
         let starter = ServerStarter::new(container_type, sock_addr, server_info_file);
 
-        Self {
-            starter,
-            svc: Some(svc),
-        }
+        Self { starter, svc }
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections
@@ -321,7 +306,7 @@ impl<T> Server<T> {
     /// Starts the gRPC server with a custom service builder function.
     /// When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
     pub async fn start_with_shutdown<F>(
-        mut self,
+        self,
         shutdown_rx: oneshot::Receiver<()>,
         service_builder: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -329,7 +314,7 @@ impl<T> Server<T> {
         F: FnOnce(T, usize, mpsc::Sender<()>, CancellationToken) -> Router + Send + 'static,
         T: Send + Sync + 'static,
     {
-        let handler = self.svc.take().unwrap();
+        let handler = self.svc;
         let max_message_size = self.starter.max_message_size();
 
         self.starter
@@ -342,14 +327,14 @@ impl<T> Server<T> {
     /// Starts the gRPC server with a custom service builder function.
     /// Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
     pub async fn start<F>(
-        mut self,
+        self,
         service_builder: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnOnce(T, usize, mpsc::Sender<()>, CancellationToken) -> Router + Send + 'static,
         T: Send + Sync + 'static,
     {
-        let handler = self.svc.take().unwrap();
+        let handler = self.svc;
         let max_message_size = self.starter.max_message_size();
 
         self.starter
