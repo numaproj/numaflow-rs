@@ -53,12 +53,11 @@ pub trait BatchMapper {
     ///
     /// ```no_run
     /// use numaflow::batchmap::{self, BatchResponse, Datum, Message};
-    /// use std::error::Error;
     ///
     /// struct FlatMap;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    /// async fn main() -> Result<(), numaflow::error::Error> {
     ///     batchmap::Server::new(FlatMap).start().await
     /// }
     ///
@@ -547,7 +546,7 @@ impl<T> Server<T> {
     pub async fn start_with_shutdown(
         &mut self,
         shutdown_rx: oneshot::Receiver<()>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    ) -> Result<(), Error>
     where
         T: BatchMapper + Send + Sync + 'static,
     {
@@ -555,11 +554,18 @@ impl<T> Server<T> {
         init_panic_hook();
 
         let info = shared::ServerInfo::new(ContainerType::BatchMap);
-        let listener = shared::create_listener_stream(
+        let listener = match shared::create_listener_stream(
             self.config.socket_file(),
             self.config.server_info_file(),
             info,
-        )?;
+        ) {
+            Ok(it) => it,
+            Err(_err) => {
+                return Err(Error::BatchMapError(ErrorKind::InternalError(
+                    "could not create unix listener stream".to_string(),
+                )));
+            }
+        };
         let handler = self.svc.take().unwrap();
 
         let cln_token = CancellationToken::new();
@@ -578,16 +584,20 @@ impl<T> Server<T> {
 
         let shutdown = shutdown_signal(internal_shutdown_rx, Some(shutdown_rx), cln_token);
 
-        tonic::transport::Server::builder()
+        match tonic::transport::Server::builder()
             .add_service(map_svc)
             .serve_with_incoming_shutdown(listener, shutdown)
-            .await?;
+            .await
+        {
+            Ok(it) => it,
+            Err(err) => return Err(Error::GrpcStatus(Status::from_error(Box::new(err)))),
+        };
 
         Ok(())
     }
 
     /// Starts the gRPC server. Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start(&mut self) -> Result<(), Error>
     where
         T: BatchMapper + Send + Sync + 'static,
     {

@@ -2,7 +2,7 @@ use numaflow::batchmap;
 use numaflow::batchmap::{BatchResponse, Datum, Message};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), numaflow::error::Error> {
     batchmap::Server::new(Cat).start().await
 }
 
