@@ -49,12 +49,11 @@ pub trait BatchMapper {
     ///
     /// ```no_run
     /// use numaflow::batchmap::{self, BatchResponse, Datum, Message};
-    /// use std::error::Error;
     ///
     /// struct FlatMap;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    /// async fn main() -> Result<(), numaflow::error::Error> {
     ///     batchmap::Server::new(FlatMap).start().await
     /// }
     ///
