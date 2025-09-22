@@ -149,7 +149,7 @@ impl ServerStarter {
         service_builder: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
-        F: FnOnce(mpsc::Sender<()>, CancellationToken) -> tonic::transport::server::Router,
+        F: FnOnce(mpsc::Sender<()>, CancellationToken) -> Router,
     {
         // Initialize panic hook if requested
         if self.init_panic_hook {
