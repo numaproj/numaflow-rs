@@ -256,8 +256,11 @@ pub async fn shutdown_signal(
     };
 
     let shutdown_from_user_future = async {
-        if let Some(rx) = shutdown_from_user {
-            rx.await.ok();
+        match shutdown_from_user {
+            Some(rx) => {
+                let _ = rx.await;
+            }
+            None => std::future::pending::<()>().await,
         }
     };
 
