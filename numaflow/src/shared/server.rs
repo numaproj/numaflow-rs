@@ -27,7 +27,7 @@ const BATCH_MAP: &str = "batch-map";
 const STREAM_MAP: &str = "stream-map";
 
 /// Container types supported by the SDK
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 pub enum ContainerType {
     Map,
     BatchMap,
