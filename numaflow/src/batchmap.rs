@@ -312,11 +312,11 @@ where
             async move { batch_map_handle.batchmap(rx).await }
         });
 
-        let batch_mapper_handle = tokio::spawn(async move {
+        let batch_mapper_handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             let responses = match udf_batch_task.await {
-                Ok(responses) => responses,
+                Ok(responses) => Ok(responses),
                 Err(e) => {
-                    error!("Failed to run batchmap function: {e:?}");
+                    error!("Failed to run batch-map function: {e:?}");
 
                     // Check if we have detailed panic info from our hook
                     if let Some(panic_info) = get_panic_info() {
@@ -327,14 +327,17 @@ where
                         // This is a non-panic error
                         let _ = resp_tx
                             .send(Err(Status::internal(format!(
-                                "Batchmap task execution failed: {e:?}"
+                                "Batch-map task execution failed: {e:?}"
                             ))))
                             .await;
                     }
-                    return;
+                    Err(Error::BatchMapError(ErrorKind::InternalError(format!(
+                        "Batch-map handler task execution failed: {e:?}"
+                    ))))
                 }
             };
 
+            let responses = responses?;
             for response in responses {
                 resp_tx
                     .send(Ok(MapResponse {
@@ -361,6 +364,7 @@ where
                 }))
                 .await
                 .expect("Sending response to channel");
+            Ok(())
         });
 
         let mut global_stream_ended = false;
