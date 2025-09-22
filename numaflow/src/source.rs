@@ -679,7 +679,7 @@ mod tests {
             let sock_file = tmp_dir.path().join("source.sock");
             let server_info_file = tmp_dir.path().join("sourcer-server-info");
 
-            let mut server = source::Server::new(repeater)
+            let server = source::Server::new(repeater)
                 .with_server_info_file(&server_info_file)
                 .with_socket_file(&sock_file)
                 .with_max_message_size(10240);
