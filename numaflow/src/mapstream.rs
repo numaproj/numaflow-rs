@@ -18,10 +18,10 @@ use crate::shared;
 use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for mapstream service
-const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
 
 /// Default server info file for mapstream service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/mapper-server-info";
 
 /// Default channel size for mapstream service
 const CHANNEL_SIZE: usize = 1000;

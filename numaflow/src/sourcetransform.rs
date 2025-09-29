@@ -21,10 +21,10 @@ use shared::{
 };
 
 /// Default socket address for source transformer service
-const SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/sourcetransform.sock";
 
 /// Default server info file for source transformer service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-info";
 
 /// Default channel size for source transformer service
 const CHANNEL_SIZE: usize = 1000;

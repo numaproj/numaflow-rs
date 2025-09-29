@@ -18,8 +18,9 @@ use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
-const SOCK_ADDR: &str = "/var/run/numaflow/sessionreduce.sock";
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/sessionreducer-server-info";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/sessionreduce.sock";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sessionreducer-server-info";
+
 const CHANNEL_SIZE: usize = 100;
 
 /// SessionReducer is the trait which has to be implemented to do a session reduce operation.
