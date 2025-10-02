@@ -13,10 +13,10 @@ use crate::shared;
 use shared::{ContainerType, ServerConfig, SocketCleanup};
 
 /// Default socket address for serving store service
-const SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/serving.sock";
 
 /// Default server info file for serving store service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/serving-server-info";
 
 /// ServingStore trait for implementing user defined stores. This Store has to be
 /// a shared Store between the Source and the Sink vertices. [ServingStore::put] happens in Sink

@@ -18,16 +18,16 @@ use crate::shared;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
 
 /// Default socket address for sink service
-const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/sink.sock";
 
 /// Default server info file for sink service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sinker-server-info";
 
 /// Default socket address for fallback sink
-const FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
+pub const FB_SOCK_ADDR: &str = "/var/run/numaflow/fb-sink.sock";
 
 /// Default server info file for fallback sink
-const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
+pub const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";

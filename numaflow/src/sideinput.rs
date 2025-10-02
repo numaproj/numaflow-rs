@@ -13,9 +13,9 @@ use crate::{
 use shared::{ContainerType, ServerConfig, SocketCleanup, shutdown_signal};
 
 /// Default socket address for sideinput service
-const SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
 /// Default server info file for sideinput service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/sideinput-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sideinput-server-info";
 
 struct SideInputService<T> {
     handler: Arc<T>,

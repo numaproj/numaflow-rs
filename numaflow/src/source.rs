@@ -18,10 +18,10 @@ use crate::shared;
 use shared::{ContainerType, prost_timestamp_from_utc};
 
 /// Default socket address for source service
-const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/source.sock";
 
 /// Default server info file for source service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcer-server-info";
 
 // TODO: use batch-size, blocked by https://github.com/numaproj/numaflow/issues/2026
 /// Default channel size for source service

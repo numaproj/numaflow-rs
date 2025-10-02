@@ -15,10 +15,10 @@ use crate::shared;
 use shared::{ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc};
 use tracing::error;
 /// Default socket address for reduce service
-const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
 
 /// Default server info file for reduce service
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/reducer-server-info";
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
