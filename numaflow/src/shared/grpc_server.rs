@@ -251,7 +251,7 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server with a custom service builder function.
     /// When message is received on the `shutdown` channel, graceful shutdown of the gRPC server will be initiated.
-    pub(crate) async fn start_with_shutdown<F>(
+    pub async fn start_with_shutdown<F>(
         self,
         shutdown_rx: oneshot::Receiver<()>,
         service_builder: F,
@@ -272,7 +272,7 @@ impl<T> Server<T> {
 
     /// Starts the gRPC server with a custom service builder function.
     /// Automatically registers signal handlers for SIGINT and SIGTERM and initiates graceful shutdown of gRPC server when either one of the signal arrives.
-    pub(crate) async fn start<F>(
+    pub async fn start<F>(
         self,
         service_builder: F,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
