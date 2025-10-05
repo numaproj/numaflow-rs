@@ -74,16 +74,17 @@ pub trait ServerExtras<T> {
 
 /// Common server startup configuration and utilities
 #[derive(Debug)]
-pub struct ServerStarter {
+pub(crate) struct ServerStarter {
     config: ServerConfig,
     container_type: ContainerType,
     _cleanup: SocketCleanup,
     init_panic_hook: bool,
 }
 
+#[allow(dead_code)]
 impl ServerStarter {
     /// Create a new server starter with the given container type and defaults
-    pub fn new(
+    pub(crate) fn new(
         container_type: ContainerType,
         default_sock_addr: &str,
         default_server_info_file: &str,
@@ -100,13 +101,13 @@ impl ServerStarter {
     }
 
     /// Set whether to initialize panic hook (default: true)
-    pub fn with_panic_hook(mut self, init_panic_hook: bool) -> Self {
+    pub(crate) fn with_panic_hook(mut self, init_panic_hook: bool) -> Self {
         self.init_panic_hook = init_panic_hook;
         self
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections.
-    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
+    pub(crate) fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_socket_file(&file_path);
         self._cleanup = SocketCleanup::new(file_path, self.config.server_info_file().to_path_buf());
@@ -114,23 +115,23 @@ impl ServerStarter {
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections.
-    pub fn socket_file(&self) -> &std::path::Path {
+    pub(crate) fn socket_file(&self) -> &std::path::Path {
         self.config.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
-    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
+    pub(crate) fn with_max_message_size(mut self, message_size: usize) -> Self {
         self.config = self.config.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
-    pub fn max_message_size(&self) -> usize {
+    pub(crate) fn max_message_size(&self) -> usize {
         self.config.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value.
-    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
+    pub(crate) fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         let file_path = file.into();
         self.config = self.config.with_server_info_file(&file_path);
         self._cleanup = SocketCleanup::new(self.config.socket_file().to_path_buf(), file_path);
@@ -138,12 +139,12 @@ impl ServerStarter {
     }
 
     /// Get the path to the file where numaflow server info is stored.
-    pub fn server_info_file(&self) -> &std::path::Path {
+    pub(crate) fn server_info_file(&self) -> &std::path::Path {
         self.config.server_info_file()
     }
 
     /// Common server startup logic that can be used by all services
-    pub async fn start_server<F>(
+    pub(crate) async fn start_server<F>(
         self,
         shutdown_rx: Option<oneshot::Receiver<()>>,
         service_builder: F,
@@ -187,9 +188,10 @@ pub struct Server<T> {
     svc: T,
 }
 
+#[allow(dead_code)]
 impl<T> Server<T> {
     /// Create a new server with the given service and container configuration
-    pub fn new(
+    pub(crate) fn new(
         svc: T,
         container_type: ContainerType,
         default_sock_addr: &str,
@@ -202,7 +204,7 @@ impl<T> Server<T> {
     }
 
     /// Create a new server with custom socket paths (for sink fallback support)
-    pub fn new_with_custom_paths(
+    pub(crate) fn new_with_custom_paths(
         svc: T,
         container_type: ContainerType,
         sock_addr: &str,
@@ -214,35 +216,35 @@ impl<T> Server<T> {
     }
 
     /// Set the unix domain socket file path used by the gRPC server to listen for incoming connections
-    pub fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
+    pub(crate) fn with_socket_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.starter = self.starter.with_socket_file(file);
         self
     }
 
     /// Get the unix domain socket file path where gRPC server listens for incoming connections
-    pub fn socket_file(&self) -> &std::path::Path {
+    pub(crate) fn socket_file(&self) -> &std::path::Path {
         self.starter.socket_file()
     }
 
     /// Set the maximum size of an encoded and decoded gRPC message. The value of `message_size` is in bytes. Default value is 64MB.
-    pub fn with_max_message_size(mut self, message_size: usize) -> Self {
+    pub(crate) fn with_max_message_size(mut self, message_size: usize) -> Self {
         self.starter = self.starter.with_max_message_size(message_size);
         self
     }
 
     /// Get the maximum size of an encoded and decoded gRPC message in bytes. Default value is 64MB.
-    pub fn max_message_size(&self) -> usize {
+    pub(crate) fn max_message_size(&self) -> usize {
         self.starter.max_message_size()
     }
 
     /// Change the file in which numaflow server information is stored on start up to the new value
-    pub fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
+    pub(crate) fn with_server_info_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.starter = self.starter.with_server_info_file(file);
         self
     }
 
     /// Get the path to the file where numaflow server info is stored
-    pub fn server_info_file(&self) -> &std::path::Path {
+    pub(crate) fn server_info_file(&self) -> &std::path::Path {
         self.starter.server_info_file()
     }
 
