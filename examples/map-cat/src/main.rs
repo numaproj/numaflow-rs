@@ -1,8 +1,12 @@
 use numaflow::map;
+use numaflow::shared::grpc_server::ServerExtras;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    map::Server::new(Cat).start().await
+    map::Server::new(Cat)
+        .with_max_message_size(10240)
+        .start()
+        .await
 }
 
 struct Cat;

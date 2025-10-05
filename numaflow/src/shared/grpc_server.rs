@@ -16,8 +16,7 @@ use super::{
 
 /// Trait providing default implementations for common server configuration methods.
 /// This trait works with the builder pattern and eliminates boilerplate delegation code.
-#[allow(dead_code)]
-pub(crate) trait ServerExtras<T> {
+pub trait ServerExtras<T> {
     /// Extract the inner server, transform it, and wrap it back
     fn transform_inner<F>(self, f: F) -> Self
     where
@@ -184,7 +183,7 @@ impl ServerStarter {
 /// Generic gRPC server that can handle any service type
 /// This eliminates the need for duplicate Server implementations across all service files
 #[derive(Debug)]
-pub(crate) struct Server<T> {
+pub struct Server<T> {
     starter: ServerStarter,
     svc: T,
 }
