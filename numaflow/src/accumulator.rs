@@ -16,8 +16,8 @@ use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
 
-const SOCK_ADDR: &str = "/var/run/numaflow/accumulator.sock";
-const SERVER_INFO_FILE: &str = "/var/run/numaflow/accumulator-server-info";
+pub const SOCK_ADDR: &str = "/var/run/numaflow/accumulator.sock";
+pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/accumulator-server-info";
 const CHANNEL_SIZE: usize = 100;
 
 /// Accumulator is the interface which can be used to implement the accumulator operation.
@@ -45,19 +45,19 @@ pub trait AccumulatorCreator {
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
-    keys: Option<Vec<String>>,
+    pub keys: Option<Vec<String>>,
     /// Value is the value passed to the next vertex.
-    value: Vec<u8>,
+    pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
-    tags: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
     /// ID is used for deduplication. Read-only, set from the input datum.
-    id: String,
+    pub id: String,
     /// Headers for the message. Read-only, set from the input datum.
-    headers: HashMap<String, String>,
+    pub headers: HashMap<String, String>,
     /// Time of the element as seen at source or aligned after a reduce operation. Read-only, set from the input datum.
-    event_time: DateTime<Utc>,
+    pub event_time: DateTime<Utc>,
     /// Watermark represented by time is a guarantee that we will not see an element older than this time. Read-only, set from the input datum.
-    watermark: DateTime<Utc>,
+    pub watermark: DateTime<Utc>,
 }
 
 /// Represents a message that can be modified and forwarded.
