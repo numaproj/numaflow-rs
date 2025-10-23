@@ -12,6 +12,7 @@ fn main() {
         .out_dir(generated_out_dir)
         .compile_protos(
             &[
+                "proto/metadata.proto",
                 "proto/source.proto",
                 "proto/sourcetransform.proto",
                 "proto/map.proto",

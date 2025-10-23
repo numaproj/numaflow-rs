@@ -3,6 +3,14 @@
 //! This module contains all the generated protobuf code for the Numaflow SDK.
 //! The protobuf files are generated in src/generated/ for easy access and version control.
 
+/// Metadata protobuf definitions
+pub mod metadata {
+    pub mod v1 {
+        #![allow(clippy::all)]
+        include!("generated/metadata.v1.rs");
+    }
+}
+
 /// Map service protobuf definitions
 #[path = "generated/map.v1.rs"]
 #[rustfmt::skip]

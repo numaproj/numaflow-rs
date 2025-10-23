@@ -107,6 +107,7 @@ where
                         event_time: prost_timestamp_from_utc(resp.event_time),
                         keys: resp.keys,
                         headers: Default::default(),
+                        metadata: None,
                     }),
                     status: None,
                     handshake: None,

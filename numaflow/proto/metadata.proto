@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package metadata.v1;
+
+// Metadata is the metadata of the message
+message Metadata {
+  // PreviousVertex is the name of the previous vertex
+  string previous_vertex = 1;
+  // SystemMetadata is the system metadata of the message
+  // Key of the map is the group name
+  map<string, KeyValueGroup> sys_metadata = 2;
+  // UserMetadata is the user metadata of the message
+  // Key of the map is the group name
+  map<string, KeyValueGroup> user_metadata = 3;
+}
+
+// KeyValueGroup is a group of key-value pairs for a given group.
+message KeyValueGroup {
+  map<string, bytes> key_value = 1;
+}

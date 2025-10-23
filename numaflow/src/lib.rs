@@ -20,6 +20,9 @@ pub mod shared;
 /// Generated protobuf modules
 pub mod proto;
 
+/// Re-export metadata at crate root for generated code
+pub use proto::metadata;
+
 /// source is for building custom [user defined sources](https://numaflow.numaproj.io/user-guide/sources/overview/).
 pub mod source;
 
