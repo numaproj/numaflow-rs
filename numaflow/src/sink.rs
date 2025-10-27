@@ -13,8 +13,8 @@ use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
 
-use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::proto::metadata::v1 as metadata_pb;
+use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
 
@@ -115,7 +115,6 @@ pub struct SinkRequest {
 
 /// Since sink is the last vertex in the pipeline, only GET methods
 /// are available on SystemMetadata and UserMetadata.
-
 /// UserMetadata is the user metadata of the message
 /// Clone is required if Users might want to clone the metadata for their own use cases.
 #[derive(Debug, Clone, PartialEq)]
@@ -127,10 +126,10 @@ impl UserMetadata {
     /// Create a new UserMetadata instance
     pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
         Self {
-            data: data.unwrap_or_else(HashMap::new),
+            data: data.unwrap_or_default(),
         }
     }
-    
+
     /// groups returns the groups of the user metadata.
     /// If there are no groups, it returns an empty vector.
     ///
@@ -146,7 +145,7 @@ impl UserMetadata {
     pub fn groups(&self) -> Vec<String> {
         self.data.keys().cloned().collect()
     }
-    
+
     /// keys returns the keys of the user metadata for the given group.
     /// If there are no keys or the group is not present, it returns an empty vector.
     ///
@@ -160,9 +159,14 @@ impl UserMetadata {
     /// println!("Keys in my-group: {:?}", keys);
     /// ```
     pub fn keys(&self, group: &str) -> Vec<String> {
-        self.data.get(group).unwrap_or(&HashMap::new()).keys().cloned().collect()
+        self.data
+            .get(group)
+            .unwrap_or(&HashMap::new())
+            .keys()
+            .cloned()
+            .collect()
     }
-    
+
     /// value returns the value of the user metadata for the given group and key.
     /// If there is no value or the group or key is not present, it returns an empty vector.
     ///
@@ -176,7 +180,12 @@ impl UserMetadata {
     /// println!("Value: {:?}", value);
     /// ```
     pub fn value(&self, group: &str, key: &str) -> Vec<u8> {
-        self.data.get(group).unwrap_or(&HashMap::new()).get(key).unwrap_or(&Vec::new()).clone()
+        self.data
+            .get(group)
+            .unwrap_or(&HashMap::new())
+            .get(key)
+            .unwrap_or(&Vec::new())
+            .clone()
     }
 }
 
@@ -191,10 +200,10 @@ impl SystemMetadata {
     /// Create a new SystemMetadata instance
     pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
         Self {
-            data: data.unwrap_or_else(HashMap::new),
+            data: data.unwrap_or_default(),
         }
     }
-    
+
     /// groups returns the groups of the system metadata.
     /// If there are no groups, it returns an empty vector.
     ///
@@ -210,7 +219,7 @@ impl SystemMetadata {
     pub fn groups(&self) -> Vec<String> {
         self.data.keys().cloned().collect()
     }
-    
+
     /// keys returns the keys of the system metadata for the given group.
     /// If there are no keys or the group is not present, it returns an empty vector.
     ///
@@ -224,9 +233,14 @@ impl SystemMetadata {
     /// println!("Keys in system-group: {:?}", keys);
     /// ```
     pub fn keys(&self, group: &str) -> Vec<String> {
-        self.data.get(group).unwrap_or(&HashMap::new()).keys().cloned().collect()
+        self.data
+            .get(group)
+            .unwrap_or(&HashMap::new())
+            .keys()
+            .cloned()
+            .collect()
     }
-    
+
     /// value returns the value of the system metadata for the given group and key.
     /// If there is no value or the group or key is not present, it returns an empty vector.
     ///
@@ -240,7 +254,12 @@ impl SystemMetadata {
     /// println!("Value: {:?}", value);
     /// ```
     pub fn value(&self, group: &str, key: &str) -> Vec<u8> {
-        self.data.get(group).unwrap_or(&HashMap::new()).get(key).unwrap_or(&Vec::new()).clone()
+        self.data
+            .get(group)
+            .unwrap_or(&HashMap::new())
+            .get(key)
+            .unwrap_or(&Vec::new())
+            .clone()
     }
 }
 
@@ -250,14 +269,14 @@ fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetada
         Some(p) => p,
         None => return UserMetadata::new(None),
     };
-    
+
     let mut user_map = HashMap::new();
     for (group, kv_group) in &proto.user_metadata {
         // Note: In proto3 with prost, kv_group is always a valid KeyValueGroup.
         // If empty, kv_group.key_value will be an empty HashMap.
         user_map.insert(group.clone(), kv_group.key_value.clone());
     }
-    
+
     UserMetadata::new(Some(user_map))
 }
 
@@ -267,14 +286,14 @@ fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMe
         Some(p) => p,
         None => return SystemMetadata::new(None),
     };
-    
+
     let mut sys_map = HashMap::new();
     for (group, kv_group) in &proto.sys_metadata {
         // Note: In proto3 with prost, kv_group is always a valid KeyValueGroup.
         // If empty, kv_group.key_value will be an empty HashMap.
         sys_map.insert(group.clone(), kv_group.key_value.clone());
     }
-    
+
     SystemMetadata::new(Some(sys_map))
 }
 
@@ -282,7 +301,7 @@ impl From<sink_pb::sink_request::Request> for SinkRequest {
     fn from(sr: sink_pb::sink_request::Request) -> Self {
         let user_metadata = user_metadata_from_proto(sr.metadata.as_ref());
         let system_metadata = system_metadata_from_proto(sr.metadata.as_ref());
-        
+
         Self {
             keys: sr.keys,
             value: sr.value,

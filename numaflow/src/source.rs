@@ -12,9 +12,9 @@ use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
+use crate::proto::metadata::v1 as metadata_pb;
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
-use crate::proto::metadata::v1 as metadata_pb;
 use crate::shared;
 use shared::{ContainerType, prost_timestamp_from_utc};
 
@@ -90,7 +90,7 @@ impl UserMetadata {
     /// It wraps an existing HashMap<String, HashMap<String, Vec<u8>>> into UserMetadata
     pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
         Self {
-            data: data.unwrap_or_else(HashMap::new),
+            data: data.unwrap_or_default(),
         }
     }
 
@@ -181,10 +181,7 @@ impl UserMetadata {
     /// println!("{:?}", umd);
     /// ```
     pub fn add_kv(&mut self, group: String, key: String, value: Vec<u8>) {
-        self.data
-            .entry(group)
-            .or_insert_with(HashMap::new)
-            .insert(key, value);
+        self.data.entry(group).or_default().insert(key, value);
     }
 
     /// add_kv_string adds a key-value pair with value of string type to the user metadata.
@@ -265,7 +262,7 @@ pub struct Offset {
 /// If user metadata is None or empty, it returns a metadata with empty user_metadata map.
 fn to_proto(user_metadata: Option<&UserMetadata>) -> metadata_pb::Metadata {
     let mut user = HashMap::new();
-    
+
     if let Some(umd) = user_metadata {
         for group in umd.groups() {
             let mut kv = HashMap::new();
@@ -275,7 +272,7 @@ fn to_proto(user_metadata: Option<&UserMetadata>) -> metadata_pb::Metadata {
             user.insert(group, metadata_pb::KeyValueGroup { key_value: kv });
         }
     }
-    
+
     metadata_pb::Metadata {
         previous_vertex: String::new(),
         sys_metadata: HashMap::new(),
