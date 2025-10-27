@@ -61,6 +61,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
+            user_metadata: Default::default(),
+            system_metadata: Default::default(),
         };
 
         let messages = filter_event_time(source_request);
@@ -79,6 +81,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
+            user_metadata: Default::default(),
+            system_metadata: Default::default(),
         };
 
         let messages = filter_event_time(source_request);
@@ -97,6 +101,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
+            user_metadata: Default::default(),
+            system_metadata: Default::default(),
         };
 
         let messages = filter_event_time(source_request);
