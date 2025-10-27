@@ -420,20 +420,9 @@ impl Message {
         self.user_metadata = Some(user_metadata);
         self
     }
-
-    /// Returns a reference to the user metadata if it exists.
-    pub fn user_metadata(&self) -> Option<&UserMetadata> {
-        self.user_metadata.as_ref()
-    }
-
-    /// Returns a mutable reference to the user metadata.
-    /// If metadata doesn't exist, creates an empty one.
-    pub fn user_metadata_mut(&mut self) -> &mut UserMetadata {
-        self.user_metadata.get_or_insert_with(UserMetadata::default)
-    }
 }
 
-/// Converts Option<UserMetadata> to proto Metadata.
+/// Converts Option<&UserMetadata> to proto Metadata.
 /// SDKs should always return non-nil metadata.
 /// If user metadata is None or empty, it returns a metadata with empty user_metadata map.
 fn to_proto(user_metadata: Option<&UserMetadata>) -> metadata_pb::Metadata {

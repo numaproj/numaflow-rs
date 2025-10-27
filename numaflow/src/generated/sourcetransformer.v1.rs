@@ -36,6 +36,11 @@ pub mod source_transform_request {
         /// This ID is used to uniquely identify a transform request
         #[prost(string, tag = "6")]
         pub id: ::prost::alloc::string::String,
+        /// Metadata is the metadata of the message
+        #[prost(message, optional, tag = "7")]
+        pub metadata: ::core::option::Option<
+            super::super::super::metadata::v1::Metadata,
+        >,
     }
 }
 /// *
@@ -54,7 +59,7 @@ pub struct SourceTransformResponse {
 }
 /// Nested message and enum types in `SourceTransformResponse`.
 pub mod source_transform_response {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+    #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Result {
         #[prost(string, repeated, tag = "1")]
         pub keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
@@ -64,6 +69,11 @@ pub mod source_transform_response {
         pub event_time: ::core::option::Option<::prost_types::Timestamp>,
         #[prost(string, repeated, tag = "4")]
         pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+        /// Metadata is the metadata of the message
+        #[prost(message, optional, tag = "5")]
+        pub metadata: ::core::option::Option<
+            super::super::super::metadata::v1::Metadata,
+        >,
     }
 }
 /// *

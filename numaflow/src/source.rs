@@ -257,7 +257,7 @@ pub struct Offset {
     pub partition_id: i32,
 }
 
-/// Converts Option<UserMetadata> to proto Metadata.
+/// Converts Option<&UserMetadata> to proto Metadata.
 /// SDKs should always return non-nil metadata.
 /// If user metadata is None or empty, it returns a metadata with empty user_metadata map.
 fn to_proto(user_metadata: Option<&UserMetadata>) -> metadata_pb::Metadata {
