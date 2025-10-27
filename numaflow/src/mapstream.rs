@@ -159,6 +159,8 @@ impl From<Message> for proto::map_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
             tags: value.tags.unwrap_or_default(),
+            // TODO: Support metadata for mapstream
+            metadata: None,
         }
     }
 }
