@@ -32,6 +32,15 @@ pub const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
 
+/// Default socket address for onSuccess ud sink
+pub const ON_SUCCESS_SOCK_ADDR: &str = "/var/run/numaflow/on-success-sink.sock";
+
+/// Default server info file for onSuccess ud sink
+pub const ON_SUCCESS_SERVER_INFO_FILE: &str = "/var/run/numaflow/on-success-sinker-server-info";
+
+/// Container identifier for onSuccess ud sink
+const ON_SUCCESS_CONTAINER_TYPE: &str = "on-success-udsink";
+
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
 
@@ -131,6 +140,8 @@ pub enum ResponseType {
     FallBack,
     /// message should be written to the serving store.
     Serve,
+    /// message should be forwarded to the onSuccess store.
+    OnSuccess,
 }
 
 /// The result of the call to [`Sinker::sink`] method.
@@ -184,6 +195,15 @@ impl Response {
             serve_response: Some(payload),
         }
     }
+
+    pub fn on_success(id: String, payload: Vec<u8>) -> Self {
+        Self {
+            id,
+            response_type: ResponseType::OnSuccess,
+            err: None,
+            serve_response: Some(payload),
+        }
+    }
 }
 
 impl From<Response> for sink_pb::sink_response::Result {
@@ -195,6 +215,7 @@ impl From<Response> for sink_pb::sink_response::Result {
                 ResponseType::Failure => sink_pb::Status::Failure as i32,
                 ResponseType::FallBack => sink_pb::Status::Fallback as i32,
                 ResponseType::Serve => sink_pb::Status::Serve as i32,
+                ResponseType::OnSuccess => sink_pb::Status::OnSuccess as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
@@ -476,6 +497,8 @@ impl<T> Server<T> {
         let container_type = env::var(ENV_CONTAINER_TYPE).unwrap_or_default();
         let (sock_addr, server_info_file) = if container_type == FB_CONTAINER_TYPE {
             (FB_SOCK_ADDR, FB_SERVER_INFO_FILE)
+        } else if container_type == ON_SUCCESS_CONTAINER_TYPE {
+            (ON_SUCCESS_SOCK_ADDR, ON_SUCCESS_SERVER_INFO_FILE)
         } else {
             (SOCK_ADDR, SERVER_INFO_FILE)
         };
