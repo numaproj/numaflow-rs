@@ -196,12 +196,12 @@ impl Response {
         }
     }
 
-    pub fn on_success(id: String, payload: Vec<u8>) -> Self {
+    pub fn on_success(id: String) -> Self {
         Self {
             id,
             response_type: ResponseType::OnSuccess,
             err: None,
-            serve_response: Some(payload),
+            serve_response: None,
         }
     }
 }
