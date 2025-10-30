@@ -9,9 +9,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 
-use tracing::{debug, error, info};
-
 use crate::error::{Error, ErrorKind};
+use tracing::{debug, error, info};
+use uuid::Bytes;
 
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
@@ -144,6 +144,41 @@ pub enum ResponseType {
     OnSuccess,
 }
 
+#[derive(Default)]
+pub struct KeyValueGroup {
+    pub key_value_group: HashMap<String, Vec<u8>>,
+}
+
+impl From<KeyValueGroup> for sink_pb::sink_response::result::on_success_message::KeyValueGroup {
+    fn from(kv: KeyValueGroup) -> Self {
+        Self {
+            key_value: kv.key_value_group,
+        }
+    }
+}
+
+#[derive(Default)]
+/// OnSuccess message
+pub struct OnSuccessMessage {
+    pub keys: Vec<String>,
+    pub value: Vec<u8>,
+    pub user_metadata: HashMap<String, KeyValueGroup>,
+}
+
+impl From<OnSuccessMessage> for sink_pb::sink_response::result::OnSuccessMessage {
+    fn from(msg: OnSuccessMessage) -> Self {
+        Self {
+            keys: msg.keys,
+            value: msg.value,
+            user_metadata: msg
+                .user_metadata
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect(),
+        }
+    }
+}
+
 /// The result of the call to [`Sinker::sink`] method.
 pub struct Response {
     /// id is the unique ID of the message.
@@ -153,6 +188,7 @@ pub struct Response {
     /// err string is used to describe the error if [`ResponseType::Failure`]  is set.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
+    pub on_success_msg: Option<OnSuccessMessage>,
 }
 
 impl Response {
@@ -163,6 +199,7 @@ impl Response {
             response_type: ResponseType::Success,
             err: None,
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -173,6 +210,7 @@ impl Response {
             response_type: ResponseType::Failure,
             err: Some(err),
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -184,6 +222,7 @@ impl Response {
             response_type: ResponseType::FallBack,
             err: None,
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -193,6 +232,7 @@ impl Response {
             response_type: ResponseType::Serve,
             err: None,
             serve_response: Some(payload),
+            on_success_msg: None,
         }
     }
 
@@ -202,6 +242,7 @@ impl Response {
             response_type: ResponseType::OnSuccess,
             err: None,
             serve_response: None,
+            on_success_msg: None,
         }
     }
 }
@@ -219,6 +260,7 @@ impl From<Response> for sink_pb::sink_response::Result {
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
+            on_success_msg: r.on_success_msg.map(|msg| msg.into()),
         }
     }
 }
