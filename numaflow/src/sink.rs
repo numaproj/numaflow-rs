@@ -170,19 +170,15 @@ impl From<OnSuccessMessage> for sink_pb::sink_response::result::OnSuccessMessage
         Self {
             keys: msg.keys.map_or(vec![], |keys| keys),
             value: msg.value,
-            metadata: Some(metadata_pb::Metadata {
-                user_metadata: msg.user_metadata.map_or(
-                    HashMap::new(),
-                    |mp| -> HashMap<String, metadata_pb::KeyValueGroup> {
-                        mp.into_iter()
-                            .map(|(k, v)| (k, metadata_pb::KeyValueGroup::from(v)))
-                            .collect()
-                    },
-                ),
-                // FIXME: don't like the empty initializations here
-                sys_metadata: HashMap::new(),
-                previous_vertex: String::new(),
-            }),
+            metadata: msg
+                .user_metadata
+                .map(|user_metadata| metadata_pb::Metadata {
+                    user_metadata: user_metadata
+                        .into_iter()
+                        .map(|(k, v)| (k, metadata_pb::KeyValueGroup::from(v)))
+                        .collect(),
+                    ..Default::default()
+                }),
         }
     }
 }
@@ -244,13 +240,15 @@ impl Response {
         }
     }
 
-    pub fn on_success(id: String, payload: OnSuccessMessage) -> Self {
+    /// Optional payload to be sent to on_success sink. Send original message to sink in case
+    /// `None` is provided.
+    pub fn on_success(id: String, payload: Option<OnSuccessMessage>) -> Self {
         Self {
             id,
             response_type: ResponseType::OnSuccess,
             err: None,
             serve_response: None,
-            on_success_msg: Some(payload),
+            on_success_msg: payload,
         }
     }
 }
