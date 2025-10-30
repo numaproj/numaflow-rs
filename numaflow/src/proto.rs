@@ -49,4 +49,5 @@ pub mod session_reduce;
 pub mod accumulator;
 
 #[path = "common/metadata.rs"]
+#[rustfmt::skip]
 pub mod metadata;
