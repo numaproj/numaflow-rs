@@ -38,7 +38,7 @@ test:
 .PHONY: codegen
 codegen:
 	# Change timestamps so that tonic_build code generation will always be triggered.
-	cd numaflow && touch proto/* && PROTO_CODE_GEN=1 cargo build
+	cd numaflow && touch proto/* && PROTO_CODE_GEN=1 cargo build && cargo fmt --all
 
 .PHONY: clean-proto
 clean-proto:

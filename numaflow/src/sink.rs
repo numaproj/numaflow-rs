@@ -11,8 +11,8 @@ use tonic::{Request, Status, Streaming};
 
 use crate::error::{Error, ErrorKind};
 use tracing::{debug, error, info};
-use uuid::Bytes;
 
+use crate::proto::metadata as metadata_pb;
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
@@ -146,13 +146,13 @@ pub enum ResponseType {
 
 #[derive(Default)]
 pub struct KeyValueGroup {
-    pub key_value_group: HashMap<String, Vec<u8>>,
+    pub key_value: HashMap<String, Vec<u8>>,
 }
 
-impl From<KeyValueGroup> for sink_pb::sink_response::result::on_success_message::KeyValueGroup {
+impl From<KeyValueGroup> for metadata_pb::KeyValueGroup {
     fn from(kv: KeyValueGroup) -> Self {
         Self {
-            key_value: kv.key_value_group,
+            key_value: kv.key_value,
         }
     }
 }
@@ -160,21 +160,29 @@ impl From<KeyValueGroup> for sink_pb::sink_response::result::on_success_message:
 #[derive(Default)]
 /// OnSuccess message
 pub struct OnSuccessMessage {
-    pub keys: Vec<String>,
+    pub keys: Option<Vec<String>>,
     pub value: Vec<u8>,
-    pub user_metadata: HashMap<String, KeyValueGroup>,
+    pub user_metadata: Option<HashMap<String, KeyValueGroup>>,
 }
 
 impl From<OnSuccessMessage> for sink_pb::sink_response::result::OnSuccessMessage {
     fn from(msg: OnSuccessMessage) -> Self {
         Self {
-            keys: msg.keys,
+            keys: msg.keys.map_or(vec![], |keys| keys),
             value: msg.value,
-            user_metadata: msg
-                .user_metadata
-                .into_iter()
-                .map(|(key, value)| (key, value.into()))
-                .collect(),
+            metadata: Some(metadata_pb::Metadata {
+                user_metadata: msg.user_metadata.map_or(
+                    HashMap::new(),
+                    |mp| -> HashMap<String, metadata_pb::KeyValueGroup> {
+                        mp.into_iter()
+                            .map(|(k, v)| (k, metadata_pb::KeyValueGroup::from(v)))
+                            .collect()
+                    },
+                ),
+                // FIXME: don't like the empty initializations here
+                sys_metadata: HashMap::new(),
+                previous_vertex: String::new(),
+            }),
         }
     }
 }
@@ -236,13 +244,13 @@ impl Response {
         }
     }
 
-    pub fn on_success(id: String) -> Self {
+    pub fn on_success(id: String, payload: OnSuccessMessage) -> Self {
         Self {
             id,
             response_type: ResponseType::OnSuccess,
             err: None,
             serve_response: None,
-            on_success_msg: None,
+            on_success_msg: Some(payload),
         }
     }
 }

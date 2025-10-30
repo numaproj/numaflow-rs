@@ -2,6 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
+import "metadata.proto";
 
 
 package sink.v1;
@@ -74,12 +75,9 @@ enum Status {
 message SinkResponse {
   message Result {
     message OnSuccessMessage {
-      message KeyValueGroup {
-        map<string, bytes> key_value = 1;
-      }
       bytes value = 1;
       repeated string keys = 2;
-      map<string, KeyValueGroup> user_metadata = 3;
+      metadata.Metadata metadata = 3;
     }
     // id is the ID of the message, can be used to uniquely identify the message.
     string id = 1;
