@@ -10,6 +10,6 @@ update:
 
 .PHONY: image
 image: update
-	cd ../../ && \
-	docker build -f ${DOCKER_FILE_PATH}  -t ${IMAGE_REGISTRY} --target all-sinks --platform linux/arm64 . --load
-	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
+	cd ../../ && docker build \
+	-f ${DOCKER_FILE_PATH}  \
+	-t ${IMAGE_REGISTRY} .
