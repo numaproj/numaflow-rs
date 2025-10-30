@@ -8,24 +8,16 @@ pub struct Metadata {
     /// SystemMetadata is the system metadata of the message
     /// Key of the map is the group name
     #[prost(map = "string, message", tag = "2")]
-    pub sys_metadata: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        KeyValueGroup,
-    >,
+    pub sys_metadata: ::std::collections::HashMap<::prost::alloc::string::String, KeyValueGroup>,
     /// UserMetadata is the user metadata of the message
     /// Key of the map is the group name
     #[prost(map = "string, message", tag = "3")]
-    pub user_metadata: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        KeyValueGroup,
-    >,
+    pub user_metadata: ::std::collections::HashMap<::prost::alloc::string::String, KeyValueGroup>,
 }
 /// KeyValueGroup is a group of key-value pairs for a given group.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyValueGroup {
     #[prost(map = "string, bytes", tag = "1")]
-    pub key_value: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::vec::Vec<u8>,
-    >,
+    pub key_value:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::vec::Vec<u8>>,
 }
