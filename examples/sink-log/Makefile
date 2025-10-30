@@ -13,3 +13,4 @@ image: update
 	cd ../../ && docker build \
 	-f ${DOCKER_FILE_PATH}  \
 	-t ${IMAGE_REGISTRY} .
+	@if [ "$(PUSH)" = "true" ]; then docker push ${IMAGE_REGISTRY}; fi
