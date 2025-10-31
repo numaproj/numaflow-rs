@@ -33,13 +33,13 @@ pub const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
 
 /// Default socket address for onSuccess ud sink
-pub const ON_SUCCESS_SOCK_ADDR: &str = "/var/run/numaflow/on-success-sink.sock";
+pub const ONS_SOCK_ADDR: &str = "/var/run/numaflow/ons-sink.sock";
 
 /// Default server info file for onSuccess ud sink
-pub const ON_SUCCESS_SERVER_INFO_FILE: &str = "/var/run/numaflow/on-success-sinker-server-info";
+pub const ONS_SERVER_INFO_FILE: &str = "/var/run/numaflow/ons-sinker-server-info";
 
 /// Container identifier for onSuccess ud sink
-const ON_SUCCESS_CONTAINER_TYPE: &str = "on-success-udsink";
+const ONS_CONTAINER_TYPE: &str = "ons-udsink";
 
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
@@ -572,8 +572,8 @@ impl<T> Server<T> {
         let container_type = env::var(ENV_CONTAINER_TYPE).unwrap_or_default();
         let (sock_addr, server_info_file) = if container_type == FB_CONTAINER_TYPE {
             (FB_SOCK_ADDR, FB_SERVER_INFO_FILE)
-        } else if container_type == ON_SUCCESS_CONTAINER_TYPE {
-            (ON_SUCCESS_SOCK_ADDR, ON_SUCCESS_SERVER_INFO_FILE)
+        } else if container_type == ONS_CONTAINER_TYPE {
+            (ONS_SOCK_ADDR, ONS_SERVER_INFO_FILE)
         } else {
             (SOCK_ADDR, SERVER_INFO_FILE)
         };
