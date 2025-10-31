@@ -190,7 +190,7 @@ impl Message {
 }
 
 /// Converts a [`Message`] into a [`sink_pb::sink_response::result::OnSuccessMessage`].
-impl From<Message> for sink_pb::sink_response::result::OnSuccessMessage {
+impl From<Message> for sink_pb::sink_response::result::Message {
     fn from(msg: Message) -> Self {
         Self {
             keys: msg.keys.map_or(vec![], |keys| keys),
