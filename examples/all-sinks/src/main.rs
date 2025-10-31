@@ -1,5 +1,7 @@
-use numaflow::sink::{self, OnSuccessMessage, Response, SinkRequest};
+use numaflow::sink::KeyValueGroup;
+use numaflow::sink::{self, Message, Response, SinkRequest};
 use rand::Rng;
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -15,9 +17,33 @@ impl sink::Sinker for Logger {
         let mut responses: Vec<Response> = Vec::new();
 
         while let Some(datum) = input.recv().await {
-            // generate random response
-            let response = RandomResponse::from(rand::rng().random_range(1..=5))
-                .to_response(datum.id, datum.value);
+            let response = match primary_sink_write_status() {
+                // Writing to primary sink was successful, we want to send a message to on_success sink
+                // The message sent to on_success sink can be different from the original message
+                true => {
+                    // build user metadata for on_success sink message payload
+                    let mut user_metadata = HashMap::new();
+                    user_metadata.insert(
+                        String::from("key1"),
+                        KeyValueGroup {
+                            key_value: [(datum.id.clone(), datum.value.clone().into())]
+                                .into_iter()
+                                .collect(),
+                        },
+                    );
+                    Response::on_success(
+                        datum.id,
+                        // optional message, send original message to on_success sink in case `None` is provided
+                        Message::new(datum.value) // required value
+                            .with_keys(vec!["key1".to_string()]) // optional keys
+                            .with_user_metadata(user_metadata) // optional metadata
+                            .build(),
+                    )
+                }
+                // Writing to primary sink was not successful, we want to send a message to fallback sink
+                // The message sent to the fallback sink will be the original message
+                false => Response::fallback(datum.id),
+            };
 
             // return the responses
             responses.push(response);
@@ -27,45 +53,10 @@ impl sink::Sinker for Logger {
     }
 }
 
-enum RandomResponse {
-    Success,
-    Failure,
-    Fallback,
-    OnSuccessOriginal,
-    OnSuccessChanged,
-}
-
-impl From<usize> for RandomResponse {
-    fn from(value: usize) -> Self {
-        match value {
-            1 => RandomResponse::Failure,
-            2 => RandomResponse::Fallback,
-            3 => RandomResponse::OnSuccessOriginal,
-            4 => RandomResponse::OnSuccessChanged,
-            _ => RandomResponse::Success,
-        }
-    }
-}
-
-impl RandomResponse {
-    fn to_response(&self, id: String, value: Vec<u8>) -> Response {
-        match self {
-            RandomResponse::Success => Response::ok(id),
-            RandomResponse::Failure => Response::failure(id, "bad luck".to_string()),
-            RandomResponse::Fallback => Response::fallback(id),
-            RandomResponse::OnSuccessOriginal => Response::on_success(id, None),
-            RandomResponse::OnSuccessChanged => {
-                let changed_val =
-                    String::from("Changed value: ") + std::str::from_utf8(&value).unwrap();
-                Response::on_success(
-                    id,
-                    Some(OnSuccessMessage {
-                        user_metadata: None,
-                        value: changed_val.into(),
-                        keys: None,
-                    }),
-                )
-            }
-        }
-    }
+/// Get status of writing to primary sink
+/// true: write successful
+/// false: write failed
+fn primary_sink_write_status() -> bool {
+    // dummy logic to simulate write status
+    rand::rng().random_range(0..=1) == 1
 }

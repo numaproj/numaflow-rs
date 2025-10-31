@@ -159,14 +159,39 @@ impl From<KeyValueGroup> for metadata_pb::KeyValueGroup {
 
 #[derive(Default)]
 /// OnSuccess message
-pub struct OnSuccessMessage {
+pub struct Message {
     pub keys: Option<Vec<String>>,
     pub value: Vec<u8>,
     pub user_metadata: Option<HashMap<String, KeyValueGroup>>,
 }
 
-impl From<OnSuccessMessage> for sink_pb::sink_response::result::OnSuccessMessage {
-    fn from(msg: OnSuccessMessage) -> Self {
+impl Message {
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
+            value,
+            keys: None,
+            user_metadata: None,
+        }
+    }
+
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    pub fn with_user_metadata(mut self, user_metadata: HashMap<String, KeyValueGroup>) -> Self {
+        self.user_metadata = Some(user_metadata);
+        self
+    }
+
+    pub fn build(self) -> Option<Self> {
+        Some(self)
+    }
+}
+
+/// Converts a [`Message`] into a [`sink_pb::sink_response::result::OnSuccessMessage`].
+impl From<Message> for sink_pb::sink_response::result::OnSuccessMessage {
+    fn from(msg: Message) -> Self {
         Self {
             keys: msg.keys.map_or(vec![], |keys| keys),
             value: msg.value,
@@ -192,7 +217,9 @@ pub struct Response {
     /// err string is used to describe the error if [`ResponseType::Failure`]  is set.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
-    pub on_success_msg: Option<OnSuccessMessage>,
+    /// Optional payload to be sent to on_success sink. Send original message to sink in case
+    /// `None` is provided.
+    pub on_success_msg: Option<Message>,
 }
 
 impl Response {
@@ -242,7 +269,7 @@ impl Response {
 
     /// Optional payload to be sent to on_success sink. Send original message to sink in case
     /// `None` is provided.
-    pub fn on_success(id: String, payload: Option<OnSuccessMessage>) -> Self {
+    pub fn on_success(id: String, payload: Option<Message>) -> Self {
         Self {
             id,
             response_type: ResponseType::OnSuccess,
