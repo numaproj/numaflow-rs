@@ -26,7 +26,7 @@ impl sink::Sinker for SinkHandler {
                     user_metadata.insert(
                         String::from("key1"),
                         KeyValueGroup {
-                            key_value: [(datum.id.clone(), datum.value.clone().into())]
+                            key_value: [(datum.id.clone(), datum.value.clone())]
                                 .into_iter()
                                 .collect(),
                         },
