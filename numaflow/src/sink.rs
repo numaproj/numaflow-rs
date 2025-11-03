@@ -266,8 +266,10 @@ impl Message {
     ///
     /// ```
     /// use numaflow::sink::Message;
+    /// use numaflow::sink::Response;
     ///
     /// let message = Message::new(vec![1, 2, 3]).build();
+    /// let OnSuccessResponse = Response::on_success("id".to_string(), message);
     /// ```
     pub fn build(self) -> Option<Self> {
         Some(self)
