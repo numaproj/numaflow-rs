@@ -204,7 +204,7 @@ impl Message {
     /// ```
     /// use numaflow::sink::Message;
     ///
-    /// let message = Message::new(vec![1, 2, 3]);
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).build();
     /// ```
     pub fn new(value: Vec<u8>) -> Self {
         Self {
@@ -225,7 +225,7 @@ impl Message {
     /// ```
     /// use numaflow::sink::Message;
     ///
-    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]).build();
     /// ```
     pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
@@ -253,7 +253,7 @@ impl Message {
     ///             )])
     ///         ),
     ///     )]);
-    /// let message = Message::new(vec![1, 2, 3]).with_user_metadata(user_metadata);
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).with_user_metadata(user_metadata).build();
     /// ```
     pub fn with_user_metadata(mut self, user_metadata: HashMap<String, KeyValueGroup>) -> Self {
         self.user_metadata = Some(user_metadata);
@@ -268,15 +268,15 @@ impl Message {
     /// use numaflow::sink::Message;
     /// use numaflow::sink::Response;
     ///
-    /// let message = Message::new(vec![1, 2, 3]).build();
-    /// let onSuccessResponse = Response::on_success("id".to_string(), message);
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).build();
+    /// let onSuccessResponse = Response::on_success("id".to_string(), onSuccessMessage);
     /// ```
     pub fn build(self) -> Option<Self> {
         Some(self)
     }
 }
 
-/// Converts a [`Message`] into a [`sink_pb::sink_response::result::OnSuccessMessage`].
+/// Converts a [`Message`] into a [`sink_pb::sink_response::result::Message`].
 impl From<Message> for sink_pb::sink_response::result::Message {
     fn from(msg: Message) -> Self {
         Self {
