@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::env;
-
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -157,8 +156,36 @@ impl From<KeyValueGroup> for metadata_pb::KeyValueGroup {
     }
 }
 
+impl From<HashMap<String, Vec<u8>>> for KeyValueGroup {
+    fn from(hm: HashMap<String, Vec<u8>>) -> Self {
+        Self { key_value: hm }
+    }
+}
+
+impl From<HashMap<String, String>> for KeyValueGroup {
+    fn from(hm: HashMap<String, String>) -> Self {
+        Self {
+            key_value: hm.into_iter().map(|(k, v)| (k, v.into())).collect(),
+        }
+    }
+}
+
 #[derive(Default)]
-/// OnSuccess message
+/// OnSuccess message contains information that needs to be sent to the OnSuccess sink.
+/// The message can be different from the original message. In case same information that was
+/// written to the primary sink needs to be written to the onSuccess sink, do not build/send this
+/// message and rather simply send `None` to the onSuccess sink.
+///
+/// At least a `value` is required to build Message for OnSuccess sink.
+/// # Example
+///
+/// ```
+/// use numaflow::sink::Message;
+/// use numaflow::sink::Response;
+///
+/// let message = Message::new(vec![1, 2, 3]);
+/// let response = Response::on_success("id".to_string(), Some(message));
+/// ```
 pub struct Message {
     pub keys: Option<Vec<String>>,
     pub value: Vec<u8>,
@@ -166,6 +193,19 @@ pub struct Message {
 }
 
 impl Message {
+    /// Creates a new message for OnSuccess sink with the specified value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    ///
+    /// let message = Message::new(vec![1, 2, 3]);
+    /// ```
     pub fn new(value: Vec<u8>) -> Self {
         Self {
             value,
@@ -174,16 +214,61 @@ impl Message {
         }
     }
 
+    /// Sets or replaces the keys associated with the message for OnSuccess sink.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    ///
+    /// let message = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]);
+    /// ```
     pub fn with_keys(mut self, keys: Vec<String>) -> Self {
         self.keys = Some(keys);
         self
     }
 
+    /// Sets or replaces the user metadata associated with the message for OnSuccess sink.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_metadata` - A hash map of strings to `KeyValueGroup` representing the user metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::{Message, KeyValueGroup};
+    /// use std::collections::HashMap;
+    ///
+    /// let user_metadata = HashMap::from([(
+    ///         "key1".to_string(),
+    ///         KeyValueGroup::from(
+    ///             HashMap::from([(
+    ///                 "key2".to_string(),
+    ///                 Vec::<u8>::from("SomeValue")
+    ///             )])
+    ///         ),
+    ///     )]);
+    /// let message = Message::new(vec![1, 2, 3]).with_user_metadata(user_metadata);
+    /// ```
     pub fn with_user_metadata(mut self, user_metadata: HashMap<String, KeyValueGroup>) -> Self {
         self.user_metadata = Some(user_metadata);
         self
     }
 
+    /// Builds the message to be sent to the OnSuccess sink.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    ///
+    /// let message = Message::new(vec![1, 2, 3]).build();
+    /// ```
     pub fn build(self) -> Option<Self> {
         Some(self)
     }

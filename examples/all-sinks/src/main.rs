@@ -22,15 +22,13 @@ impl sink::Sinker for SinkHandler {
                 // The message sent to on_success sink can be different from the original message
                 true => {
                     // build user metadata for on_success sink message payload
-                    let mut user_metadata = HashMap::new();
-                    user_metadata.insert(
+                    let user_metadata = HashMap::from([(
                         String::from("key1"),
-                        KeyValueGroup {
-                            key_value: [(datum.id.clone(), datum.value.clone())]
-                                .into_iter()
-                                .collect(),
-                        },
-                    );
+                        KeyValueGroup::from(HashMap::from([(
+                            datum.id.clone(),
+                            datum.value.clone(),
+                        )])),
+                    )]);
                     Response::on_success(
                         datum.id,
                         // optional message, send original message to on_success sink in case `None` is provided
