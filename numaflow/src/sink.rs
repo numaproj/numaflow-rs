@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::env;
-
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -9,10 +8,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status, Streaming};
 
+use crate::error::{Error, ErrorKind};
 use tracing::{debug, error, info};
 
-use crate::error::{Error, ErrorKind};
-
+use crate::proto::metadata as metadata_pb;
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
@@ -31,6 +30,15 @@ pub const FB_SERVER_INFO_FILE: &str = "/var/run/numaflow/fb-sinker-server-info";
 
 /// Container identifier for fallback sink
 const FB_CONTAINER_TYPE: &str = "fb-udsink";
+
+/// Default socket address for onSuccess ud sink
+pub const ONS_SOCK_ADDR: &str = "/var/run/numaflow/ons-sink.sock";
+
+/// Default server info file for onSuccess ud sink
+pub const ONS_SERVER_INFO_FILE: &str = "/var/run/numaflow/ons-sinker-server-info";
+
+/// Container identifier for onSuccess ud sink
+const ONS_CONTAINER_TYPE: &str = "ons-udsink";
 
 /// Default channel size for sink service
 const CHANNEL_SIZE: usize = 1000;
@@ -131,6 +139,160 @@ pub enum ResponseType {
     FallBack,
     /// message should be written to the serving store.
     Serve,
+    /// message should be forwarded to the onSuccess store.
+    OnSuccess,
+}
+
+#[derive(Default)]
+pub struct KeyValueGroup {
+    pub key_value: HashMap<String, Vec<u8>>,
+}
+
+impl From<KeyValueGroup> for metadata_pb::KeyValueGroup {
+    fn from(kv: KeyValueGroup) -> Self {
+        Self {
+            key_value: kv.key_value,
+        }
+    }
+}
+
+impl From<HashMap<String, Vec<u8>>> for KeyValueGroup {
+    fn from(hm: HashMap<String, Vec<u8>>) -> Self {
+        Self { key_value: hm }
+    }
+}
+
+impl From<HashMap<String, String>> for KeyValueGroup {
+    fn from(hm: HashMap<String, String>) -> Self {
+        Self {
+            key_value: hm.into_iter().map(|(k, v)| (k, v.into())).collect(),
+        }
+    }
+}
+
+#[derive(Default)]
+/// OnSuccess message contains information that needs to be sent to the OnSuccess sink.
+/// The message can be different from the original message. In case same information that was
+/// written to the primary sink needs to be written to the onSuccess sink, do not build/send this
+/// message and rather simply send `None` to the onSuccess sink.
+///
+/// At least a `value` is required to build Message for OnSuccess sink.
+/// # Example
+///
+/// ```
+/// use numaflow::sink::Message;
+/// use numaflow::sink::Response;
+///
+/// let message = Message::new(vec![1, 2, 3]);
+/// let response = Response::on_success("id".to_string(), Some(message));
+/// ```
+pub struct Message {
+    pub keys: Option<Vec<String>>,
+    pub value: Vec<u8>,
+    pub user_metadata: Option<HashMap<String, KeyValueGroup>>,
+}
+
+impl Message {
+    /// Creates a new message for OnSuccess sink with the specified value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A vector of bytes representing the message's payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    ///
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).build();
+    /// ```
+    pub fn new(value: Vec<u8>) -> Self {
+        Self {
+            value,
+            keys: None,
+            user_metadata: None,
+        }
+    }
+
+    /// Sets or replaces the keys associated with the message for OnSuccess sink.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - A vector of strings representing the keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    ///
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).with_keys(vec!["key1".to_string(), "key2".to_string()]).build();
+    /// ```
+    pub fn with_keys(mut self, keys: Vec<String>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// Sets or replaces the user metadata associated with the message for OnSuccess sink.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_metadata` - A hash map of strings to `KeyValueGroup` representing the user metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::{Message, KeyValueGroup};
+    /// use std::collections::HashMap;
+    ///
+    /// let user_metadata = HashMap::from([(
+    ///         "key1".to_string(),
+    ///         KeyValueGroup::from(
+    ///             HashMap::from([(
+    ///                 "key2".to_string(),
+    ///                 Vec::<u8>::from("SomeValue")
+    ///             )])
+    ///         ),
+    ///     )]);
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).with_user_metadata(user_metadata).build();
+    /// ```
+    pub fn with_user_metadata(mut self, user_metadata: HashMap<String, KeyValueGroup>) -> Self {
+        self.user_metadata = Some(user_metadata);
+        self
+    }
+
+    /// Builds the message to be sent to the OnSuccess sink.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sink::Message;
+    /// use numaflow::sink::Response;
+    ///
+    /// let onSuccessMessage = Message::new(vec![1, 2, 3]).build();
+    /// let onSuccessResponse = Response::on_success("id".to_string(), onSuccessMessage);
+    /// ```
+    pub fn build(self) -> Option<Self> {
+        Some(self)
+    }
+}
+
+/// Converts a [`Message`] into a [`sink_pb::sink_response::result::Message`].
+impl From<Message> for sink_pb::sink_response::result::Message {
+    fn from(msg: Message) -> Self {
+        Self {
+            keys: msg.keys.map_or(vec![], |keys| keys),
+            value: msg.value,
+            metadata: msg
+                .user_metadata
+                .map(|user_metadata| metadata_pb::Metadata {
+                    user_metadata: user_metadata
+                        .into_iter()
+                        .map(|(k, v)| (k, metadata_pb::KeyValueGroup::from(v)))
+                        .collect(),
+                    ..Default::default()
+                }),
+        }
+    }
 }
 
 /// The result of the call to [`Sinker::sink`] method.
@@ -142,6 +304,9 @@ pub struct Response {
     /// err string is used to describe the error if [`ResponseType::Failure`]  is set.
     pub err: Option<String>,
     pub serve_response: Option<Vec<u8>>,
+    /// Optional payload to be sent to on_success sink. Send original message to sink in case
+    /// `None` is provided.
+    pub on_success_msg: Option<Message>,
 }
 
 impl Response {
@@ -152,6 +317,7 @@ impl Response {
             response_type: ResponseType::Success,
             err: None,
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -162,6 +328,7 @@ impl Response {
             response_type: ResponseType::Failure,
             err: Some(err),
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -173,6 +340,7 @@ impl Response {
             response_type: ResponseType::FallBack,
             err: None,
             serve_response: None,
+            on_success_msg: None,
         }
     }
 
@@ -182,6 +350,19 @@ impl Response {
             response_type: ResponseType::Serve,
             err: None,
             serve_response: Some(payload),
+            on_success_msg: None,
+        }
+    }
+
+    /// Optional payload to be sent to on_success sink. Send original message to sink in case
+    /// `None` is provided.
+    pub fn on_success(id: String, payload: Option<Message>) -> Self {
+        Self {
+            id,
+            response_type: ResponseType::OnSuccess,
+            err: None,
+            serve_response: None,
+            on_success_msg: payload,
         }
     }
 }
@@ -195,9 +376,11 @@ impl From<Response> for sink_pb::sink_response::Result {
                 ResponseType::Failure => sink_pb::Status::Failure as i32,
                 ResponseType::FallBack => sink_pb::Status::Fallback as i32,
                 ResponseType::Serve => sink_pb::Status::Serve as i32,
+                ResponseType::OnSuccess => sink_pb::Status::OnSuccess as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
+            on_success_msg: r.on_success_msg.map(|msg| msg.into()),
         }
     }
 }
@@ -476,6 +659,8 @@ impl<T> Server<T> {
         let container_type = env::var(ENV_CONTAINER_TYPE).unwrap_or_default();
         let (sock_addr, server_info_file) = if container_type == FB_CONTAINER_TYPE {
             (FB_SOCK_ADDR, FB_SERVER_INFO_FILE)
+        } else if container_type == ONS_CONTAINER_TYPE {
+            (ONS_SOCK_ADDR, ONS_SERVER_INFO_FILE)
         } else {
             (SOCK_ADDR, SERVER_INFO_FILE)
         };
