@@ -81,7 +81,7 @@ pub struct SourceReadRequest {
 /// Here, for the first time, the user metadata can be set by the user.
 /// A vertex could create one or more set of key-value pairs per group-name.
 /// UserMetadata wraps user-defined metadata groups per message.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UserMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }

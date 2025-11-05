@@ -49,7 +49,7 @@ const CHANNEL_SIZE: usize = 1000;
 /// SystemMetadata is mapping of group name to key-value pairs
 /// SystemMetadata wraps system-generated metadata groups per message.
 /// It is read-only to UDFs
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SystemMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
@@ -118,7 +118,7 @@ impl SystemMetadata {
 }
 
 /// UserMetadata wraps user-defined metadata groups per message.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UserMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
@@ -291,7 +291,7 @@ pub trait Mapper {
 }
 
 /// Message is the response struct from the [`Mapper::map`] .
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.

@@ -123,7 +123,7 @@ pub struct SinkRequest {
 /// Since sink is the last vertex in the pipeline, only GET methods
 /// are available on SystemMetadata and UserMetadata.
 /// UserMetadata is the user metadata of the message
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UserMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
@@ -196,7 +196,7 @@ impl UserMetadata {
 }
 
 /// SystemMetadata is the system metadata of the message
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SystemMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
