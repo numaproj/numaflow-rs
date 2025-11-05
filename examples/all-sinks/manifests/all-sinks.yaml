@@ -1,0 +1,33 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: all-sinks
+spec:
+  vertices:
+    - name: in
+      source:
+        # A self data generating source
+        generator:
+          rpu: 300
+          duration: 1s
+          keyCount: 5
+          value: 5
+    - name: out
+      sink:
+        udsink:
+          container:
+            image: quay.io/numaio/numaflow-rs/all-sinks:stable
+            imagePullPolicy: IfNotPresent
+        fallback:
+          udsink:
+            container:
+              image: quay.io/numaio/numaflow-rs/sink-log:stable
+              imagePullPolicy: IfNotPresent
+        onSuccess:
+          udsink:
+            container:
+              image: quay.io/numaio/numaflow-rs/sink-log:stable
+              imagePullPolicy: IfNotPresent
+  edges:
+    - from: in
+      to: out
