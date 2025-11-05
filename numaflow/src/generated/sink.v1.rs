@@ -34,6 +34,9 @@ pub mod sink_request {
             ::prost::alloc::string::String,
             ::prost::alloc::string::String,
         >,
+        /// Metadata is the metadata of the message
+        #[prost(message, optional, tag = "7")]
+        pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
     }
 }
 /// Handshake message between client and server to indicate the start of transmission.

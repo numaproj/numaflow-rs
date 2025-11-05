@@ -112,6 +112,7 @@ pub(crate) mod simple_source {
                 },
                 keys: vec![],
                 headers: Default::default(),
+                user_metadata: None,
             }
         }
     }

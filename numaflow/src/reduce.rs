@@ -12,7 +12,7 @@ use tonic::{Request, Response, Status, async_trait};
 use crate::error::{Error, ErrorKind};
 pub use crate::proto::reduce as proto;
 use crate::shared;
-use shared::{ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc};
+use shared::{ContainerType, build_panic_status, get_panic_info, prost_timestamp_from_utc};
 use tracing::error;
 /// Default socket address for reduce service
 pub const SOCK_ADDR: &str = "/var/run/numaflow/reduce.sock";
@@ -218,11 +218,7 @@ impl Message {
     /// let dropped_message = Message::message_to_drop();
     /// ```
     pub fn message_to_drop() -> crate::map::Message {
-        crate::map::Message {
-            keys: None,
-            value: vec![],
-            tags: Some(vec![DROP.to_string()]),
-        }
+        crate::map::Message::message_to_drop()
     }
 
     /// Sets or replaces the keys associated with this message.

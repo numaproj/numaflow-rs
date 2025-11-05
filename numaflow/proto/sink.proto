@@ -26,6 +26,8 @@ message SinkRequest {
     google.protobuf.Timestamp watermark = 4;
     string id = 5;
     map<string, string> headers = 6;
+    // Metadata is the metadata of the message
+    metadata.Metadata metadata = 7;
   }
   // Required field indicating the request.
   Request request = 1;
