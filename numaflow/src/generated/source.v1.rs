@@ -71,9 +71,7 @@ pub mod read_response {
         >,
         /// Metadata is the metadata of the message
         #[prost(message, optional, tag = "6")]
-        pub metadata: ::core::option::Option<
-            super::super::super::metadata::v1::Metadata,
-        >,
+        pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
     }
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct Status {

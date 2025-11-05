@@ -38,9 +38,7 @@ pub mod source_transform_request {
         pub id: ::prost::alloc::string::String,
         /// Metadata is the metadata of the message
         #[prost(message, optional, tag = "7")]
-        pub metadata: ::core::option::Option<
-            super::super::super::metadata::v1::Metadata,
-        >,
+        pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
     }
 }
 /// *
@@ -71,9 +69,7 @@ pub mod source_transform_response {
         pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
         /// Metadata is the metadata of the message
         #[prost(message, optional, tag = "5")]
-        pub metadata: ::core::option::Option<
-            super::super::super::metadata::v1::Metadata,
-        >,
+        pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
     }
 }
 /// *

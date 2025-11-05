@@ -12,7 +12,7 @@ use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
 use crate::proto::map::{self as proto, MapResponse};
-use crate::proto::metadata::v1 as metadata_pb;
+use crate::proto::metadata as metadata_pb;
 use crate::shared;
 use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
@@ -55,12 +55,10 @@ pub struct SystemMetadata {
 }
 
 impl SystemMetadata {
-    /// It wraps an existing HashMap<String, HashMap<String, Vec<u8>>> into SystemMetadata
+    /// Create a new SystemMetadata instance
     /// This is for internal and testing purposes only.
-    pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
-        Self {
-            data: data.unwrap_or_default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// groups returns the groups of the system metadata.
@@ -126,11 +124,9 @@ pub struct UserMetadata {
 }
 
 impl UserMetadata {
-    /// It wraps an existing HashMap<String, HashMap<String, Vec<u8>>> into UserMetadata
-    pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
-        Self {
-            data: data.unwrap_or_default(),
-        }
+    /// Create a new UserMetadata instance
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// groups returns the groups of the user metadata.
@@ -196,14 +192,12 @@ impl UserMetadata {
     /// ```no_run
     /// use numaflow::map::UserMetadata;
     /// use std::collections::HashMap;
-    /// let mut umd = UserMetadata::default();
-    /// let mut kv = HashMap::new();
-    /// kv.insert("key1".to_string(), "value1".as_bytes().to_vec());
-    /// umd.set_kv_group("group1".to_string(), kv);
+    /// let mut umd = UserMetadata::new();
+    /// umd.create_group("group1".to_string());
     /// println!("{:?}", umd);
     /// ```
-    pub fn set_kv_group(&mut self, group: String, kv: HashMap<String, Vec<u8>>) {
-        self.data.insert(group, kv);
+    pub fn create_group(&mut self, group: String) {
+        self.data.entry(group).or_default();
     }
 
     /// add_kv adds a key-value pair to the user metadata.
@@ -213,42 +207,12 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::map::UserMetadata;
-    /// let mut umd = UserMetadata::default();
+    /// let mut umd = UserMetadata::new();
     /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// println!("{:?}", umd);
     /// ```
     pub fn add_kv(&mut self, group: String, key: String, value: Vec<u8>) {
         self.data.entry(group).or_default().insert(key, value);
-    }
-
-    /// add_kv_string adds a key-value pair with value of string type to the user metadata.
-    /// If the group is not present, it creates a new group.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use numaflow::map::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
-    /// println!("{:?}", umd);
-    /// ```
-    pub fn add_kv_string(&mut self, group: String, key: String, value: String) {
-        self.add_kv(group, key, value.into_bytes());
-    }
-
-    /// add_kv_int adds a key-value pair with value of int type to the user metadata.
-    /// If the group is not present, it creates a new group.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use numaflow::map::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_int("group1".to_string(), "key1".to_string(), 123);
-    /// println!("{:?}", umd);
-    /// ```
-    pub fn add_kv_int(&mut self, group: String, key: String, value: i32) {
-        self.add_kv(group, key, value.to_string().into_bytes());
     }
 
     /// remove_key removes a key from a group in the user metadata.
@@ -258,8 +222,8 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::map::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// umd.remove_key("group1", "key1");
     /// println!("{:?}", umd);
     /// ```
@@ -276,8 +240,8 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::map::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// umd.remove_group("group1");
     /// println!("{:?}", umd);
     /// ```
@@ -478,7 +442,7 @@ pub struct MapRequest {
 fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetadata {
     let proto = match proto {
         Some(p) => p,
-        None => return UserMetadata::new(None),
+        None => return UserMetadata::new(),
     };
 
     let mut user_map = HashMap::new();
@@ -486,14 +450,14 @@ fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetada
         user_map.insert(group.clone(), kv_group.key_value.clone());
     }
 
-    UserMetadata::new(Some(user_map))
+    UserMetadata { data: user_map }
 }
 
 /// Get SystemMetadata from proto Metadata
 fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMetadata {
     let proto = match proto {
         Some(p) => p,
-        None => return SystemMetadata::new(None),
+        None => return SystemMetadata::new(),
     };
 
     let mut sys_map = HashMap::new();
@@ -501,7 +465,7 @@ fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMe
         sys_map.insert(group.clone(), kv_group.key_value.clone());
     }
 
-    SystemMetadata::new(Some(sys_map))
+    SystemMetadata { data: sys_map }
 }
 
 impl From<proto::map_request::Request> for MapRequest {

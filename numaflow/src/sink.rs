@@ -13,7 +13,7 @@ use tracing::{debug, error, info};
 
 use crate::error::{Error, ErrorKind};
 
-use crate::proto::metadata::v1 as metadata_pb;
+use crate::proto::metadata as metadata_pb;
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
@@ -116,17 +116,16 @@ pub struct SinkRequest {
 /// Since sink is the last vertex in the pipeline, only GET methods
 /// are available on SystemMetadata and UserMetadata.
 /// UserMetadata is the user metadata of the message
-/// Clone is required if Users might want to clone the metadata for their own use cases.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct UserMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
 
 impl UserMetadata {
     /// Create a new UserMetadata instance
-    pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            data: data.unwrap_or_default(),
+            data: Default::default(),
         }
     }
 
@@ -190,17 +189,16 @@ impl UserMetadata {
 }
 
 /// SystemMetadata is the system metadata of the message
-/// Clone is required if Users might want to clone the metadata for their own use cases.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SystemMetadata {
     data: HashMap<String, HashMap<String, Vec<u8>>>,
 }
 
 impl SystemMetadata {
     /// Create a new SystemMetadata instance
-    pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            data: data.unwrap_or_default(),
+            data: Default::default(),
         }
     }
 
@@ -267,7 +265,7 @@ impl SystemMetadata {
 fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetadata {
     let proto = match proto {
         Some(p) => p,
-        None => return UserMetadata::new(None),
+        None => return UserMetadata::new(),
     };
 
     let mut user_map = HashMap::new();
@@ -277,14 +275,14 @@ fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetada
         user_map.insert(group.clone(), kv_group.key_value.clone());
     }
 
-    UserMetadata::new(Some(user_map))
+    UserMetadata { data: user_map }
 }
 
 /// Get SystemMetadata from proto Metadata
 fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMetadata {
     let proto = match proto {
         Some(p) => p,
-        None => return SystemMetadata::new(None),
+        None => return SystemMetadata::new(),
     };
 
     let mut sys_map = HashMap::new();
@@ -294,7 +292,7 @@ fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMe
         sys_map.insert(group.clone(), kv_group.key_value.clone());
     }
 
-    SystemMetadata::new(Some(sys_map))
+    SystemMetadata { data: sys_map }
 }
 
 impl From<sink_pb::sink_request::Request> for SinkRequest {
@@ -325,6 +323,8 @@ pub enum ResponseType {
     FallBack,
     /// message should be written to the serving store.
     Serve,
+    /// message should be sent to the on_success sink.
+    OnSuccess,
 }
 
 /// The result of the call to [`Sinker::sink`] method.
@@ -389,6 +389,7 @@ impl From<Response> for sink_pb::sink_response::Result {
                 ResponseType::Failure => sink_pb::Status::Failure as i32,
                 ResponseType::FallBack => sink_pb::Status::Fallback as i32,
                 ResponseType::Serve => sink_pb::Status::Serve as i32,
+                ResponseType::OnSuccess => sink_pb::Status::OnSuccess as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,

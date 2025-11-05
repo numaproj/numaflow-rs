@@ -36,9 +36,7 @@ pub mod sink_request {
         >,
         /// Metadata is the metadata of the message
         #[prost(message, optional, tag = "7")]
-        pub metadata: ::core::option::Option<
-            super::super::super::metadata::v1::Metadata,
-        >,
+        pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
     }
 }
 /// Handshake message between client and server to indicate the start of transmission.
@@ -78,7 +76,7 @@ pub struct SinkResponse {
 }
 /// Nested message and enum types in `SinkResponse`.
 pub mod sink_response {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+    #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Result {
         /// id is the ID of the message, can be used to uniquely identify the message.
         #[prost(string, tag = "1")]
@@ -91,6 +89,21 @@ pub mod sink_response {
         pub err_msg: ::prost::alloc::string::String,
         #[prost(bytes = "vec", optional, tag = "4")]
         pub serve_response: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+        /// on_success_msg is the message to be sent to on_success sink.
+        #[prost(message, optional, tag = "5")]
+        pub on_success_msg: ::core::option::Option<result::Message>,
+    }
+    /// Nested message and enum types in `Result`.
+    pub mod result {
+        #[derive(Clone, PartialEq, ::prost::Message)]
+        pub struct Message {
+            #[prost(bytes = "vec", tag = "1")]
+            pub value: ::prost::alloc::vec::Vec<u8>,
+            #[prost(string, repeated, tag = "2")]
+            pub keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+            #[prost(message, optional, tag = "3")]
+            pub metadata: ::core::option::Option<crate::proto::metadata::Metadata>,
+        }
     }
 }
 /// Status is the status of the response.
@@ -101,6 +114,7 @@ pub enum Status {
     Failure = 1,
     Fallback = 2,
     Serve = 3,
+    OnSuccess = 4,
 }
 impl Status {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -113,6 +127,7 @@ impl Status {
             Self::Failure => "FAILURE",
             Self::Fallback => "FALLBACK",
             Self::Serve => "SERVE",
+            Self::OnSuccess => "ON_SUCCESS",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -122,6 +137,7 @@ impl Status {
             "FAILURE" => Some(Self::Failure),
             "FALLBACK" => Some(Self::Fallback),
             "SERVE" => Some(Self::Serve),
+            "ON_SUCCESS" => Some(Self::OnSuccess),
             _ => None,
         }
     }

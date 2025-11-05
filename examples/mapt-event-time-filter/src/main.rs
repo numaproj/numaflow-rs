@@ -49,7 +49,7 @@ mod filter_impl {
 mod tests {
     use crate::filter_impl::filter_event_time;
     use chrono::{TimeZone, Utc};
-    use numaflow::sourcetransform::SourceTransformRequest;
+    use numaflow::sourcetransform::{SourceTransformRequest, SystemMetadata, UserMetadata};
 
     /// Tests that events from 2022 are tagged as within the year 2022.
     #[test]
@@ -61,8 +61,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
-            user_metadata: Default::default(),
-            system_metadata: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         };
 
         let messages = filter_event_time(source_request);
@@ -81,8 +81,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
-            user_metadata: Default::default(),
-            system_metadata: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         };
 
         let messages = filter_event_time(source_request);
@@ -101,8 +101,8 @@ mod tests {
             watermark: Default::default(),
             eventtime: time,
             headers: Default::default(),
-            user_metadata: Default::default(),
-            system_metadata: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         };
 
         let messages = filter_event_time(source_request);

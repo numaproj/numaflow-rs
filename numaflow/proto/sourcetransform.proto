@@ -37,7 +37,7 @@ message SourceTransformRequest {
     // This ID is used to uniquely identify a transform request
     string id = 6;
     // Metadata is the metadata of the message
-    metadata.v1.Metadata metadata = 7;
+   metadata.Metadata metadata = 7;
   }
   Request request = 1;
   optional Handshake handshake = 2;
@@ -54,7 +54,7 @@ message SourceTransformResponse {
     google.protobuf.Timestamp event_time = 3;
     repeated string tags = 4;
     // Metadata is the metadata of the message
-    metadata.v1.Metadata metadata = 5;
+    metadata.Metadata metadata = 5;
   }
   repeated Result results = 1;
   // This ID is used to refer the responses to the request it corresponds to.

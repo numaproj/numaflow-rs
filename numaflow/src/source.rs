@@ -12,7 +12,7 @@ use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
-use crate::proto::metadata::v1 as metadata_pb;
+use crate::proto::metadata as metadata_pb;
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
@@ -87,11 +87,9 @@ pub struct UserMetadata {
 }
 
 impl UserMetadata {
-    /// It wraps an existing HashMap<String, HashMap<String, Vec<u8>>> into UserMetadata
-    pub fn new(data: Option<HashMap<String, HashMap<String, Vec<u8>>>>) -> Self {
-        Self {
-            data: data.unwrap_or_default(),
-        }
+    /// Create a new UserMetadata instance
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// groups returns the groups of the user metadata.
@@ -101,9 +99,9 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
-    /// umd.add_kv_string("group2".to_string(), "key2".to_string(), "value2".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
+    /// umd.add_kv("group2".to_string(), "key2".to_string(), "value2".as_bytes().to_vec());
     /// let groups = umd.groups();
     /// println!("{:?}", groups);
     /// ```
@@ -118,9 +116,9 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
-    /// umd.add_kv_string("group1".to_string(), "key2".to_string(), "value2".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
+    /// umd.add_kv("group1".to_string(), "key2".to_string(), "value2".as_bytes().to_vec());
     /// let keys = umd.keys("group1");
     /// println!("{:?}", keys);
     /// ```
@@ -138,8 +136,8 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// let value = umd.value("group1", "key1");
     /// println!("{:?}", value);
     /// ```
@@ -151,22 +149,20 @@ impl UserMetadata {
             .unwrap_or_default()
     }
 
-    /// set_kv_group sets a group of key-value pairs under the provided group name.
-    /// If the group is not present, it creates a new group.
+    /// create_group creates a new group in the user metadata.
+    /// If the group is already present, it's a no-op.
     ///
     /// # Example
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
     /// use std::collections::HashMap;
-    /// let mut umd = UserMetadata::default();
-    /// let mut kv = HashMap::new();
-    /// kv.insert("key1".to_string(), "value1".as_bytes().to_vec());
-    /// umd.set_kv_group("group1".to_string(), kv);
+    /// let mut umd = UserMetadata::new();
+    /// umd.create_group("group1".to_string());
     /// println!("{:?}", umd);
     /// ```
-    pub fn set_kv_group(&mut self, group: String, kv: HashMap<String, Vec<u8>>) {
-        self.data.insert(group, kv);
+    pub fn create_group(&mut self, group: String) {
+        self.data.entry(group).or_default();
     }
 
     /// add_kv adds a key-value pair to the user metadata.
@@ -176,42 +172,12 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
+    /// let mut umd = UserMetadata::new();
     /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// println!("{:?}", umd);
     /// ```
     pub fn add_kv(&mut self, group: String, key: String, value: Vec<u8>) {
         self.data.entry(group).or_default().insert(key, value);
-    }
-
-    /// add_kv_string adds a key-value pair with value of string type to the user metadata.
-    /// If the group is not present, it creates a new group.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
-    /// println!("{:?}", umd);
-    /// ```
-    pub fn add_kv_string(&mut self, group: String, key: String, value: String) {
-        self.add_kv(group, key, value.into_bytes());
-    }
-
-    /// add_kv_int adds a key-value pair with value of int type to the user metadata.
-    /// If the group is not present, it creates a new group.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_int("group1".to_string(), "key1".to_string(), 123);
-    /// println!("{:?}", umd);
-    /// ```
-    pub fn add_kv_int(&mut self, group: String, key: String, value: i32) {
-        self.add_kv(group, key, value.to_string().into_bytes());
     }
 
     /// remove_key removes a key from a group in the user metadata.
@@ -221,8 +187,8 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// umd.remove_key("group1", "key1");
     /// println!("{:?}", umd);
     /// ```
@@ -239,8 +205,8 @@ impl UserMetadata {
     ///
     /// ```no_run
     /// use numaflow::source::UserMetadata;
-    /// let mut umd = UserMetadata::default();
-    /// umd.add_kv_string("group1".to_string(), "key1".to_string(), "value1".to_string());
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
     /// umd.remove_group("group1");
     /// println!("{:?}", umd);
     /// ```

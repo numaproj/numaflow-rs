@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package metadata.v1;
+package metadata;
 
 // Metadata is the metadata of the message
 message Metadata {
