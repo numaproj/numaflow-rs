@@ -75,12 +75,12 @@ pub trait ReduceStreamerCreator {
 /// ReduceStreamer trait for implementing Reduce Stream handler.
 #[async_trait]
 pub trait ReduceStreamer {
-    /// reduce_stream is provided with a set of keys, an input channel of [`ReduceStreamRequest`], 
-    /// an output channel for streaming [`Message`] results, and [`Metadata`]. 
-    /// Unlike reduce which returns a Vec of messages, reduce_stream allows you to stream results 
+    /// reduce_stream is provided with a set of keys, an input channel of [`ReduceStreamRequest`],
+    /// an output channel for streaming [`Message`] results, and [`Metadata`].
+    /// Unlike reduce which returns a Vec of messages, reduce_stream allows you to stream results
     /// as they are produced by sending them to the output channel.
-    /// 
-    /// Reduce stream is a stateful operation and the input channel is for the collection of keys 
+    ///
+    /// Reduce stream is a stateful operation and the input channel is for the collection of keys
     /// and for that time [Window].
     /// You can read more about reduce [here](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/).
     ///
@@ -157,7 +157,7 @@ pub trait ReduceStreamer {
 }
 
 // Re-export types from reduce module
-pub use crate::reduce::{IntervalWindow, Metadata, Message};
+pub use crate::reduce::{IntervalWindow, Message, Metadata};
 
 /// Incoming request into the reducer handler of [`ReduceStreamer`].
 /// This is an alias for the ReduceRequest from the reduce module.
@@ -312,7 +312,9 @@ impl Task {
         let udf_keys = keys.clone();
         let udf_md = md.clone();
         let udf_task = tokio::spawn(async move {
-            reducer.reduce_stream(udf_keys, udf_rx, user_output_tx, &udf_md).await;
+            reducer
+                .reduce_stream(udf_keys, udf_rx, user_output_tx, &udf_md)
+                .await;
         });
 
         // Spawn a task to forward messages from user's output channel to gRPC response channel
@@ -697,9 +699,10 @@ impl<C> Server<C> {
                         cancellation_token: cln_token,
                     };
 
-                    let reduce_stream_svc = proto::reduce_server::ReduceServer::new(reduce_stream_svc)
-                        .max_encoding_message_size(max_message_size)
-                        .max_decoding_message_size(max_message_size);
+                    let reduce_stream_svc =
+                        proto::reduce_server::ReduceServer::new(reduce_stream_svc)
+                            .max_encoding_message_size(max_message_size)
+                            .max_decoding_message_size(max_message_size);
 
                     tonic::transport::Server::builder().add_service(reduce_stream_svc)
                 },
@@ -921,7 +924,10 @@ mod tests {
         let expected_sums = vec![1, 3, 6, 10, 15];
         for (i, response) in responses.iter().take(5).enumerate() {
             if let Some(result) = response.result.as_ref() {
-                let value = std::str::from_utf8(&result.value).unwrap().parse::<i32>().unwrap();
+                let value = std::str::from_utf8(&result.value)
+                    .unwrap()
+                    .parse::<i32>()
+                    .unwrap();
                 assert_eq!(value, expected_sums[i]);
             }
         }
@@ -944,4 +950,3 @@ mod tests {
         Ok(())
     }
 }
-
