@@ -50,6 +50,9 @@ pub enum Error {
     #[error("MapStream - {0}")]
     MapStreamError(ErrorKind),
 
+    #[error("ReduceStream - {0}")]
+    ReduceStreamError(ErrorKind),
+
     #[error("Numaflow - {0}")]
     DefaultError(ErrorKind),
 
