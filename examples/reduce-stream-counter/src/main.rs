@@ -58,11 +58,10 @@ mod streaming_counter {
             }
 
             // Send final count when the window closes
-            let final_message = Message::new(format!("final: {}", counter).into_bytes())
-                .with_keys(keys.clone());
+            let final_message =
+                Message::new(format!("final: {}", counter).into_bytes()).with_keys(keys.clone());
 
             let _ = output.send(final_message).await;
         }
     }
 }
-
