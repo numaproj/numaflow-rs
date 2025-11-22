@@ -39,7 +39,7 @@ pub trait ReduceStreamerCreator {
     /// `MyReduceStreamerCreator` creates instances of `MyReduceStreamer`, which is a type that implements the `ReduceStreamer` trait.
     ///
     /// ```rust
-    /// use numaflow::reduce_stream::{ReduceStreamer, ReduceStreamerCreator, ReduceStreamRequest, Metadata, Message};
+    /// use numaflow::reducestream::{ReduceStreamer, ReduceStreamerCreator, ReduceStreamRequest, Metadata, Message};
     /// use tokio::sync::mpsc::{Receiver, Sender};
     /// use tonic::async_trait;
     ///
@@ -47,14 +47,14 @@ pub trait ReduceStreamerCreator {
     ///
     /// #[async_trait]
     /// impl ReduceStreamer for MyReduceStreamer {
-    ///     async fn reduce_stream(
+    ///     async fn reducestream(
     ///         &self,
     ///         keys: Vec<String>,
     ///         mut input: Receiver<ReduceStreamRequest>,
     ///         output: Sender<Message>,
     ///         md: &Metadata,
     ///     ) {
-    ///         // Implementation of the reduce_stream method goes here.
+    ///         // Implementation of the reducestream method goes here.
     ///     }
     /// }
     ///
@@ -75,9 +75,9 @@ pub trait ReduceStreamerCreator {
 /// ReduceStreamer trait for implementing Reduce Stream handler.
 #[async_trait]
 pub trait ReduceStreamer {
-    /// reduce_stream is provided with a set of keys, an input channel of [`ReduceStreamRequest`],
+    /// reducestream is provided with a set of keys, an input channel of [`ReduceStreamRequest`],
     /// an output channel for streaming [`Message`] results, and [`Metadata`].
-    /// Unlike reduce which returns a Vec of messages, reduce_stream allows you to stream results
+    /// Unlike reduce which returns a Vec of messages, reducestream allows you to stream results
     /// as they are produced by sending them to the output channel.
     ///
     /// Reduce stream is a stateful operation and the input channel is for the collection of keys
@@ -89,17 +89,17 @@ pub trait ReduceStreamer {
     /// Below is a reduce stream code to emit a running count as elements arrive for a given set of keys and window.
     ///
     /// ```no_run
-    /// use numaflow::reduce_stream;
+    /// use numaflow::reducestream;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ///     let handler_creator = streaming_counter::StreamingCounterCreator{};
-    ///     reduce_stream::Server::new(handler_creator).start().await?;
+    ///     reducestream::Server::new(handler_creator).start().await?;
     ///     Ok(())
     /// }
     /// mod streaming_counter {
-    ///     use numaflow::reduce_stream::{Message, ReduceStreamRequest};
-    ///     use numaflow::reduce_stream::{ReduceStreamer, Metadata};
+    ///     use numaflow::reducestream::{Message, ReduceStreamRequest};
+    ///     use numaflow::reducestream::{ReduceStreamer, Metadata};
     ///     use tokio::sync::mpsc::{Receiver, Sender};
     ///     use tonic::async_trait;
     ///
@@ -107,7 +107,7 @@ pub trait ReduceStreamer {
     ///
     ///     pub(crate) struct StreamingCounterCreator {}
     ///
-    ///     impl numaflow::reduce_stream::ReduceStreamerCreator for StreamingCounterCreator {
+    ///     impl numaflow::reducestream::ReduceStreamerCreator for StreamingCounterCreator {
     ///         type R = StreamingCounter;
     ///
     ///         fn create(&self) -> Self::R {
@@ -123,7 +123,7 @@ pub trait ReduceStreamer {
     ///
     ///     #[async_trait]
     ///     impl ReduceStreamer for StreamingCounter {
-    ///         async fn reduce_stream(
+    ///         async fn reducestream(
     ///             &self,
     ///             keys: Vec<String>,
     ///             mut input: Receiver<ReduceStreamRequest>,
@@ -147,7 +147,7 @@ pub trait ReduceStreamer {
     /// }
     /// ```
     /// [Window]: https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/windowing/windowing/
-    async fn reduce_stream(
+    async fn reducestream(
         &self,
         keys: Vec<String>,
         input: mpsc::Receiver<ReduceStreamRequest>,
@@ -308,12 +308,12 @@ impl Task {
         let (user_output_tx, mut user_output_rx) = channel::<Message>(1);
         let (done_tx, done_rx) = oneshot::channel();
 
-        // Spawn the user's reduce_stream function
+        // Spawn the user's reducestream function
         let udf_keys = keys.clone();
         let udf_md = md.clone();
         let udf_task = tokio::spawn(async move {
             reducer
-                .reduce_stream(udf_keys, udf_rx, user_output_tx, &udf_md)
+                .reducestream(udf_keys, udf_rx, user_output_tx, &udf_md)
                 .await;
         });
 
@@ -357,7 +357,7 @@ impl Task {
         let handle = tokio::spawn(async move {
             // Wait for the UDF task to complete
             if let Err(e) = udf_task.await {
-                error!("Failed to run reduce_stream function: {e:?}");
+                error!("Failed to run reducestream function: {e:?}");
 
                 // Check if this is a panic or a regular error
                 if let Some(panic_info) = get_panic_info() {
@@ -749,19 +749,19 @@ mod tests {
     use tonic::transport::Uri;
     use tower::service_fn;
 
-    use crate::reduce_stream;
-    use crate::reduce_stream::proto::reduce_client::ReduceClient;
+    use crate::reducestream;
+    use crate::reducestream::proto::reduce_client::ReduceClient;
 
     struct StreamingSum;
 
     #[tonic::async_trait]
-    impl reduce_stream::ReduceStreamer for StreamingSum {
-        async fn reduce_stream(
+    impl reducestream::ReduceStreamer for StreamingSum {
+        async fn reducestream(
             &self,
             keys: Vec<String>,
-            mut input: mpsc::Receiver<reduce_stream::ReduceStreamRequest>,
-            output: mpsc::Sender<reduce_stream::Message>,
-            _md: &reduce_stream::Metadata,
+            mut input: mpsc::Receiver<reducestream::ReduceStreamRequest>,
+            output: mpsc::Sender<reducestream::Message>,
+            _md: &reducestream::Metadata,
         ) {
             let mut sum = 0;
             while let Some(rr) = input.recv().await {
@@ -770,7 +770,7 @@ mod tests {
                     .parse::<i32>()
                     .unwrap();
                 // Stream intermediate results
-                let message = reduce_stream::Message::new(sum.to_string().into_bytes())
+                let message = reducestream::Message::new(sum.to_string().into_bytes())
                     .with_keys(keys.clone());
                 if output.send(message).await.is_err() {
                     break;
@@ -781,21 +781,21 @@ mod tests {
 
     struct StreamingSumCreator;
 
-    impl reduce_stream::ReduceStreamerCreator for StreamingSumCreator {
+    impl reducestream::ReduceStreamerCreator for StreamingSumCreator {
         type R = StreamingSum;
         fn create(&self) -> StreamingSum {
             StreamingSum {}
         }
     }
 
-    async fn setup_server<C: reduce_stream::ReduceStreamerCreator + Send + Sync + 'static>(
+    async fn setup_server<C: reducestream::ReduceStreamerCreator + Send + Sync + 'static>(
         creator: C,
-    ) -> Result<(reduce_stream::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
+    ) -> Result<(reducestream::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("reducestream.sock");
         let server_info_file = tmp_dir.path().join("reducestreamer-server-info");
 
-        let server = reduce_stream::Server::new(creator)
+        let server = reducestream::Server::new(creator)
             .with_server_info_file(&server_info_file)
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
@@ -873,17 +873,17 @@ mod tests {
         // Spawn a task to send ReduceRequests to the channel
         tokio::spawn(async move {
             for i in 1..=5 {
-                let rr = reduce_stream::proto::ReduceRequest {
-                    payload: Some(reduce_stream::proto::reduce_request::Payload {
+                let rr = reducestream::proto::ReduceRequest {
+                    payload: Some(reducestream::proto::reduce_request::Payload {
                         keys: vec!["key1".to_string()],
                         value: i.to_string().as_bytes().to_vec(),
                         watermark: None,
                         event_time: None,
                         headers: Default::default(),
                     }),
-                    operation: Some(reduce_stream::proto::reduce_request::WindowOperation {
+                    operation: Some(reducestream::proto::reduce_request::WindowOperation {
                         event: 0,
-                        windows: vec![reduce_stream::proto::Window {
+                        windows: vec![reducestream::proto::Window {
                             start: Some(Timestamp {
                                 seconds: 60000,
                                 nanos: 0,
