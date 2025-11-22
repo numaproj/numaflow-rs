@@ -13,10 +13,6 @@ spec:
           keyCount: 5
           value: 5
     - name: streaming-counter
-      containerTemplate:
-        env:
-          - name: NUMAFLOW_DEBUG
-            value: "true"
       udf:
         container:
           # count element with streaming results

@@ -677,7 +677,12 @@ impl<C> Server<C> {
     /// Create a new Server with the given reduce stream service
     pub fn new(creator: C) -> Self {
         Self {
-            inner: shared::Server::new(creator, ContainerType::Reduce, SOCK_ADDR, SERVER_INFO_FILE),
+            inner: shared::Server::new(
+                creator,
+                ContainerType::ReduceStream,
+                SOCK_ADDR,
+                SERVER_INFO_FILE,
+            ),
         }
     }
 
