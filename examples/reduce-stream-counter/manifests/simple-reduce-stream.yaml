@@ -8,7 +8,7 @@ spec:
       source:
         # A self data generating source
         generator:
-          rpu: 100
+          rpu: 10
           duration: 1s
           keyCount: 5
           value: 5
@@ -25,6 +25,7 @@ spec:
           window:
             fixed:
               length: 10s
+              streaming: true
           keyed: true
           storage:
             persistentVolumeClaim:
