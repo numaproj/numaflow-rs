@@ -12,6 +12,7 @@ use tonic::{Request, Response, Status, Streaming, async_trait};
 use tracing::{error, info};
 
 use crate::error::{Error, ErrorKind};
+use crate::proto::metadata as metadata_pb;
 use crate::proto::source_transformer as proto;
 use crate::shared;
 
@@ -28,6 +29,210 @@ pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sourcetransformer-server-i
 
 /// Default channel size for source transformer service
 const CHANNEL_SIZE: usize = 1000;
+
+/// SystemMetadata is mapping of group name to key-value pairs
+/// SystemMetadata wraps system-generated metadata groups per message.
+/// It is read-only to UDFs
+#[derive(Debug, Clone, Default)]
+pub struct SystemMetadata {
+    data: HashMap<String, HashMap<String, Vec<u8>>>,
+}
+
+impl SystemMetadata {
+    /// Create a new SystemMetadata instance
+    /// This is for internal and testing purposes only.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// groups returns the groups of the system metadata.
+    /// If there are no groups, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let smd = input.system_metadata;
+    /// let groups = smd.groups();
+    /// println!("System metadata groups: {:?}", groups);
+    /// ```
+    pub fn groups(&self) -> Vec<String> {
+        self.data.keys().cloned().collect()
+    }
+
+    /// keys returns the keys of the system metadata for the given group.
+    /// If there are no keys or the group is not present, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let smd = input.system_metadata;
+    /// let keys = smd.keys("system-group");
+    /// println!("Keys in system-group: {:?}", keys);
+    /// ```
+    pub fn keys(&self, group: &str) -> Vec<String> {
+        self.data
+            .get(group)
+            .map(|kv| kv.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// value returns the value of the system metadata for the given group and key.
+    /// If there is no value or the group or key is not present, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let smd = input.system_metadata;
+    /// let value = smd.value("system-group", "system-key");
+    /// println!("Value: {:?}", value);
+    /// ```
+    pub fn value(&self, group: &str, key: &str) -> Vec<u8> {
+        self.data
+            .get(group)
+            .and_then(|kv| kv.get(key))
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+/// UserMetadata wraps user-defined metadata groups per message.
+#[derive(Debug, Clone, Default)]
+pub struct UserMetadata {
+    data: HashMap<String, HashMap<String, Vec<u8>>>,
+}
+
+impl UserMetadata {
+    /// Create a new UserMetadata instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// groups returns the groups of the user metadata.
+    /// If there are no groups, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let umd = input.user_metadata;
+    /// let groups = umd.groups();
+    /// println!("User metadata groups: {:?}", groups);
+    /// ```
+    pub fn groups(&self) -> Vec<String> {
+        self.data.keys().cloned().collect()
+    }
+
+    /// keys returns the keys of the user metadata for the given group.
+    /// If there are no keys or the group is not present, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let umd = input.user_metadata;
+    /// let keys = umd.keys("my-group");
+    /// println!("Keys in my-group: {:?}", keys);
+    /// ```
+    pub fn keys(&self, group: &str) -> Vec<String> {
+        self.data
+            .get(group)
+            .map(|kv| kv.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// value returns the value of the user metadata for the given group and key.
+    /// If there is no value or the group or key is not present, it returns an empty vector.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use numaflow::sourcetransform::SourceTransformRequest;
+    /// # let input: SourceTransformRequest = unimplemented!();
+    /// let umd = input.user_metadata;
+    /// let value = umd.value("my-group", "my-key");
+    /// println!("Value: {:?}", value);
+    /// ```
+    pub fn value(&self, group: &str, key: &str) -> Vec<u8> {
+        self.data
+            .get(group)
+            .and_then(|kv| kv.get(key))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// create_group creates a new group in the user metadata.
+    /// If the group is not present, it's a no-op.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use numaflow::sourcetransform::UserMetadata;
+    /// use std::collections::HashMap;
+    /// let mut umd = UserMetadata::new();
+    /// umd.create_group("group1".to_string());
+    /// println!("{:?}", umd);
+    /// ```
+    pub fn create_group(&mut self, group: String) {
+        self.data.entry(group).or_default();
+    }
+
+    /// add_kv adds a key-value pair to the user metadata.
+    /// If the group is not present, it creates a new group.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use numaflow::sourcetransform::UserMetadata;
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
+    /// println!("{:?}", umd);
+    /// ```
+    pub fn add_kv(&mut self, group: String, key: String, value: Vec<u8>) {
+        self.data.entry(group).or_default().insert(key, value);
+    }
+
+    /// remove_key removes a key from a group in the user metadata.
+    /// If the key or group is not present, it's a no-op.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use numaflow::sourcetransform::UserMetadata;
+    /// let mut umd = UserMetadata::new();
+    /// umd.add_kv("group1".to_string(), "key1".to_string(), "value1".as_bytes().to_vec());
+    /// umd.remove_key("group1", "key1");
+    /// println!("{:?}", umd);
+    /// ```
+    pub fn remove_key(&mut self, group: &str, key: &str) {
+        if let Some(kv) = self.data.get_mut(group) {
+            kv.remove(key);
+        }
+    }
+
+    /// remove_group removes a group from the user metadata.
+    /// If the group is not present, it's a no-op.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use numaflow::sourcetransform::UserMetadata;
+    /// let mut umd = UserMetadata::new();
+    /// umd.create_group("group1".to_string());
+    /// umd.remove_group("group1");
+    /// println!("{:?}", umd);
+    /// ```
+    pub fn remove_group(&mut self, group: &str) {
+        self.data.remove(group);
+    }
+}
 
 struct SourceTransformerService<T> {
     handler: Arc<T>,
@@ -75,7 +280,7 @@ pub trait SourceTransformer {
 }
 
 /// Message is the response struct from the [`SourceTransformer::transform`] .
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Message {
     /// Keys are a collection of strings which will be passed on to the next vertex as is. It can
     /// be an empty collection.
@@ -87,6 +292,8 @@ pub struct Message {
     pub event_time: DateTime<Utc>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
+    /// User metadata for the message.
+    pub user_metadata: Option<UserMetadata>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -114,6 +321,7 @@ impl Message {
             event_time,
             keys: None,
             tags: None,
+            user_metadata: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value, a special "DROP" tag, and the specified event time.
@@ -137,6 +345,7 @@ impl Message {
             value: vec![],
             event_time,
             tags: Some(vec![DROP.to_string()]),
+            user_metadata: None,
         }
     }
 
@@ -176,15 +385,19 @@ impl Message {
         self.tags = Some(tags);
         self
     }
+
+    /// Sets the user metadata for the message.
+    pub fn with_user_metadata(mut self, user_metadata: UserMetadata) -> Self {
+        self.user_metadata = Some(user_metadata);
+        self
+    }
 }
 
 /// Incoming request to the Source Transformer.
 pub struct SourceTransformRequest {
     /// keys are the keys in the (key, value) terminology of map/reduce paradigm.
-    /// Once called, it will replace the content with None, so subsequent calls will return None
     pub keys: Vec<String>,
     /// value is the value in (key, value) terminology of map/reduce paradigm.
-    /// Once called, it will replace the content with None, so subsequent calls will return None
     pub value: Vec<u8>,
     /// [watermark](https://numaflow.numaproj.io/core-concepts/watermarks/) represented by time is a guarantee that we will not see an element older than this
     /// time.
@@ -193,6 +406,33 @@ pub struct SourceTransformRequest {
     pub eventtime: DateTime<Utc>,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
+    /// User metadata for the message.
+    pub user_metadata: UserMetadata,
+    /// System metadata for the message.
+    pub system_metadata: SystemMetadata,
+}
+
+/// Converts Option<&UserMetadata> to proto Metadata.
+/// SDKs should always return non-nil metadata.
+/// If user metadata is None or empty, it returns a metadata with empty user_metadata map.
+fn to_proto(user_metadata: Option<&UserMetadata>) -> metadata_pb::Metadata {
+    let mut user = HashMap::new();
+
+    if let Some(umd) = user_metadata {
+        for group in umd.groups() {
+            let mut kv = HashMap::new();
+            for key in umd.keys(&group) {
+                kv.insert(key.clone(), umd.value(&group, &key));
+            }
+            user.insert(group, metadata_pb::KeyValueGroup { key_value: kv });
+        }
+    }
+
+    metadata_pb::Metadata {
+        previous_vertex: String::new(),
+        sys_metadata: HashMap::new(),
+        user_metadata: user,
+    }
 }
 
 impl From<Message> for proto::source_transform_response::Result {
@@ -202,18 +442,54 @@ impl From<Message> for proto::source_transform_response::Result {
             value: value.value,
             event_time: prost_timestamp_from_utc(value.event_time),
             tags: value.tags.unwrap_or_default(),
+            metadata: Some(to_proto(value.user_metadata.as_ref())),
         }
     }
 }
 
+/// Get UserMetadata from proto Metadata
+fn user_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> UserMetadata {
+    let proto = match proto {
+        Some(p) => p,
+        None => return UserMetadata::new(),
+    };
+
+    let mut user_map = HashMap::new();
+    for (group, kv_group) in &proto.user_metadata {
+        user_map.insert(group.clone(), kv_group.key_value.clone());
+    }
+
+    UserMetadata { data: user_map }
+}
+
+/// Get SystemMetadata from proto Metadata
+fn system_metadata_from_proto(proto: Option<&metadata_pb::Metadata>) -> SystemMetadata {
+    let proto = match proto {
+        Some(p) => p,
+        None => return SystemMetadata::new(),
+    };
+
+    let mut sys_map = HashMap::new();
+    for (group, kv_group) in &proto.sys_metadata {
+        sys_map.insert(group.clone(), kv_group.key_value.clone());
+    }
+
+    SystemMetadata { data: sys_map }
+}
+
 impl From<proto::source_transform_request::Request> for SourceTransformRequest {
     fn from(request: proto::source_transform_request::Request) -> Self {
+        let user_metadata = user_metadata_from_proto(request.metadata.as_ref());
+        let system_metadata = system_metadata_from_proto(request.metadata.as_ref());
+
         SourceTransformRequest {
             keys: request.keys,
             value: request.value,
             watermark: utc_from_timestamp(request.watermark),
             eventtime: utc_from_timestamp(request.event_time),
             headers: request.headers,
+            user_metadata,
+            system_metadata,
         }
     }
 }
@@ -550,6 +826,7 @@ mod tests {
                     value: input.value,
                     tags: Some(vec![]),
                     event_time: Utc::now(),
+                    user_metadata: None,
                 }]
             }
         }
@@ -625,6 +902,7 @@ mod tests {
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
+                metadata: None,
             }),
             handshake: None,
         };
@@ -723,6 +1001,7 @@ mod tests {
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
+                metadata: None,
             }),
             handshake: None,
         };
