@@ -159,6 +159,8 @@ impl From<Message> for proto::map_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
             tags: value.tags.unwrap_or_default(),
+            // TODO: Support metadata for mapstream
+            metadata: None,
         }
     }
 }
@@ -586,6 +588,7 @@ mod tests {
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
+                metadata: None,
             }),
             id: "".to_string(),
             handshake: None,
@@ -685,6 +688,7 @@ mod tests {
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
+                metadata: None,
             }),
             id: "".to_string(),
             handshake: None,
@@ -807,6 +811,7 @@ mod tests {
                 watermark: Some(prost_types::Timestamp::default()),
                 event_time: Some(prost_types::Timestamp::default()),
                 headers: Default::default(),
+                metadata: None,
             }),
             id: "".to_string(),
             handshake: None,
