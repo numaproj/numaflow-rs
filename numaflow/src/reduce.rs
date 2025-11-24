@@ -168,7 +168,7 @@ impl Metadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Metadata are additional information passed into the [`Reducer::reduce`].
 pub struct Metadata {
     pub interval_window: IntervalWindow,

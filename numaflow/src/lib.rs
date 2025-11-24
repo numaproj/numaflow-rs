@@ -32,6 +32,9 @@ pub mod map;
 /// Reduce functionality for writing the [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
 pub mod reduce;
 
+/// Reduce stream functionality for writing streaming [reduce](https://numaflow.numaproj.io/user-guide/user-defined-functions/reduce/reduce/) handlers.
+pub mod reducestream;
+
 /// Sink functionality for writing [user defined sinks](https://numaflow.numaproj.io/user-guide/sinks/user-defined-sinks/).
 pub mod sink;
 
