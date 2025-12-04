@@ -7,10 +7,10 @@ spec:
     - name: myticker
       container:
         image: quay.io/numaio/numaflow-rs/sideinput-example:stable
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
       trigger:
-        schedule: "*/2 * * * *"
-        # timezone: America/Los_Angeles
+        schedule: "0 */2 * * * *"
+        #timezone: America/Los_Angeles
   vertices:
     - name: in
       source:
