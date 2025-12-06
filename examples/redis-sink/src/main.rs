@@ -17,11 +17,11 @@ struct RedisTestSink {
 impl RedisTestSink {
     /// Creates a new instance of RedisTestSink with a Redis client.
     fn new() -> Self {
-        let client = redis::Client::open("redis://redis:6379")
-            .expect("Failed to create Redis client");
+        let client =
+            redis::Client::open("redis://redis:6379").expect("Failed to create Redis client");
 
-        let hash_key = env::var("SINK_HASH_KEY")
-            .expect("SINK_HASH_KEY environment variable is not set");
+        let hash_key =
+            env::var("SINK_HASH_KEY").expect("SINK_HASH_KEY environment variable is not set");
 
         let message_count: usize = env::var("MESSAGE_COUNT")
             .ok()
@@ -74,9 +74,8 @@ impl Sinker for RedisTestSink {
                     let result_message = if ordered { "ordered" } else { "not ordered" };
 
                     // Increment the count for the order result in Redis
-                    let result: Result<(), redis::RedisError> = con
-                        .hincr(&self.hash_key, result_message, 1i64)
-                        .await;
+                    let result: Result<(), redis::RedisError> =
+                        con.hincr(&self.hash_key, result_message, 1i64).await;
 
                     match result {
                         Ok(_) => {
@@ -104,9 +103,8 @@ impl Sinker for RedisTestSink {
             // value of the field is the no. of occurrences of the message.
             let value_str = String::from_utf8(value).unwrap_or_else(|_| "".to_string());
 
-            let result: Result<(), redis::RedisError> = con
-                .hincr(&self.hash_key, &value_str, 1i64)
-                .await;
+            let result: Result<(), redis::RedisError> =
+                con.hincr(&self.hash_key, &value_str, 1i64).await;
 
             match result {
                 Ok(_) => {
