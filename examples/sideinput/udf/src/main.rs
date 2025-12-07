@@ -5,8 +5,6 @@ use numaflow::map::{MapRequest, Mapper, Message, Server};
 use tokio::spawn;
 use tonic::async_trait;
 
-const DIR_PATH: &str = "/var/numaflow/sideinputs";
-
 struct UdfMapper;
 
 #[async_trait]
@@ -39,6 +37,9 @@ async fn file_watcher() -> Result<()> {
         Ok(event) => println!("event: {:?}", event),
         Err(e) => println!("watch error: {:?}", e),
     })?;
-    watcher.watch(Path::new(DIR_PATH), RecursiveMode::Recursive)?;
+    watcher.watch(
+        Path::new(numaflow::sideinput::DIR_PATH),
+        RecursiveMode::Recursive,
+    )?;
     Ok(())
 }
