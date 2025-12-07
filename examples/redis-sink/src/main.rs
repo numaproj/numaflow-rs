@@ -6,10 +6,18 @@ use tokio::sync::Mutex;
 /// RedisTestSink is a sink that writes messages to Redis hashes.
 /// Created for numaflow e2e tests.
 struct RedisTestSink {
+    /// Redis hash key to store messages. This is set by an environment variable `SINK_HASH_KEY`
+    /// under the sink container spec.
     hash_key: String,
+    /// Used to determine how many subsequent number of messages at a time to check the order of.
+    /// This is set by an environment variable `MESSAGE_COUNT`
     message_count: usize,
+    /// Used to collect `message_count` number of messages, check whether they all arrived in order
+    /// and increment the count for the order result in Redis
     inflight_messages: Mutex<Vec<SinkRequest>>,
     client: redis::Client,
+    /// If true, checks the order of messages based on event time.
+    /// This is set by an environment variable `CHECK_ORDER`
     check_order: bool,
 }
 
