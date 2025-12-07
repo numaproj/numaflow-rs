@@ -1,7 +1,6 @@
 use numaflow::sink::{self, Response, SinkRequest, Sinker};
 use redis::AsyncCommands;
 use std::env;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// RedisTestSink is a sink that writes messages to Redis hashes.
@@ -9,7 +8,7 @@ use tokio::sync::Mutex;
 struct RedisTestSink {
     hash_key: String,
     message_count: usize,
-    inflight_messages: Arc<Mutex<Vec<SinkRequest>>>,
+    inflight_messages: Mutex<Vec<SinkRequest>>,
     client: redis::Client,
     check_order: bool,
 }
@@ -37,7 +36,7 @@ impl RedisTestSink {
             client,
             hash_key,
             message_count,
-            inflight_messages: Arc::new(Mutex::new(Vec::with_capacity(message_count))),
+            inflight_messages: Mutex::new(Vec::with_capacity(message_count)),
             check_order,
         }
     }
@@ -75,7 +74,7 @@ impl Sinker for RedisTestSink {
 
                     // Increment the count for the order result in Redis
                     let result: Result<(), redis::RedisError> =
-                        con.hincr(&self.hash_key, result_message, 1i64).await;
+                        con.hincr(&self.hash_key, result_message, 1).await;
 
                     match result {
                         Ok(_) => {
@@ -104,7 +103,7 @@ impl Sinker for RedisTestSink {
             let value_str = String::from_utf8(value).unwrap_or_else(|_| "".to_string());
 
             let result: Result<(), redis::RedisError> =
-                con.hincr(&self.hash_key, &value_str, 1i64).await;
+                con.hincr(&self.hash_key, &value_str, 1).await;
 
             match result {
                 Ok(_) => {
@@ -118,13 +117,7 @@ impl Sinker for RedisTestSink {
                 }
             }
 
-            results.push(Response {
-                id,
-                response_type: sink::ResponseType::Success,
-                err: None,
-                serve_response: None,
-                on_success_msg: None,
-            });
+            results.push(Response::ok(id));
         }
 
         results
