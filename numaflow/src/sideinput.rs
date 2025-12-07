@@ -18,7 +18,7 @@ pub const SOCK_ADDR: &str = "/var/run/numaflow/sideinput.sock";
 pub const SERVER_INFO_FILE: &str = "/var/run/numaflow/sideinput-server-info";
 
 /// Default directory path for storing side-input files
-pub const DIR_PATH: &str = "/var/numaflow/sideinputs";
+pub const DIR_PATH: &str = "/var/numaflow/side-inputs";
 
 struct SideInputService<T> {
     handler: Arc<T>,
