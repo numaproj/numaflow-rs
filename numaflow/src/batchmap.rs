@@ -253,16 +253,19 @@ where
 
         self.perform_handshake(&mut map_stream, &resp_tx).await?;
 
+        let (error_tx, error_rx) = channel::<Error>(1);
+
         let grpc_resp_tx = resp_tx.clone();
         let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-            Self::process_map_stream(map_handle, map_stream, grpc_resp_tx).await
+            Self::process_map_stream(map_handle, map_stream, grpc_resp_tx, error_tx, cln_token)
+                .await
         });
 
-        tokio::spawn(Self::handle_map_errors(
+        tokio::spawn(manage_grpc_stream(
             handle,
             resp_tx,
+            error_rx,
             shutdown_tx,
-            cln_token,
         ));
 
         Ok(Response::new(ReceiverStream::new(resp_rx)))
@@ -282,15 +285,28 @@ where
         map_handle: Arc<T>,
         mut map_stream: Streaming<MapRequest>,
         grpc_resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
+        error_tx: mpsc::Sender<Error>,
+        cln_token: CancellationToken,
     ) -> Result<(), Error> {
         // loop until the global stream has been shutdown.
         let mut global_stream_ended = false;
         while !global_stream_ended {
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
-            global_stream_ended =
-                Self::process_map_batch(map_handle.clone(), &mut map_stream, grpc_resp_tx.clone())
-                    .await?;
+            tokio::select! {
+                res = Self::process_map_batch(
+                    map_handle.clone(),
+                    &mut map_stream,
+                    grpc_resp_tx.clone(),
+                    error_tx.clone(),
+                ) => {
+                    global_stream_ended = res?;
+                }
+                _ = cln_token.cancelled() => {
+                    info!("Cancellation token is cancelled, shutting down");
+                    break;
+                }
+            }
         }
         Ok(())
     }
@@ -303,6 +319,7 @@ where
         batch_map_handle: Arc<T>,
         map_stream: &mut Streaming<MapRequest>,
         grpc_resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
+        error_tx: mpsc::Sender<Error>,
     ) -> Result<bool, Error> {
         let (tx, rx) = channel::<Datum>(CHANNEL_SIZE);
         let resp_tx = grpc_resp_tx.clone();
@@ -324,11 +341,11 @@ where
                     if let Some(panic_info) = get_panic_info() {
                         // This is a panic - send detailed panic information
                         let status = build_panic_status(&panic_info);
-                        let _ = resp_tx.send(Err(status)).await;
+                        let _ = error_tx.send(Error::GrpcStatus(status)).await;
                     } else {
                         // This is a non-panic error
-                        let _ = resp_tx
-                            .send(Err(Status::internal(format!(
+                        let _ = error_tx
+                            .send(Error::BatchMapError(ErrorKind::InternalError(format!(
                                 "Batch-map task execution failed: {e:?}"
                             ))))
                             .await;
@@ -423,40 +440,6 @@ where
         Ok(global_stream_ended)
     }
 
-    async fn handle_map_errors(
-        handle: JoinHandle<Result<(), Error>>,
-        resp_tx: mpsc::Sender<Result<MapResponse, Status>>,
-        shutdown_tx: mpsc::Sender<()>,
-        cln_token: CancellationToken,
-    ) {
-        tokio::select! {
-            resp = handle => {
-                match resp {
-                    Ok(Ok(_)) => {},
-                    Ok(Err(e)) => {
-                        resp_tx
-                            .send(Err(e.into_status()))
-                            .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
-                    }
-                    Err(e) => {
-                        resp_tx
-                            .send(Err(Status::internal(format!("Map handler aborted: {}", e))))
-                            .await
-                            .expect("Sending error to response channel");
-                        shutdown_tx.send(()).await.expect("Sending shutdown signal");
-                    }
-                }
-            },
-            _ = cln_token.cancelled() => {
-                resp_tx
-                    .send(Err(Status::cancelled("Map handler cancelled")))
-                    .await
-                    .expect("Sending error to response channel");
-            }
-        }
-    }
 
     async fn perform_handshake(
         &self,
@@ -486,6 +469,34 @@ where
             Err(Status::invalid_argument("Handshake not present"))
         }
     }
+}
+
+async fn manage_grpc_stream(
+    request_handler: JoinHandle<Result<(), Error>>,
+    stream_response_tx: mpsc::Sender<Result<MapResponse, Status>>,
+    mut error_rx: mpsc::Receiver<Error>,
+    server_shutdown_tx: mpsc::Sender<()>,
+) {
+    let err = match error_rx.recv().await {
+        Some(err) => err,
+        None => match request_handler.await {
+            Ok(Ok(_)) => return,
+            Ok(Err(e)) => e,
+            Err(e) => Error::BatchMapError(ErrorKind::InternalError(format!(
+                "BatchMap request handler aborted: {e:?}"
+            ))),
+        },
+    };
+
+    error!("Shutting down gRPC channel: {err:?}");
+    stream_response_tx
+        .send(Err(err.into_status()))
+        .await
+        .expect("Sending error message to gRPC response channel");
+    server_shutdown_tx
+        .send(())
+        .await
+        .expect("Writing to shutdown channel");
 }
 
 /// gRPC server to start a batch map service
