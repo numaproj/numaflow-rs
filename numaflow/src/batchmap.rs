@@ -261,12 +261,7 @@ where
                 .await
         });
 
-        tokio::spawn(manage_grpc_stream(
-            handle,
-            resp_tx,
-            error_rx,
-            shutdown_tx,
-        ));
+        tokio::spawn(manage_grpc_stream(handle, resp_tx, error_rx, shutdown_tx));
 
         Ok(Response::new(ReceiverStream::new(resp_rx)))
     }
@@ -439,7 +434,6 @@ where
 
         Ok(global_stream_ended)
     }
-
 
     async fn perform_handshake(
         &self,
