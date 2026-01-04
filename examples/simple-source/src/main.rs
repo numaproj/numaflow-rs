@@ -117,3 +117,124 @@ pub(crate) mod simple_source {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::simple_source::SimpleSource;
+    use numaflow::source::{Offset, SourceReadRequest, Sourcer};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_simple_source_read() {
+        let source = SimpleSource::new();
+        let (tx, mut rx) = mpsc::channel(10);
+
+        let request = SourceReadRequest {
+            count: 5,
+            timeout: std::time::Duration::from_secs(1),
+        };
+
+        source.read(request, tx).await;
+
+        let mut messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        assert_eq!(messages.len(), 5, "Should receive 5 messages");
+
+        // Verify each message has unique offset and incrementing payload
+        for (i, msg) in messages.iter().enumerate() {
+            let payload = String::from_utf8(msg.value.clone()).unwrap();
+            assert_eq!(payload, i.to_string(), "Payload should be incrementing counter");
+            assert!(!msg.offset.offset.is_empty(), "Offset should not be empty");
+            assert_eq!(msg.offset.partition_id, 0, "Partition ID should be 0");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_simple_source_ack() {
+        let source = SimpleSource::new();
+        let (tx, mut rx) = mpsc::channel(10);
+
+        // First read some messages
+        let request = SourceReadRequest {
+            count: 3,
+            timeout: std::time::Duration::from_secs(1),
+        };
+        source.read(request, tx).await;
+
+        let mut offsets = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            offsets.push(msg.offset);
+        }
+
+        // Pending should equal the number of messages read
+        let pending = source.pending().await;
+        assert_eq!(pending, Some(3), "Should have 3 pending messages");
+
+        // Acknowledge the messages
+        source.ack(offsets).await;
+
+        // Pending should now be 0
+        let pending_after = source.pending().await;
+        assert_eq!(pending_after, Some(0), "Should have 0 pending after ack");
+    }
+
+    #[tokio::test]
+    async fn test_simple_source_pending() {
+        let source = SimpleSource::new();
+
+        // Initially no pending messages
+        let pending = source.pending().await;
+        assert_eq!(pending, Some(0), "Initially should have 0 pending");
+    }
+
+    #[tokio::test]
+    async fn test_simple_source_partitions() {
+        let source = SimpleSource::new();
+
+        let partitions = source.partitions().await;
+        assert_eq!(partitions, Some(vec![0]), "Should return partition 0");
+    }
+
+    #[tokio::test]
+    async fn test_simple_source_nack() {
+        let source = SimpleSource::new();
+        let (tx, mut rx) = mpsc::channel(10);
+
+        // Read initial messages
+        let request = SourceReadRequest {
+            count: 2,
+            timeout: std::time::Duration::from_secs(1),
+        };
+        source.read(request, tx).await;
+
+        let mut offsets = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            offsets.push(msg.offset);
+        }
+
+        // Nack the messages
+        source.nack(offsets.clone()).await;
+
+        // Pending should be 0 after nack (moved to nacked set)
+        let pending = source.pending().await;
+        assert_eq!(pending, Some(0), "Pending should be 0 after nack");
+
+        // Next read should return the nacked messages
+        let (tx2, mut rx2) = mpsc::channel(10);
+        let request2 = SourceReadRequest {
+            count: 5,
+            timeout: std::time::Duration::from_secs(1),
+        };
+        source.read(request2, tx2).await;
+
+        let mut reread_messages = Vec::new();
+        while let Ok(msg) = rx2.try_recv() {
+            reread_messages.push(msg);
+        }
+
+        assert_eq!(reread_messages.len(), 2, "Should re-read the 2 nacked messages");
+    }
+}
