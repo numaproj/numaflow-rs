@@ -48,3 +48,76 @@ mod counter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs::Metadata;
+
+    use super::counter::CounterCreator;
+    use numaflow::reduce::ReduceRequest;
+    use numaflow::reduce::ReducerCreator;
+    use numaflow::reduce::Reducer;  
+    use tokio::sync::mpsc;
+
+    fn create_request(value: Vec<u8>, keys: Vec<String>) -> ReduceRequest {
+        ReduceRequest {
+            keys,
+            value,
+            watermark: std::time::SystemTime::now().into(),
+            eventtime: std::time::SystemTime::now().into(),
+            headers: Default::default(),
+        }
+    }
+
+    fn create_metadata() -> Metadata {
+        Metadata {
+            start: std::time::SystemTime::now().into(),
+            end: std::time::SystemTime::now().into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_counter_single_key() {
+        let counter = CounterCreator {}.create();
+        let (tx, rx) = mpsc::channel(10);
+
+        for _ in 0..5 {
+            let req = create_request(b"test".to_vec(), vec!["key1".to_string()]);
+            tx.send(req).await.unwrap();
+        }
+        drop(tx);
+
+        let metadata = create_metadata();
+        let messages = counter.reduce(vec!["key1".to_string()], rx, &metadata).await;
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].value, b"5");
+        assert_eq!(messages[0].keys, Some(vec!["key1".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn test_counter_multiple_keys() {
+        let counter = CounterCreator {}.create();
+        let (tx, rx) = mpsc::channel(10);
+        for _ in 0..3 {
+            let req = create_request(b"test".to_vec(), vec!["keyA".to_string()]);
+            tx.send(req).await.unwrap();
+        }
+        for _ in 0..7 {
+            let req = create_request(b"test".to_vec(), vec!["keyB".to_string()]);
+            tx.send(req).await.unwrap();
+        }
+        drop(tx);
+        let metadata = create_metadata();
+        let messages = counter
+            .reduce(vec!["keyA".to_string(), "keyB".to_string()], rx, &metadata)
+            .await;
+        
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].value, b"10");
+        assert_eq!(
+            messages[0].keys,
+            Some(vec!["keyA".to_string(), "keyB".to_string()])
+        );
+    }
+}

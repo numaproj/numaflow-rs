@@ -78,3 +78,49 @@ mod counter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::counter::{Counter, CounterCreator};
+    use numaflow::session_reduce::{Message, SessionReduceRequest, SessionReduceMapper};
+    use tokio::sync::mpsc;
+    fn create_request(value: Vec<u8>, keys: Vec<String>) -> SessionReduceRequest {
+        SessionReduceRequest {
+            keys,
+            value,
+            watermark: std::time::SystemTime::now().into(),
+            event_time: std::time::SystemTime::now().into(),
+            headers: Default::default(),
+        }
+    }
+    #[tokio::test]
+    async fn test_counter() {
+        let counter = Counter::new();
+        let (input_tx, input_rx) = mpsc::channel(10);
+        let (output_tx, mut output_rx) = mpsc::channel(10);
+        let keys = vec!["user123".to_string()];
+        let mut reducer = counter;
+        let reducer_task = tokio::spawn(async move {
+            reducer.session_reduce(keys, input_rx, output_tx).await;
+        });
+        let messages = vec![
+            create_request(b"a".to_vec(), vec!["user123".to_string()]),
+            create_request(b"b".to_vec(), vec!["user123".to_string()]),
+            create_request(b"c".to_vec(), vec!["user123".to_string()]),
+            create_request(b"d".to_vec(), vec!["user123".to_string()]),
+        ];
+        for msg in messages {
+            input_tx.send(msg).await.unwrap();
+        }
+        drop(input_tx);
+        reducer_task.await.unwrap();
+        let mut results = Vec::new();
+        while let Some(msg) = output_rx.recv().await {
+            results.push(msg);
+        }
+        assert_eq!(results.len(), 1);
+        let output = String::from_utf8(results[0].value.clone()).unwrap();
+        assert_eq!(output, "4");
+    }
+
+}
