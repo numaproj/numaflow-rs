@@ -99,7 +99,7 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(10);
         let (output_tx, mut output_rx) = mpsc::channel(10);
         let keys = vec!["user123".to_string()];
-        let mut reducer = counter;
+        let reducer = counter;
         let reducer_task = tokio::spawn(async move {
             reducer.session_reduce(keys, input_rx, output_tx).await;
         });
