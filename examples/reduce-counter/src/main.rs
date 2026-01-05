@@ -51,12 +51,8 @@ mod counter {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::Metadata;
-
     use super::counter::CounterCreator;
-    use numaflow::reduce::ReduceRequest;
-    use numaflow::reduce::ReducerCreator;
-    use numaflow::reduce::Reducer;  
+    use numaflow::reduce::{IntervalWindow, Metadata, ReduceRequest, Reducer, ReducerCreator};
     use tokio::sync::mpsc;
 
     fn create_request(value: Vec<u8>, keys: Vec<String>) -> ReduceRequest {
@@ -70,10 +66,7 @@ mod tests {
     }
 
     fn create_metadata() -> Metadata {
-        Metadata {
-            start: std::time::SystemTime::now().into(),
-            end: std::time::SystemTime::now().into(),
-        }
+        Metadata::new(IntervalWindow::default())
     }
 
     #[tokio::test]
@@ -88,7 +81,9 @@ mod tests {
         drop(tx);
 
         let metadata = create_metadata();
-        let messages = counter.reduce(vec!["key1".to_string()], rx, &metadata).await;
+        let messages = counter
+            .reduce(vec!["key1".to_string()], rx, &metadata)
+            .await;
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].value, b"5");
@@ -112,7 +107,7 @@ mod tests {
         let messages = counter
             .reduce(vec!["keyA".to_string(), "keyB".to_string()], rx, &metadata)
             .await;
-        
+
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].value, b"10");
         assert_eq!(

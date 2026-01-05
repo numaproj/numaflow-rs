@@ -53,7 +53,7 @@ impl map::Mapper for TickGen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numaflow::map::{MapRequest, Mapper};
+    use numaflow::map::{MapRequest, Mapper, SystemMetadata, UserMetadata};
     use serde_json::json;
 
     /// Helper function to create a test MapRequest
@@ -64,6 +64,8 @@ mod tests {
             watermark: std::time::SystemTime::now().into(),
             eventtime: std::time::SystemTime::now().into(),
             headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         }
     }
 

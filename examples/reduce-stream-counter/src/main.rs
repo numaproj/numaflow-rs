@@ -104,7 +104,9 @@ mod tests {
         }
         drop(input_tx);
 
-        counter.reducestream(keys.clone(), input_rx, output_tx, &md).await;
+        counter
+            .reducestream(keys.clone(), input_rx, output_tx, &md)
+            .await;
 
         let mut messages = Vec::new();
         while let Some(msg) = output_rx.recv().await {
@@ -133,7 +135,9 @@ mod tests {
         }
         drop(input_tx);
 
-        counter.reducestream(keys.clone(), input_rx, output_tx, &md).await;
+        counter
+            .reducestream(keys.clone(), input_rx, output_tx, &md)
+            .await;
 
         let mut messages = Vec::new();
         while let Some(msg) = output_rx.recv().await {
@@ -158,7 +162,9 @@ mod tests {
 
         drop(input_tx); // No messages sent
 
-        counter.reducestream(keys.clone(), input_rx, output_tx, &md).await;
+        counter
+            .reducestream(keys.clone(), input_rx, output_tx, &md)
+            .await;
 
         let mut messages = Vec::new();
         while let Some(msg) = output_rx.recv().await {
@@ -186,7 +192,9 @@ mod tests {
         }
         drop(input_tx);
 
-        counter.reducestream(keys.clone(), input_rx, output_tx, &md).await;
+        counter
+            .reducestream(keys.clone(), input_rx, output_tx, &md)
+            .await;
 
         let mut messages = Vec::new();
         while let Some(msg) = output_rx.recv().await {
@@ -212,7 +220,9 @@ mod tests {
         input_tx.send(request).await.unwrap();
         drop(input_tx);
 
-        counter.reducestream(keys.clone(), input_rx, output_tx, &md).await;
+        counter
+            .reducestream(keys.clone(), input_rx, output_tx, &md)
+            .await;
 
         let msg = output_rx.recv().await.unwrap();
         assert_eq!(msg.keys, Some(vec!["key1".to_string(), "key2".to_string()]));

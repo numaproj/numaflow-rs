@@ -121,7 +121,7 @@ pub(crate) mod simple_source {
 #[cfg(test)]
 mod tests {
     use super::simple_source::SimpleSource;
-    use numaflow::source::{Offset, SourceReadRequest, Sourcer};
+    use numaflow::source::{SourceReadRequest, Sourcer};
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -146,7 +146,11 @@ mod tests {
         // Verify each message has unique offset and incrementing payload
         for (i, msg) in messages.iter().enumerate() {
             let payload = String::from_utf8(msg.value.clone()).unwrap();
-            assert_eq!(payload, i.to_string(), "Payload should be incrementing counter");
+            assert_eq!(
+                payload,
+                i.to_string(),
+                "Payload should be incrementing counter"
+            );
             assert!(!msg.offset.offset.is_empty(), "Offset should not be empty");
             assert_eq!(msg.offset.partition_id, 0, "Partition ID should be 0");
         }
@@ -215,8 +219,10 @@ mod tests {
             offsets.push(msg.offset);
         }
 
+        let offsets_count = offsets.len();
+
         // Nack the messages
-        source.nack(offsets.clone()).await;
+        source.nack(offsets).await;
 
         // Pending should be 0 after nack (moved to nacked set)
         let pending = source.pending().await;
@@ -235,6 +241,10 @@ mod tests {
             reread_messages.push(msg);
         }
 
-        assert_eq!(reread_messages.len(), 2, "Should re-read the 2 nacked messages");
+        assert_eq!(
+            reread_messages.len(),
+            offsets_count,
+            "Should re-read the nacked messages"
+        );
     }
 }

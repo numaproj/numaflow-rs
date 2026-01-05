@@ -37,7 +37,7 @@ impl sink::Sinker for Logger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numaflow::sink::Sinker;
+    use numaflow::sink::{ResponseType, Sinker, SystemMetadata, UserMetadata};
     use tokio::sync::mpsc;
 
     fn create_sink_request(id: &str, value: Vec<u8>, keys: Vec<String>) -> SinkRequest {
@@ -48,6 +48,8 @@ mod tests {
             watermark: std::time::SystemTime::now().into(),
             event_time: std::time::SystemTime::now().into(),
             headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         }
     }
 
@@ -67,9 +69,12 @@ mod tests {
         let responses = logger.sink(rx).await;
 
         assert_eq!(responses.len(), 1);
-        assert!(responses[0].success, "Valid UTF-8 should succeed");
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Success),
+            "Valid UTF-8 should succeed"
+        );
         assert_eq!(responses[0].id, "msg-1");
-        assert!(responses[0].err.is_empty(), "No error expected");
+        assert!(responses[0].err.is_none(), "No error expected");
     }
 
     #[tokio::test]
@@ -91,7 +96,10 @@ mod tests {
 
         assert_eq!(responses.len(), 5);
         for (i, response) in responses.iter().enumerate() {
-            assert!(response.success, "All valid UTF-8 messages should succeed");
+            assert!(
+                matches!(response.response_type, ResponseType::Success),
+                "All valid UTF-8 messages should succeed"
+            );
             assert_eq!(response.id, format!("msg-{}", i));
         }
     }
@@ -110,10 +118,13 @@ mod tests {
         let responses = logger.sink(rx).await;
 
         assert_eq!(responses.len(), 1);
-        assert!(!responses[0].success, "Invalid UTF-8 should fail");
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Failure),
+            "Invalid UTF-8 should fail"
+        );
         assert_eq!(responses[0].id, "msg-invalid");
         assert!(
-            responses[0].err.contains("Invalid UTF-8"),
+            responses[0].err.as_ref().unwrap().contains("Invalid UTF-8"),
             "Error message should mention UTF-8"
         );
     }
@@ -141,7 +152,10 @@ mod tests {
         let responses = logger.sink(rx).await;
 
         assert_eq!(responses.len(), 1);
-        assert!(responses[0].success, "Empty value is valid UTF-8");
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Success),
+            "Empty value is valid UTF-8"
+        );
         assert_eq!(responses[0].id, "msg-empty");
     }
 }

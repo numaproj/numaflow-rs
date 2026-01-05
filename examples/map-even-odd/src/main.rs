@@ -25,7 +25,7 @@ impl map::Mapper for EvenOdd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numaflow::map::{MapRequest, Mapper};
+    use numaflow::map::{MapRequest, Mapper, SystemMetadata, UserMetadata};
 
     fn create_request(value: Vec<u8>, keys: Vec<String>) -> MapRequest {
         MapRequest {
@@ -34,6 +34,8 @@ mod tests {
             watermark: std::time::SystemTime::now().into(),
             eventtime: std::time::SystemTime::now().into(),
             headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         }
     }
 

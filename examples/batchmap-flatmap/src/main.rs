@@ -54,11 +54,7 @@ mod tests {
         let flatmap = Flatmap;
         let (tx, rx) = mpsc::channel(10);
 
-        let datum = create_datum(
-            "msg-1",
-            vec!["key1".to_string()],
-            b"a,b,c".to_vec(),
-        );
+        let datum = create_datum("msg-1", vec!["key1".to_string()], b"a,b,c".to_vec());
         tx.send(datum).await.unwrap();
         drop(tx);
 
@@ -77,11 +73,7 @@ mod tests {
         let flatmap = Flatmap;
         let (tx, rx) = mpsc::channel(10);
 
-        let datum = create_datum(
-            "msg-1",
-            vec!["key1".to_string()],
-            b"single_value".to_vec(),
-        );
+        let datum = create_datum("msg-1", vec!["key1".to_string()], b"single_value".to_vec());
         tx.send(datum).await.unwrap();
         drop(tx);
 
@@ -119,8 +111,20 @@ mod tests {
         let flatmap = Flatmap;
         let (tx, rx) = mpsc::channel(10);
 
-        tx.send(create_datum("msg-1", vec!["k1".to_string()], b"a,b".to_vec())).await.unwrap();
-        tx.send(create_datum("msg-2", vec!["k2".to_string()], b"x,y,z".to_vec())).await.unwrap();
+        tx.send(create_datum(
+            "msg-1",
+            vec!["k1".to_string()],
+            b"a,b".to_vec(),
+        ))
+        .await
+        .unwrap();
+        tx.send(create_datum(
+            "msg-2",
+            vec!["k2".to_string()],
+            b"x,y,z".to_vec(),
+        ))
+        .await
+        .unwrap();
         drop(tx);
 
         let responses = flatmap.batchmap(rx).await;

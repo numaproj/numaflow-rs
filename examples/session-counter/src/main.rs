@@ -81,8 +81,8 @@ mod counter {
 
 #[cfg(test)]
 mod tests {
-    use super::counter::{Counter, CounterCreator};
-    use numaflow::session_reduce::{Message, SessionReduceRequest, SessionReduceMapper};
+    use super::counter::Counter;
+    use numaflow::session_reduce::{SessionReduceRequest, SessionReducer};
     use tokio::sync::mpsc;
     fn create_request(value: Vec<u8>, keys: Vec<String>) -> SessionReduceRequest {
         SessionReduceRequest {
@@ -122,5 +122,4 @@ mod tests {
         let output = String::from_utf8(results[0].value.clone()).unwrap();
         assert_eq!(output, "4");
     }
-
 }

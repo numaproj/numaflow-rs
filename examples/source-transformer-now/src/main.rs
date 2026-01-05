@@ -27,7 +27,9 @@ impl sourcetransform::SourceTransformer for NowCat {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use numaflow::sourcetransform::{SourceTransformRequest, SourceTransformer};
+    use numaflow::sourcetransform::{
+        SourceTransformRequest, SourceTransformer, SystemMetadata, UserMetadata,
+    };
 
     fn create_request(value: Vec<u8>, keys: Vec<String>) -> SourceTransformRequest {
         SourceTransformRequest {
@@ -36,6 +38,8 @@ mod tests {
             watermark: Utc::now(),
             eventtime: Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap(),
             headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         }
     }
 
@@ -50,7 +54,10 @@ mod tests {
         let after = Utc::now();
 
         assert_eq!(messages.len(), 1, "Should return one message");
-        assert_eq!(messages[0].value, b"hello numaflow", "Value should be preserved");
+        assert_eq!(
+            messages[0].value, b"hello numaflow",
+            "Value should be preserved"
+        );
         assert_eq!(
             messages[0].keys,
             Some(vec!["key1".to_string()]),
@@ -95,7 +102,11 @@ mod tests {
         let messages = now_cat.transform(request).await;
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].value, Vec::<u8>::new(), "Empty value should be preserved");
+        assert_eq!(
+            messages[0].value,
+            Vec::<u8>::new(),
+            "Empty value should be preserved"
+        );
     }
 
     #[tokio::test]
@@ -110,6 +121,8 @@ mod tests {
             watermark: Utc::now(),
             eventtime: old_event_time,
             headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
         };
 
         let before = Utc::now();
@@ -136,6 +149,10 @@ mod tests {
         let messages = now_cat.transform(request).await;
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].keys, Some(vec![]), "Empty keys should be preserved");
+        assert_eq!(
+            messages[0].keys,
+            Some(vec![]),
+            "Empty keys should be preserved"
+        );
     }
 }

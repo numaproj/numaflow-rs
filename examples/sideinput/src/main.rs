@@ -59,13 +59,21 @@ mod tests {
             results.push(result);
         }
         assert_eq!(results.len(), 5);
+        // Counter starts at 0, increments before check:
+        // Call 1: counter becomes 1, 1%2=1 (odd) -> Some
+        // Call 2: counter becomes 2, 2%2=0 (even) -> None
+        // Call 3: counter becomes 3, 3%2=1 (odd) -> Some
+        // Call 4: counter becomes 4, 4%2=0 (even) -> None
+        // Call 5: counter becomes 5, 5%2=1 (odd) -> Some
         for (i, res) in results.iter().enumerate() {
             if i % 2 == 0 {
-                assert!(res.is_none());
-            } else {
-                assert!(res.is_some());
+                // i=0,2,4 -> calls 1,3,5 -> counter 1,3,5 (odd) -> Some
+                assert!(res.is_some(), "Call {} should return Some", i + 1);
                 let msg = String::from_utf8(res.as_ref().unwrap().clone()).unwrap();
                 assert!(msg.starts_with("an example: "));
+            } else {
+                // i=1,3 -> calls 2,4 -> counter 2,4 (even) -> None
+                assert!(res.is_none(), "Call {} should return None", i + 1);
             }
         }
     }

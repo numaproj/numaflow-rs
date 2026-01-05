@@ -82,7 +82,10 @@ mod tests {
         for (i, response) in responses.iter().enumerate() {
             assert_eq!(response.id, format!("msg-{}", i));
             assert_eq!(response.message.len(), 1);
-            assert_eq!(response.message[0].value, format!("Message {}", i).into_bytes());
+            assert_eq!(
+                response.message[0].value,
+                format!("Message {}", i).into_bytes()
+            );
         }
     }
 
