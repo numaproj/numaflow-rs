@@ -9,3 +9,6 @@ tonic.workspace = true
 tokio.workspace = true
 numaflow = { path = "../../numaflow" }
 
+[dev-dependencies]
+chrono.workspace = true
+

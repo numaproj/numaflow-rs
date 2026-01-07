@@ -40,3 +40,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .start()
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+    #[tokio::test]
+    async fn test_sideinput_handler() {
+        let handler = SideInputHandler::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        for _ in 0..5 {
+            let sideinput = handler.retrieve_sideinput().await;
+            tx.send(sideinput).await.unwrap();
+        }
+        drop(tx);
+        let mut results = Vec::new();
+        while let Some(result) = rx.recv().await {
+            results.push(result);
+        }
+        assert_eq!(results.len(), 5);
+        // Counter starts at 0, increments before check:
+        // Call 1: counter becomes 1, 1%2=1 (odd) -> Some
+        // Call 2: counter becomes 2, 2%2=0 (even) -> None
+        // Call 3: counter becomes 3, 3%2=1 (odd) -> Some
+        // Call 4: counter becomes 4, 4%2=0 (even) -> None
+        // Call 5: counter becomes 5, 5%2=1 (odd) -> Some
+        for (i, res) in results.iter().enumerate() {
+            if i % 2 == 0 {
+                // i=0,2,4 -> calls 1,3,5 -> counter 1,3,5 (odd) -> Some
+                assert!(res.is_some(), "Call {} should return Some", i + 1);
+                let msg = String::from_utf8(res.as_ref().unwrap().clone()).unwrap();
+                assert!(msg.starts_with("an example: "));
+            } else {
+                // i=1,3 -> calls 2,4 -> counter 2,4 (even) -> None
+                assert!(res.is_none(), "Call {} should return None", i + 1);
+            }
+        }
+    }
+}

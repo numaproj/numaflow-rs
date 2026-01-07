@@ -33,3 +33,129 @@ impl sink::Sinker for Logger {
         responses
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use numaflow::sink::{ResponseType, Sinker, SystemMetadata, UserMetadata};
+    use tokio::sync::mpsc;
+
+    fn create_sink_request(id: &str, value: Vec<u8>, keys: Vec<String>) -> SinkRequest {
+        SinkRequest {
+            id: id.to_string(),
+            keys,
+            value,
+            watermark: std::time::SystemTime::now().into(),
+            event_time: std::time::SystemTime::now().into(),
+            headers: Default::default(),
+            user_metadata: UserMetadata::new(),
+            system_metadata: SystemMetadata::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sink_single_valid_utf8_message() {
+        let logger = Logger;
+        let (tx, rx) = mpsc::channel(10);
+
+        let request = create_sink_request(
+            "msg-1",
+            b"Hello, Numaflow!".to_vec(),
+            vec!["key1".to_string()],
+        );
+        tx.send(request).await.unwrap();
+        drop(tx);
+
+        let responses = logger.sink(rx).await;
+
+        assert_eq!(responses.len(), 1);
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Success),
+            "Valid UTF-8 should succeed"
+        );
+        assert_eq!(responses[0].id, "msg-1");
+        assert!(responses[0].err.is_none(), "No error expected");
+    }
+
+    #[tokio::test]
+    async fn test_sink_multiple_messages() {
+        let logger = Logger;
+        let (tx, rx) = mpsc::channel(10);
+
+        for i in 0..5 {
+            let request = create_sink_request(
+                &format!("msg-{}", i),
+                format!("Message {}", i).into_bytes(),
+                vec![format!("key-{}", i)],
+            );
+            tx.send(request).await.unwrap();
+        }
+        drop(tx);
+
+        let responses = logger.sink(rx).await;
+
+        assert_eq!(responses.len(), 5);
+        for (i, response) in responses.iter().enumerate() {
+            assert!(
+                matches!(response.response_type, ResponseType::Success),
+                "All valid UTF-8 messages should succeed"
+            );
+            assert_eq!(response.id, format!("msg-{}", i));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sink_invalid_utf8_message() {
+        let logger = Logger;
+        let (tx, rx) = mpsc::channel(10);
+
+        // Invalid UTF-8 sequence
+        let invalid_utf8 = vec![0xff, 0xfe, 0x00, 0x01];
+        let request = create_sink_request("msg-invalid", invalid_utf8, vec!["key1".to_string()]);
+        tx.send(request).await.unwrap();
+        drop(tx);
+
+        let responses = logger.sink(rx).await;
+
+        assert_eq!(responses.len(), 1);
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Failure),
+            "Invalid UTF-8 should fail"
+        );
+        assert_eq!(responses[0].id, "msg-invalid");
+        assert!(
+            responses[0].err.as_ref().unwrap().contains("Invalid UTF-8"),
+            "Error message should mention UTF-8"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sink_empty_input() {
+        let logger = Logger;
+        let (tx, rx) = mpsc::channel(10);
+        drop(tx);
+
+        let responses = logger.sink(rx).await;
+
+        assert_eq!(responses.len(), 0, "No responses for empty input");
+    }
+
+    #[tokio::test]
+    async fn test_sink_empty_value() {
+        let logger = Logger;
+        let (tx, rx) = mpsc::channel(10);
+
+        let request = create_sink_request("msg-empty", vec![], vec!["key1".to_string()]);
+        tx.send(request).await.unwrap();
+        drop(tx);
+
+        let responses = logger.sink(rx).await;
+
+        assert_eq!(responses.len(), 1);
+        assert!(
+            matches!(responses[0].response_type, ResponseType::Success),
+            "Empty value is valid UTF-8"
+        );
+        assert_eq!(responses[0].id, "msg-empty");
+    }
+}
