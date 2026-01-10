@@ -261,6 +261,7 @@ where
                 .await
         });
 
+        // TODO: structured concurrency is lost. if `manage_grpc_stream` panics, we will never know
         tokio::spawn(manage_grpc_stream(handle, resp_tx, error_rx, shutdown_tx));
 
         Ok(Response::new(ReceiverStream::new(resp_rx)))
@@ -284,18 +285,19 @@ where
         cln_token: CancellationToken,
     ) -> Result<(), Error> {
         // loop until the global stream has been shutdown.
-        let mut global_stream_ended = false;
-        while !global_stream_ended {
+        loop {
             // for every batch, we need to read from the stream. The end-of-batch is
             // encoded in the request.
             tokio::select! {
-                res = Self::process_map_batch(
+                stream_ended = Self::process_map_batch(
                     map_handle.clone(),
                     &mut map_stream,
                     grpc_resp_tx.clone(),
                     error_tx.clone(),
                 ) => {
-                    global_stream_ended = res?;
+                    if stream_ended? {
+                        break;
+                    }
                 }
                 _ = cln_token.cancelled() => {
                     info!("Cancellation token is cancelled, shutting down");
@@ -474,7 +476,7 @@ async fn manage_grpc_stream(
     let err = match error_rx.recv().await {
         Some(err) => err,
         None => match request_handler.await {
-            Ok(Ok(_)) => return,
+            Ok(Ok(_)) => return, // normal exit
             Ok(Err(e)) => e,
             Err(e) => Error::BatchMapError(ErrorKind::InternalError(format!(
                 "BatchMap request handler aborted: {e:?}"
@@ -483,10 +485,12 @@ async fn manage_grpc_stream(
     };
 
     error!("Shutting down gRPC channel: {err:?}");
+    // send error response to the numaflow client
     stream_response_tx
         .send(Err(err.into_status()))
         .await
         .expect("Sending error message to gRPC response channel");
+    // send shutdown signal to the server
     server_shutdown_tx
         .send(())
         .await
