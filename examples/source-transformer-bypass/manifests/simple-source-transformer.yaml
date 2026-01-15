@@ -1,8 +1,24 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-source-transformer
+  name: source-transformer-bypass
 spec:
+  bypass:
+    sink:
+      tags:
+        operator: or
+        values:
+          - sink
+    fallback:
+      tags:
+        operator: or
+        values:
+          - fallback
+    onSuccess:
+      tags:
+        operator: or
+        values:
+          - onSuccess
   vertices:
     - name: in
       source:
@@ -16,10 +32,37 @@ spec:
           container:
             image: quay.io/numaio/numaflow-rs/source-transformer-now:stable
             imagePullPolicy: Always
-    - name: out
+    - name: output
       sink:
-        # A simple log printing sink
-        log: {}
+        udsink:
+          container:
+            # A redis sink for e2e testing, see https://github.com/numaproj/numaflow-go/tree/main/examples/sinker/redis_sink
+            image: quay.io/numaio/numaflow-go/redis-sink:stable
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: SINK_HASH_KEY
+                # The key is set in the format of "pipeline_name-vertex_name"
+                value: "simple-output"
+        fallback:
+          udsink:
+            container:
+              # A redis sink for e2e testing, see https://github.com/numaproj/numaflow-go/tree/main/examples/sinker/redis_sink
+              image: quay.io/numaio/numaflow-go/redis-sink:stable
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: SINK_HASH_KEY
+                  # The key is set in the format of "pipeline_name-vertex_name"
+                  value: "simple-fallback-output"
+        onSuccess:
+          udsink:
+            container:
+              # A redis sink for e2e testing, see https://github.com/numaproj/numaflow-go/tree/main/examples/sinker/redis_sink
+              image: quay.io/numaio/numaflow-go/redis-sink:stable
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: SINK_HASH_KEY
+                  # The key is set in the format of "pipeline_name-vertex_name"
+                  value: "simple-on-success-output"
   edges:
     - from: in
-      to: out
+      to: output

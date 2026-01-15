@@ -69,4 +69,4 @@ spec:
     - from: in
       to: cat
     - from: cat
-      to: out
+      to: output
