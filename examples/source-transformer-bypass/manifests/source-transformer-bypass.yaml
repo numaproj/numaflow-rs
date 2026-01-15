@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: MonoVertex
 metadata:
-  name: map-bypass-cat
+  name: source-transformer-bypass
 spec:
   bypass:
     sink:
@@ -21,10 +21,10 @@ spec:
           - onSuccess
   source:
     http: {}
-  udf:
-    container:
-      image: quay.io/numaio/numaflow-rs/map-bypass-cat:stable
-      imagePullPolicy: IfNotPresent
+    transformer:
+      container:
+        image: quay.io/numaio/numaflow-rs/source-transformer-bypass:stable
+        imagePullPolicy: IfNotPresent
   sink:
     udsink:
       container:
