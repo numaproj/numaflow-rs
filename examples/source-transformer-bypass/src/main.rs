@@ -1,7 +1,7 @@
 //! This example is added to allow creation of a reproducible image to be used for e2e testing
 //! of MonoVertex's bypass feature.
 //!
-//! Based on the message content tags will be added to messages which will allow the bypass router
+//! Based on the message content, tags will be added to messages which will allow the bypass router
 //! to route them to the specific sink:
 //! * Add "fallback" tag to all the messages which have the word "fallback" in their value.
 //! * Add "onSuccess" tag to all the messages which have the word "onSuccess" in their value.
