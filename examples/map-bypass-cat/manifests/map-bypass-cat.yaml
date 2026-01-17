@@ -1,0 +1,36 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: MonoVertex
+metadata:
+  name: map-bypass-cat
+spec:
+  bypass:
+    sink:
+      tags:
+        operator: or
+        values:
+          - sink
+    fallback:
+      tags:
+        operator: or
+        values:
+          - fallback
+    onSuccess:
+      tags:
+        operator: or
+        values:
+          - onSuccess
+  source:
+    http: {}
+  udf:
+    container:
+      image: quay.io/numaio/numaflow-rs/map-bypass-cat:stable
+      imagePullPolicy: IfNotPresent
+  sink:
+    udsink:
+      container:
+        image: quay.io/numaio/numaflow-rs/sink-log:stable
+        imagePullPolicy: IfNotPresent
+    fallback:
+      log: { }
+    onSuccess:
+      log: { }

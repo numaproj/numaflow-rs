@@ -1,0 +1,36 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: MonoVertex
+metadata:
+  name: source-transformer-bypass
+spec:
+  bypass:
+    sink:
+      tags:
+        operator: or
+        values:
+          - sink
+    fallback:
+      tags:
+        operator: or
+        values:
+          - fallback
+    onSuccess:
+      tags:
+        operator: or
+        values:
+          - onSuccess
+  source:
+    http: {}
+    transformer:
+      container:
+        image: quay.io/numaio/numaflow-rs/source-transformer-bypass:stable
+        imagePullPolicy: IfNotPresent
+  sink:
+    udsink:
+      container:
+        image: quay.io/numaio/numaflow-rs/sink-log:stable
+        imagePullPolicy: IfNotPresent
+    fallback:
+      log: { }
+    onSuccess:
+      log: { }
