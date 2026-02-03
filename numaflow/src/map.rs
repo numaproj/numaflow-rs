@@ -509,7 +509,7 @@ where
 
         // Spawn a task to handle incoming stream requests
         let handle: JoinHandle<()> = tokio::spawn(handle_stream_requests(
-            handler.clone(),
+            handler,
             stream,
             stream_response_tx.clone(),
             error_tx,
@@ -555,6 +555,8 @@ async fn handle_stream_requests<T>(
             }
         }
     }
+    info!("debug -- exiting handle_stream_requests. stream_open: {stream_open}");
+    info!("debug -- stream response tx closed");
 }
 
 async fn manage_grpc_stream(
@@ -574,6 +576,7 @@ async fn manage_grpc_stream(
     };
 
     error!("Shutting down gRPC channel: {err:?}");
+    // TODO: the shutdown order should be swapped?
     stream_response_tx
         .send(Err(err.into_status()))
         .await
@@ -582,6 +585,7 @@ async fn manage_grpc_stream(
         .send(())
         .await
         .expect("Writing to shutdown channel");
+    info!("debug -- stream response tx closed");
 }
 
 async fn handle_request<T>(
@@ -593,6 +597,7 @@ async fn handle_request<T>(
 where
     T: Mapper + Send + Sync + 'static,
 {
+    info!("debug -- Received gRPC request: {map_request:?}");
     let map_request = match map_request {
         Ok(None) => return false,
         Ok(Some(val)) => val,
@@ -618,7 +623,6 @@ async fn run_map<T>(
 
     // A new task is spawned to catch the panic
     let udf_map_task = tokio::spawn({
-        let handler = handler.clone();
         async move { handler.map(request.into()).await }
     });
 
@@ -640,6 +644,7 @@ async fn run_map<T>(
                     ))))
                     .await;
             }
+            info!("debug -- exiting map runner task");
             return;
         }
     };
@@ -654,14 +659,17 @@ async fn run_map<T>(
         .await;
 
     let Err(e) = send_response_result else {
+        info!("debug -- exiting map runner task");
         return;
     };
 
+    info!("debug -- failed to send map udf result downstream: {e:?}");
     let _ = error_tx
         .send(Error::MapError(ErrorKind::InternalError(format!(
             "Failed to send response: {e:?}"
         ))))
         .await;
+    info!("debug -- exiting map runner task");
 }
 
 async fn perform_handshake(
