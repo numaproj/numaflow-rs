@@ -634,15 +634,19 @@ async fn run_map<T>(
             // Check if we have detailed panic info from our hook
             if let Some(panic_info) = get_panic_info() {
                 // This is a panic - send detailed panic information
+                info!("debug -- sending panic information to error channel");
                 let status = build_panic_status(&panic_info);
                 let _ = error_tx.send(Error::GrpcStatus(status)).await;
+                info!("debug -- sent panic information to error channel");
             } else {
                 // This is a non-panic error
+                info!("debug -- sending error information to error channel");
                 let _ = error_tx
                     .send(Error::MapError(ErrorKind::InternalError(format!(
                         "Map task execution failed: {e:?}",
                     ))))
                     .await;
+                info!("debug -- sent error information to error channel");
             }
             info!("debug -- exiting map runner task");
             return;
@@ -652,18 +656,19 @@ async fn run_map<T>(
     let send_response_result = stream_response_tx
         .send(Ok(MapResponse {
             results: messages.into_iter().map(|msg| msg.into()).collect(),
-            id: message_id,
+            id: message_id.clone(),
             handshake: None,
             status: None,
         }))
         .await;
 
     let Err(e) = send_response_result else {
+        info!("debug -- sent processed response for msg id: {}", message_id.clone());
         info!("debug -- exiting map runner task");
         return;
     };
 
-    info!("debug -- failed to send map udf result downstream: {e:?}");
+    info!("debug -- failed to send map udf result downstream: id: {}, err: {e:?}", message_id);
     let _ = error_tx
         .send(Error::MapError(ErrorKind::InternalError(format!(
             "Failed to send response: {e:?}"
