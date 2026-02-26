@@ -222,8 +222,8 @@ impl<T> Server<T> {
     }
 
     /// Set whether to initialize panic hook (default: true)
-    pub(crate) fn with_panic_hook(mut self, init_panic_hook: bool) -> Self {
-        self.starter = self.starter.with_panic_hook(init_panic_hook);
+    pub(crate) fn with_panic_hook_disabled(mut self) -> Self {
+        self.starter = self.starter.with_panic_hook(false);
         self
     }
 
