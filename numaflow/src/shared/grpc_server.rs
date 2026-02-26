@@ -221,6 +221,12 @@ impl<T> Server<T> {
         self
     }
 
+    /// Set whether to initialize panic hook (default: true)
+    pub(crate) fn with_panic_hook(mut self, init_panic_hook: bool) -> Self {
+        self.starter = self.starter.with_panic_hook(init_panic_hook);
+        self
+    }
+
     /// Get the unix domain socket file path where gRPC server listens for incoming connections
     pub(crate) fn socket_file(&self) -> &std::path::Path {
         self.starter.socket_file()
