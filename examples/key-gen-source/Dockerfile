@@ -5,16 +5,16 @@ RUN apt-get install protobuf-compiler -y
 
 WORKDIR /numaflow-rs
 COPY ./ ./
-WORKDIR /numaflow-rs/examples/simple-source
+WORKDIR /numaflow-rs/examples/key-gen-source
 
 # build for release
 RUN cargo build --release
 
 # our final base
-FROM debian:bullseye AS simple-source
+FROM debian:bullseye AS key-gen-source
 
 # copy the build artifact from the build stage
-COPY --from=build /numaflow-rs/target/release/simple-source .
+COPY --from=build /numaflow-rs/target/release/key-gen-source .
 
 # set the startup command to run your binary
-CMD ["./simple-source"]
+CMD ["./key-gen-source"]
