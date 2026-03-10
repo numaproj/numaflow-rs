@@ -150,7 +150,7 @@ impl RedisTestSink {
     }
 
     /// Ordered mode: store messages in Redis lists using RPUSH.
-    /// The list key is `{sink_key}:{keys joined by ":"}`.
+    /// The list key is `{sink_key}_{keys joined by ":"}`.
     async fn sink_ordered(
         &self,
         mut input: tokio::sync::mpsc::Receiver<SinkRequest>,
@@ -168,7 +168,7 @@ impl RedisTestSink {
             let value_str =
                 String::from_utf8(datum.value.clone()).unwrap_or_else(|_| "".to_string());
 
-            let list_key = format!("{}:{}", self.sink_key, datum.keys.join(":"));
+            let list_key = format!("{}_{}", self.sink_key, datum.keys.join(":"));
 
             let result: Result<(), redis::RedisError> =
                 con.rpush(&list_key, &value_str).await;
