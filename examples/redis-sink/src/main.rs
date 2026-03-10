@@ -170,8 +170,7 @@ impl RedisTestSink {
 
             let list_key = format!("{}_{}", self.sink_key, datum.keys.join(":"));
 
-            let result: Result<(), redis::RedisError> =
-                con.rpush(&list_key, &value_str).await;
+            let result: Result<(), redis::RedisError> = con.rpush(&list_key, &value_str).await;
 
             match result {
                 Ok(_) => {
