@@ -1,0 +1,55 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: ordered-stream-processing
+spec:
+  limits:
+    readBatchSize: 1
+  watermark:
+    idleSource:
+      threshold: 5s
+      incrementBy: 3s
+      stepInterval: 2s
+  ordered:
+    enabled: true
+  vertices:
+    - name: input-one
+      source:
+        http: {}
+    - name: input-two
+      source:
+        http: {}
+    - name: sorter
+      udf:
+        container:
+          # Stream sorter accumulator that sorts events by event-time
+          image: quay.io/numaio/numaflow-rs/stream-sorter:stable
+        groupBy:
+          window:
+            accumulator:
+              timeout: 30s
+          keyed: true
+          storage:
+            persistentVolumeClaim:
+              volumeSize: 10Gi
+              accessMode: ReadWriteOnce
+    - name: order-checker
+      partitions: 2
+      udf:
+        container:
+          # Order-checking map vertex that validates event-time ordering
+          image: quay.io/numaio/numaflow-rs/ordered-stream-processing:stable
+    - name: out
+      partitions: 2
+      sink:
+        # A simple log printing sink
+        log: {}
+  edges:
+    - from: input-one
+      to: sorter
+    - from: input-two
+      to: sorter
+    - from: sorter
+      to: order-checker
+    - from: order-checker
+      to: out
