@@ -24,6 +24,7 @@ spec:
         container:
           # Stream sorter accumulator that sorts events by event-time
           image: quay.io/numaio/numaflow-rs/stream-sorter:stable
+          imagePullPolicy: IfNotPresent
         groupBy:
           window:
             accumulator:
@@ -33,14 +34,20 @@ spec:
             persistentVolumeClaim:
               volumeSize: 10Gi
               accessMode: ReadWriteOnce
+    - name: map-cat
+      udf:
+        container:
+          image: quay.io/numaio/numaflow-rs/map-cat:stable
+          imagePullPolicy: IfNotPresent
     - name: order-checker
-      partitions: 2
+      partitions: 3
       udf:
         container:
           # Order-checking map vertex that validates event-time ordering
           image: quay.io/numaio/numaflow-rs/ordered-stream-processing:stable
+          imagePullPolicy: IfNotPresent
     - name: out
-      partitions: 2
+      partitions: 3
       sink:
         # A simple log printing sink
         log: {}
@@ -50,6 +57,8 @@ spec:
     - from: input-two
       to: sorter
     - from: sorter
+      to: map-cat
+    - from: map-cat
       to: order-checker
     - from: order-checker
       to: out
