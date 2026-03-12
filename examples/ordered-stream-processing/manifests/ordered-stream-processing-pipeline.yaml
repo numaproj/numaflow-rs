@@ -34,11 +34,6 @@ spec:
             persistentVolumeClaim:
               volumeSize: 10Gi
               accessMode: ReadWriteOnce
-    - name: map-cat
-      udf:
-        container:
-          image: quay.io/numaio/numaflow-rs/map-cat:stable
-          imagePullPolicy: IfNotPresent
     - name: order-checker
       partitions: 3
       udf:
@@ -57,8 +52,6 @@ spec:
     - from: input-two
       to: sorter
     - from: sorter
-      to: map-cat
-    - from: map-cat
       to: order-checker
     - from: order-checker
       to: out
