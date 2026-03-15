@@ -59,3 +59,33 @@ curl -kq -X POST -H "x-numaflow-event-time: 1700000200000" -H "x-numaflow-keys: 
 The stream-sorter will buffer these and emit them as `seq:1, seq:2, seq:3` once the watermark advances. 
 The order-checker will then confirm they arrive in non-decreasing event-time order, logging `"Order maintained"` for each. 
 If ordering were broken, you would see `"Order violation detected"` warnings in the order-checker logs.
+
+## Key-Partition Tracking (Optional)
+
+The order-checker can optionally track which replica processes each message key using Redis. This proves that Numaflow's key-hash routing is consistent — every message with a given key always lands on the same partition/replica.
+
+### How It Works
+
+When enabled, the order-checker uses a Redis HASH (`numaflow:key_partition_map`) where each field is a serialized message key and the value is the replica ID that first claimed it. On the first encounter of each key, it uses `HSETNX` (atomic set-if-not-exists):
+
+- If the key is new, it is claimed by the current replica
+- If the key already exists and belongs to a different replica, a `KEY ROUTING VIOLATION` error is logged
+
+A background task periodically logs a summary of key distribution across replicas.
+
+### Environment Variables
+
+| Variable                           | Default                      | Description                                                       |
+|------------------------------------|------------------------------|-------------------------------------------------------------------|
+| `ENABLE_KEY_TRACKING`              | (disabled)                   | Set to `"true"` to enable Redis-based key tracking                |
+| `REDIS_URL`                        | `redis://redis:6379`         | Redis connection URL                                              |
+| `KEY_TRACKING_HASH`                | `numaflow:key_partition_map` | Redis HASH key name                                               |
+| `KEY_TRACKING_CHECK_INTERVAL_SECS` | `30`                         | Interval (seconds) between periodic key distribution summary logs |
+| `NUMAFLOW_REPLICA`                 | `"unknown"`                  | Replica identifier (set automatically by Numaflow)                |
+
+### What to Look For in Logs
+
+- `"Key-partition tracking enabled"` — confirms tracking is active
+- `"Key partition tracking summary"` — periodic summary showing total keys and replica count
+- `"Replica key distribution"` — per-replica key count breakdown
+- Absence of `"KEY ROUTING VIOLATION"` — proves consistent key-to-partition routing

@@ -41,6 +41,11 @@ spec:
           # Order-checking map vertex that validates event-time ordering
           image: quay.io/numaio/numaflow-rs/ordered-stream-processing:stable
           imagePullPolicy: IfNotPresent
+          env:
+            - name: ENABLE_KEY_TRACKING
+              value: "false"
+            - name: REDIS_URL
+              value: "redis://redis:6379"
     - name: out
       partitions: 3
       sink:
