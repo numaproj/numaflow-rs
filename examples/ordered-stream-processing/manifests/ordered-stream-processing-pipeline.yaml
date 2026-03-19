@@ -43,7 +43,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: ENABLE_KEY_TRACKING
-              value: "false"
+              value: "true"
             - name: REDIS_URL
               value: "redis://redis:6379"
     - name: out

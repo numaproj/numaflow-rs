@@ -89,3 +89,120 @@ A background task periodically logs a summary of key distribution across replica
 - `"Key partition tracking summary"` — periodic summary showing total keys and replica count
 - `"Replica key distribution"` — per-replica key count breakdown
 - Absence of `"KEY ROUTING VIOLATION"` — proves consistent key-to-partition routing
+
+## Example Run Walkthrough
+
+> Based on [this PR comment](https://github.com/numaproj/numaflow-rs/pull/168#issuecomment-4069231805).
+
+Below is a concrete example showing how events sent **out of order** across two HTTP sources are **sorted by event-time** and then **delivered in order per key** to separate sink partitions.
+
+### 1. Events Sent
+
+25 events are sent in 7 batches across `input-one` (port 8444) and `input-two` (port 8445). Each event carries a key (`A` or `Z`) and an event-time. Events are intentionally sent **out of temporal order** — for example, events at `16:53:08` are sent before events at `16:52:58`.
+
+| Batch | Source    | Key | Event Time (UTC) | Epoch (ms)    |
+|-------|-----------|-----|------------------|---------------|
+| 1     | input-one | A   | 16:53:08.000     | 1773679988000 |
+| 1     | input-one | Z   | 16:53:08.003     | 1773679988003 |
+| 1     | input-two | A   | 16:53:08.001     | 1773679988001 |
+| 1     | input-two | Z   | 16:53:08.002     | 1773679988002 |
+| 2     | input-one | A   | 16:52:58.000     | 1773679978000 |
+| 2     | input-one | Z   | 16:52:58.003     | 1773679978003 |
+| 2     | input-two | A   | 16:52:58.002     | 1773679978002 |
+| 2     | input-two | Z   | 16:52:58.001     | 1773679978001 |
+| 3     | input-one | A   | 16:53:18.003     | 1773679998003 |
+| 3     | input-one | Z   | 16:53:18.000     | 1773679998000 |
+| 3     | input-two | A   | 16:53:18.002     | 1773679998002 |
+| 3     | input-two | Z   | 16:53:18.001     | 1773679998001 |
+| 4     | input-one | Z   | 16:53:19.000     | 1773679999000 |
+| 4     | input-one | A   | 16:53:19.003     | 1773679999003 |
+| 4     | input-two | Z   | 16:53:19.002     | 1773679999002 |
+| 4     | input-two | A   | 16:53:19.001     | 1773679999001 |
+| 5     | input-one | Z   | 16:54:10.003     | 1773680050003 |
+| 5     | input-one | A   | 16:54:10.002     | 1773680050002 |
+| 5     | input-two | Z   | 16:54:10.001     | 1773680050001 |
+| 5     | input-two | A   | 16:54:10.000     | 1773680050000 |
+| 6     | input-one | Z   | 17:04:10.000     | 1773680650000 |
+| 6     | input-one | A   | 17:04:10.001     | 1773680650001 |
+| 6     | input-two | Z   | 17:04:10.002     | 1773680650002 |
+| 6     | input-two | A   | 17:04:10.003     | 1773680650003 |
+| 7     | input-two | Z   | 19:50:50.003     | 1773690650003 |
+
+Notice that Batch 2 has **earlier** event-times than Batch 1 — this simulates real-world out-of-order arrival.
+
+### 2. Stream Sorter Behavior
+
+The stream-sorter accumulator buffers incoming events and flushes them **in event-time order** as the watermark advances. Here is a simplified view of how it processes the events:
+
+**Receiving phase** — events arrive in send order (not event-time order):
+```
+Received: 16:53:08.000 (A)  ← Batch 1 arrives first
+Received: 16:53:08.003 (Z)
+Received: 16:53:08.001 (A)
+Received: 16:53:08.002 (Z)
+Received: 16:52:58.000 (A)  ← Batch 2 has earlier times, buffered
+Received: 16:52:58.003 (Z)
+Received: 16:52:58.002 (A)
+Received: 16:52:58.001 (Z)
+...
+```
+
+**Flushing phase** — as the watermark advances past buffered events, they are emitted **sorted**:
+```
+Sent: 16:52:58.000 (A)  ← earliest first
+Sent: 16:52:58.002 (A)
+Sent: 16:53:08.000 (A)
+Sent: 16:53:08.001 (A)
+...later flush...
+Sent: 16:52:58.001 (Z)
+Sent: 16:52:58.003 (Z)
+Sent: 16:53:08.002 (Z)
+Sent: 16:53:08.003 (Z)
+```
+
+Events that arrived out of order (Batch 2 before Batch 1) are now emitted in correct event-time order.
+
+### 3. Sink Output — Ordered Per Key Per Partition
+
+With ordered processing enabled, each key is consistently routed to the same partition, and events within a partition are processed in FIFO order. The sink logs confirm this:
+
+**Partition 0 — Key `Z` (all events in event-time order):**
+
+| Order | Event Time   | Key |
+|-------|--------------|-----|
+| 1     | 16:52:58.001 | Z   |
+| 2     | 16:52:58.003 | Z   |
+| 3     | 16:53:08.002 | Z   |
+| 4     | 16:53:08.003 | Z   |
+| 5     | 16:53:18.000 | Z   |
+| 6     | 16:53:18.001 | Z   |
+| 7     | 16:53:19.000 | Z   |
+| 8     | 16:53:19.002 | Z   |
+| 9     | 16:54:10.001 | Z   |
+| 10    | 16:54:10.003 | Z   |
+
+**Partition 2 — Key `A` (all events in event-time order):**
+
+| Order | Event Time   | Key |
+|-------|--------------|-----|
+| 1     | 16:52:58.000 | A   |
+| 2     | 16:52:58.002 | A   |
+| 3     | 16:53:08.000 | A   |
+| 4     | 16:53:08.001 | A   |
+| 5     | 16:53:18.002 | A   |
+| 6     | 16:53:18.003 | A   |
+| 7     | 16:53:19.001 | A   |
+| 8     | 16:53:19.003 | A   |
+| 9     | 16:54:10.000 | A   |
+| 10    | 16:54:10.002 | A   |
+
+### 4. Key Takeaways
+
+- **Consistent key routing**: Post reduce vertex, all `Z` events land on partition 0; all `A` events land on partition 2. 
+    The key-hash routing is deterministic as well as ordered. This is the spatial order preserving behavior with ordered processing enabled.
+- **Event-time ordering preserved**: Within each partition, event-times are strictly non-decreasing — 
+    the combination of stream-sorter + ordered processing works end-to-end.
+- **Cross-source merging**: Events from both `input-one` and `input-two` are correctly interleaved by event-time, not by arrival order.
+- **Watermark-driven flushing**: The stream-sorter holds events until the watermark advances far enough, 
+    which is why the last few events in a batch may not appear in the sink until a later event (with a sufficiently advanced event-time) 
+    triggers a flush. In this run, the final event at `19:50:50.003` was sent specifically to flush the remaining buffered events.
