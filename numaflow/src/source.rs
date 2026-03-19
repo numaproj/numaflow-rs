@@ -66,7 +66,9 @@ pub trait Sourcer {
     /// Kafka is an example of source where a reader can read from multiple partitions.
     /// If None is returned, Numaflow replica-id will be returned as the partition.
     #[deprecated(since = "0.6.0", note = "Use active_partitions instead")]
-    async fn partitions(&self) -> Option<Vec<i32>>;
+    async fn partitions(&self) -> Option<Vec<i32>> {
+        None
+    }
     /// Returns the *active* partitions associated with the source. This will be used by the platform to determine
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
@@ -539,7 +541,7 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = self.handler.partitions().await.unwrap_or_else(|| {
+        let partitions = self.handler.active_partitions().await.unwrap_or_else(|| {
             vec![
                 std::env::var("NUMAFLOW_REPLICA")
                     .unwrap_or_default()
@@ -826,7 +828,7 @@ mod tests {
             Some(self.yet_to_ack.read().unwrap().len())
         }
 
-        async fn partitions(&self) -> Option<Vec<i32>> {
+        async fn active_partitions(&self) -> Option<Vec<i32>> {
             Some(vec![2])
         }
     }
