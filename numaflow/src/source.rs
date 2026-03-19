@@ -61,11 +61,17 @@ pub trait Sourcer {
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     /// The None value can be returned if source doesn't support detecting the backlog.
     async fn pending(&self) -> Option<usize>;
-    /// Returns the partitions associated with the source. This will be used by the platform to determine
+    /// Returns the active partitions associated with the source. This will be used by the platform to determine
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
     /// If None is returned, Numaflow replica-id will be returned as the partition.
     async fn partitions(&self) -> Option<Vec<i32>>;
+    /// Returns the total number of partitions in the source. This is used by the platform for
+    /// watermark progression to know when all processors have reported in.
+    /// If None is returned, the platform will not use total partitions for watermark tracking.
+    async fn total_partitions(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// A request from the gRPC client (numaflow) to the user's [`Sourcer::read`].
@@ -529,8 +535,12 @@ where
                     .unwrap_or_default(),
             ]
         });
+        let total_partitions = self.handler.total_partitions().await;
         Ok(Response::new(proto::PartitionsResponse {
-            result: Some(proto::partitions_response::Result { partitions }),
+            result: Some(proto::partitions_response::Result {
+                partitions,
+                total_partitions,
+            }),
         }))
     }
 
