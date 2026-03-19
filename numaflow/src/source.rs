@@ -78,6 +78,7 @@ pub trait Sourcer {
     ///       New implementations should override this method instead of [`Sourcer::partitions`].
     async fn active_partitions(&self) -> Option<Vec<i32>> {
         // Fall back to deprecated partitions() for backward compatibility
+        #[allow(deprecated)]
         self.partitions().await
     }
     /// Returns the total number of partitions in the source. This is used by the platform for
