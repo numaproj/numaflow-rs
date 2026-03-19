@@ -61,11 +61,23 @@ pub trait Sourcer {
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     /// The None value can be returned if source doesn't support detecting the backlog.
     async fn pending(&self) -> Option<usize>;
-    /// Returns the active partitions associated with the source. This will be used by the platform to determine
+    /// Returns the partitions associated with the source. This will be used by the platform to determine
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
     /// If None is returned, Numaflow replica-id will be returned as the partition.
+    #[deprecated(since = "0.6.0", note = "Use active_partitions instead")]
     async fn partitions(&self) -> Option<Vec<i32>>;
+    /// Returns the *active* partitions associated with the source. This will be used by the platform to determine
+    /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
+    /// Kafka is an example of source where a reader can read from multiple partitions.
+    /// If None is returned, Numaflow replica-id will be returned as the partition.
+    ///
+    /// Note: For backward compatibility, if this method is not overridden, it will fall back to [`Sourcer::partitions`].
+    ///       New implementations should override this method instead of [`Sourcer::partitions`].
+    async fn active_partitions(&self) -> Option<Vec<i32>> {
+        // Fall back to deprecated partitions() for backward compatibility
+        self.partitions().await
+    }
     /// Returns the total number of partitions in the source. This is used by the platform for
     /// watermark progression to know when all processors have reported in.
     /// If None is returned, the platform will not use total partitions for watermark tracking.
