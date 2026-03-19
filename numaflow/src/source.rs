@@ -829,7 +829,7 @@ mod tests {
             Some(self.yet_to_ack.read().unwrap().len())
         }
 
-        async fn active_partitions(&self) -> Option<Vec<i32>> {
+        async fn partitions(&self) -> Option<Vec<i32>> {
             Some(vec![2])
         }
     }
