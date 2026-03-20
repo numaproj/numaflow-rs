@@ -16,7 +16,7 @@ test-fmt:
 
 .PHONY: clippy
 clippy:
-	cargo clippy --workspace -- -D warnings -A clippy::module_inception
+	cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::module_inception
 
 # run cargo test on the repository root
 .PHONY: test

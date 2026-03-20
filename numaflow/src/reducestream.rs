@@ -926,7 +926,7 @@ mod tests {
         assert_eq!(responses.len(), 6);
 
         // Verify the streaming sums
-        let expected_sums = vec![1, 3, 6, 10, 15];
+        let expected_sums = [1, 3, 6, 10, 15];
         for (i, response) in responses.iter().take(5).enumerate() {
             if let Some(result) = response.result.as_ref() {
                 let value = std::str::from_utf8(&result.value)
