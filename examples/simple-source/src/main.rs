@@ -195,6 +195,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_simple_source_partitions() {
         let source = SimpleSource::new();
 
