@@ -65,7 +65,28 @@ pub trait Sourcer {
     /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
     /// Kafka is an example of source where a reader can read from multiple partitions.
     /// If None is returned, Numaflow replica-id will be returned as the partition.
-    async fn partitions(&self) -> Option<Vec<i32>>;
+    #[deprecated(since = "0.6.0", note = "Use active_partitions instead")]
+    async fn partitions(&self) -> Option<Vec<i32>> {
+        None
+    }
+    /// Returns the *active* partitions associated with the source. This will be used by the platform to determine
+    /// the partitions to which the watermark should be published. Some sources might not have the concept of partitions.
+    /// Kafka is an example of source where a reader can read from multiple partitions.
+    /// If None is returned, Numaflow replica-id will be returned as the partition.
+    ///
+    /// Note: For backward compatibility, if this method is not overridden, it will fall back to [`Sourcer::partitions`].
+    ///       New implementations should override this method instead of [`Sourcer::partitions`].
+    async fn active_partitions(&self) -> Option<Vec<i32>> {
+        // Fall back to deprecated partitions() for backward compatibility
+        #[allow(deprecated)]
+        self.partitions().await
+    }
+    /// Returns the total number of partitions in the source. This is used by the platform for
+    /// watermark progression to know when all processors have reported in.
+    /// If None is returned, the platform will not use total partitions for watermark tracking.
+    async fn total_partitions(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// A request from the gRPC client (numaflow) to the user's [`Sourcer::read`].
@@ -521,7 +542,7 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<proto::PartitionsResponse>, Status> {
-        let partitions = self.handler.partitions().await.unwrap_or_else(|| {
+        let partitions = self.handler.active_partitions().await.unwrap_or_else(|| {
             vec![
                 std::env::var("NUMAFLOW_REPLICA")
                     .unwrap_or_default()
@@ -529,8 +550,12 @@ where
                     .unwrap_or_default(),
             ]
         });
+        let total_partitions = self.handler.total_partitions().await;
         Ok(Response::new(proto::PartitionsResponse {
-            result: Some(proto::partitions_response::Result { partitions }),
+            result: Some(proto::partitions_response::Result {
+                partitions,
+                total_partitions,
+            }),
         }))
     }
 
@@ -838,15 +863,16 @@ mod tests {
             }
         }
 
-        /// Start a test source server with the given repeater and return client handle
-        pub async fn start_test_server(
-            repeater: Repeater,
-        ) -> Result<TestServerHandle, Box<dyn Error>> {
+        /// Start a test source server with the given sourcer and return client handle
+        pub async fn start_test_server<T>(sourcer: T) -> Result<TestServerHandle, Box<dyn Error>>
+        where
+            T: source::Sourcer + Send + Sync + 'static,
+        {
             let tmp_dir = TempDir::new()?;
             let sock_file = tmp_dir.path().join("source.sock");
             let server_info_file = tmp_dir.path().join("sourcer-server-info");
 
-            let server = source::Server::new(repeater)
+            let server = source::Server::new(sourcer)
                 .with_server_info_file(&server_info_file)
                 .with_socket_file(&sock_file)
                 .with_max_message_size(10240);
@@ -1108,6 +1134,114 @@ mod tests {
         );
 
         // Cleanup
+        handle.shutdown().await?;
+        Ok(())
+    }
+
+    /// A test source that uses the new `active_partitions` and `total_partitions` methods
+    /// instead of the deprecated `partitions` method.
+    #[derive(Debug)]
+    struct ModernSource {
+        yet_to_ack: std::sync::RwLock<HashSet<String>>,
+    }
+
+    impl ModernSource {
+        fn new() -> Self {
+            Self {
+                yet_to_ack: std::sync::RwLock::new(HashSet::new()),
+            }
+        }
+    }
+
+    #[tonic::async_trait]
+    impl source::Sourcer for ModernSource {
+        async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
+            let event_time = Utc::now();
+            for i in 0..request.count {
+                let offset = format!("{}-{}", event_time.timestamp_nanos_opt().unwrap(), i);
+                transmitter
+                    .send(Message {
+                        value: b"modern".to_vec(),
+                        event_time,
+                        offset: Offset {
+                            offset: offset.clone().into_bytes(),
+                            partition_id: 0,
+                        },
+                        keys: vec![],
+                        headers: HashMap::new(),
+                        user_metadata: None,
+                    })
+                    .await
+                    .expect("Failed to send message");
+                self.yet_to_ack.write().unwrap().insert(offset);
+            }
+        }
+
+        async fn ack(&self, offsets: Vec<Offset>) {
+            let mut pending = self.yet_to_ack.write().unwrap();
+            for offset in offsets {
+                pending.remove(&String::from_utf8(offset.offset).unwrap());
+            }
+        }
+
+        async fn nack(&self, _offsets: Vec<Offset>) {}
+
+        async fn pending(&self) -> Option<usize> {
+            Some(self.yet_to_ack.read().unwrap().len())
+        }
+
+        // Does NOT override partitions() — uses active_partitions() directly
+        async fn active_partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![3, 5])
+        }
+
+        async fn total_partitions(&self) -> Option<i32> {
+            Some(10)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_source_active_partitions_and_total_partitions() -> Result<(), Box<dyn Error>> {
+        let source = ModernSource::new();
+        let mut handle = test_utils::start_test_server(source).await?;
+
+        let partitions_response = handle.client.partitions_fn(Request::new(())).await?;
+        let result = partitions_response.into_inner().result.unwrap();
+
+        assert_eq!(
+            result.partitions,
+            vec![3, 5],
+            "Should return active partitions [3, 5]"
+        );
+        assert_eq!(
+            result.total_partitions,
+            Some(10),
+            "Should return total_partitions = 10"
+        );
+
+        handle.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_source_default_total_partitions_is_none() -> Result<(), Box<dyn Error>> {
+        // Repeater overrides partitions() but not total_partitions()
+        let repeater = Repeater::new(1);
+        let mut handle = test_utils::start_test_server(repeater).await?;
+
+        let partitions_response = handle.client.partitions_fn(Request::new(())).await?;
+        let result = partitions_response.into_inner().result.unwrap();
+
+        assert_eq!(
+            result.partitions,
+            vec![2],
+            "Should return partitions [2] via deprecated fallback"
+        );
+        assert_eq!(
+            result.total_partitions, None,
+            "Should return None for total_partitions when not overridden"
+        );
+
         handle.shutdown().await?;
         Ok(())
     }
