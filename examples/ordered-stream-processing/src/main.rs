@@ -4,18 +4,16 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use redis::{AsyncCommands, RedisResult};
 use tonic::async_trait;
 use tracing::{error, info, warn};
 
 /// Tracks which replica processes each key by writing `key → replica_id` mappings to a Redis HASH.
-/// Uses `HSETNX` (set-if-not-exists) so only the first replica to claim a key wins.
 /// If a key is already claimed by a different replica, it indicates a routing violation.
 struct KeyPartitionTracker {
     connection: redis::aio::MultiplexedConnection,
     replica_id: String,
     hash_key: String,
-    /// Local cache of keys already registered by this replica, to avoid redundant Redis calls.
-    locally_registered: Mutex<HashSet<String>>,
 }
 
 impl KeyPartitionTracker {
@@ -30,94 +28,23 @@ impl KeyPartitionTracker {
             connection,
             replica_id,
             hash_key,
-            locally_registered: Mutex::new(HashSet::new()),
         })
     }
 
     /// Register a key for this replica. Returns `true` if the key belongs to this replica,
     /// `false` if another replica already claimed it (routing violation).
     async fn register_key(&self, key: &str) -> Result<bool, redis::RedisError> {
-        // Fast path: already registered locally
-        {
-            let local = self.locally_registered.lock().unwrap();
-            if local.contains(key) {
-                return Ok(true);
+        let existing: Option<String> = self.connection.clone().hget(&self.hash_key, key).await?;
+
+        println!("existing: {:?}", existing);
+
+        match existing {
+            Some(replica_id) => Ok(replica_id == self.replica_id),
+            None => {
+                let result: RedisResult<bool> = self.connection.clone().hset(&self.hash_key, key, self.replica_id.clone()).await;
+                println!("result: {:?}", result);
+                Ok(true)
             }
-        }
-
-        let mut conn = self.connection.clone();
-
-        // HSETNX returns true if the field was set (new), false if it already existed
-        let was_set: bool = redis::cmd("HSETNX")
-            .arg(&self.hash_key)
-            .arg(key)
-            .arg(&self.replica_id)
-            .query_async(&mut conn)
-            .await?;
-
-        if was_set {
-            self.locally_registered
-                .lock()
-                .unwrap()
-                .insert(key.to_string());
-            return Ok(true);
-        }
-
-        // Key already exists — check if it belongs to this replica
-        let existing: String = redis::cmd("HGET")
-            .arg(&self.hash_key)
-            .arg(key)
-            .query_async(&mut conn)
-            .await?;
-
-        if existing == self.replica_id {
-            self.locally_registered
-                .lock()
-                .unwrap()
-                .insert(key.to_string());
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Periodic check: log key distribution summary across replicas.
-    async fn check_all_keys(&self) {
-        let mut conn = self.connection.clone();
-
-        let all: HashMap<String, String> = match redis::cmd("HGETALL")
-            .arg(&self.hash_key)
-            .query_async(&mut conn)
-            .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch key partition map from Redis");
-                return;
-            }
-        };
-
-        // Invert: replica_id → list of keys
-        let mut replica_keys: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (key, replica) in &all {
-            replica_keys
-                .entry(replica.as_str())
-                .or_default()
-                .push(key.as_str());
-        }
-
-        info!(
-            total_keys = all.len(),
-            replicas = replica_keys.len(),
-            "Key partition tracking summary"
-        );
-
-        for (replica, keys) in &replica_keys {
-            info!(
-                replica = %replica,
-                key_count = keys.len(),
-                "Replica key distribution"
-            );
         }
     }
 }
@@ -255,14 +182,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(30);
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
-            loop {
-                interval.tick().await;
-                tracker.check_all_keys().await;
-            }
-        });
     }
 
     map::Server::new(checker).start().await
