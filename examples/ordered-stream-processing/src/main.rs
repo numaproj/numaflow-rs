@@ -30,18 +30,21 @@ impl KeyPartitionTracker {
         })
     }
 
-    /// Register a key for this replica. Returns `true` if the key belongs to this replica,
+    /// Check a key for this replica. Returns `true` if the key belongs to this replica,
     /// `false` if another replica already claimed it (routing violation).
     async fn check_key(&self, key: &str) -> Result<bool, redis::RedisError> {
-        let existing: Option<String> = self.connection.clone().hget(&self.hash_key, key).await?;
+        let prev_val: Option<String> = self
+            .connection
+            .clone()
+            .getset(
+                format!("{}-{}", &self.hash_key, key),
+                self.replica_id.clone(),
+            )
+            .await?;
 
-        match existing {
+        match prev_val {
             Some(replica_id) => Ok(replica_id == self.replica_id),
-            None => Ok(self
-                .connection
-                .clone()
-                .hset(&self.hash_key, key, self.replica_id.clone())
-                .await?),
+            None => Ok(true),
         }
     }
 }
@@ -68,7 +71,7 @@ impl OrderChecker {
             let redis_url =
                 env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
             let replica_id = env::var("NUMAFLOW_REPLICA").unwrap_or_else(|_| "unknown".to_string());
-            let hash_key = env::var("KEY_TRACKING_HASH")
+            let hash_key = env::var("NUMAFLOW_PIPELINE_NAME")
                 .unwrap_or_else(|_| "numaflow:key_partition_map".to_string());
 
             match KeyPartitionTracker::new(&redis_url, replica_id.clone(), hash_key).await {
