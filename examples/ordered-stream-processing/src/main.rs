@@ -1,10 +1,9 @@
 use chrono::{DateTime, Utc};
 use numaflow::map;
-use redis::{AsyncCommands, RedisResult};
-use std::collections::{HashMap, HashSet};
+use redis::AsyncCommands;
+use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tonic::async_trait;
 use tracing::{error, info, warn};
 
@@ -173,14 +172,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting order-checker map server");
 
     let checker = OrderChecker::new().await;
-
-    // Spawn periodic key distribution check if tracking is enabled
-    if let Some(tracker) = checker.key_tracker.clone() {
-        let interval_secs: u64 = env::var("KEY_TRACKING_CHECK_INTERVAL_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(30);
-    }
 
     map::Server::new(checker).start().await
 }
