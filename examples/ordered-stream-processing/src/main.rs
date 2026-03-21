@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use numaflow::map;
+use redis::{AsyncCommands, RedisResult};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use redis::{AsyncCommands, RedisResult};
 use tonic::async_trait;
 use tracing::{error, info, warn};
 
@@ -33,18 +33,16 @@ impl KeyPartitionTracker {
 
     /// Register a key for this replica. Returns `true` if the key belongs to this replica,
     /// `false` if another replica already claimed it (routing violation).
-    async fn register_key(&self, key: &str) -> Result<bool, redis::RedisError> {
+    async fn check_key(&self, key: &str) -> Result<bool, redis::RedisError> {
         let existing: Option<String> = self.connection.clone().hget(&self.hash_key, key).await?;
-
-        println!("existing: {:?}", existing);
 
         match existing {
             Some(replica_id) => Ok(replica_id == self.replica_id),
-            None => {
-                let result: RedisResult<bool> = self.connection.clone().hset(&self.hash_key, key, self.replica_id.clone()).await;
-                println!("result: {:?}", result);
-                Ok(true)
-            }
+            None => Ok(self
+                .connection
+                .clone()
+                .hset(&self.hash_key, key, self.replica_id.clone())
+                .await?),
         }
     }
 }
@@ -149,7 +147,7 @@ impl map::Mapper for OrderChecker {
         // Key-partition tracking (optional)
         if let Some(tracker) = &self.key_tracker {
             let key_str = keys.join(":");
-            match tracker.register_key(&key_str).await {
+            match tracker.check_key(&key_str).await {
                 Ok(true) => {} // correctly assigned to this replica
                 Ok(false) => {
                     error!(
