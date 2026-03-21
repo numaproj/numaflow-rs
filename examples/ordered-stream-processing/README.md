@@ -79,7 +79,6 @@ A background task periodically logs a summary of key distribution across replica
 |------------------------------------|------------------------------|-------------------------------------------------------------------|
 | `ENABLE_KEY_TRACKING`              | (disabled)                   | Set to `"true"` to enable Redis-based key tracking                |
 | `REDIS_URL`                        | `redis://redis:6379`         | Redis connection URL                                              |
-| `KEY_TRACKING_HASH`                | `numaflow:key_partition_map` | Redis HASH key name                                               |
 | `NUMAFLOW_REPLICA`                 | `"unknown"`                  | Replica identifier (set automatically by Numaflow)                |
 
 ### What to Look For in Logs
