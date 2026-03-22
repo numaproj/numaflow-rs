@@ -66,12 +66,12 @@ The order-checker can optionally track which replica processes each message key 
 
 ### How It Works
 
-When enabled, the order-checker uses a Redis HASH (`numaflow:key_partition_map`) where each field is a serialized message key and the value is the replica ID that first claimed it. On the first encounter of each key, it uses `HSETNX` (atomic set-if-not-exists):
+When enabled, the order-checker stores a Redis key per message key (prefixed with the pipeline name) whose value is the replica ID. Each call uses `GETSET` to atomically write the current replica and read back the previous value:
 
-- If the key is new, it is claimed by the current replica
-- If the key already exists and belongs to a different replica, a `KEY ROUTING VIOLATION` error is logged
+- If the key is new (no previous value), the current replica claims it
+- If the previous value belongs to a different replica, a `KEY ROUTING VIOLATION` error is logged
 
-A background task periodically logs a summary of key distribution across replicas.
+Since `GETSET` always overwrites, the last writer wins — but this is fine because we only need to detect that multiple replicas are seeing the same key, not preserve who claimed it first.
 
 ### Environment Variables
 
@@ -84,8 +84,6 @@ A background task periodically logs a summary of key distribution across replica
 ### What to Look For in Logs
 
 - `"Key-partition tracking enabled"` — confirms tracking is active
-- `"Key partition tracking summary"` — periodic summary showing total keys and replica count
-- `"Replica key distribution"` — per-replica key count breakdown
 - Absence of `"KEY ROUTING VIOLATION"` — proves consistent key-to-partition routing
 
 ## Example Run Walkthrough

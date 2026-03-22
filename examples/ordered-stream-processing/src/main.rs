@@ -32,6 +32,11 @@ impl KeyPartitionTracker {
 
     /// Check a key for this replica. Returns `true` if the key belongs to this replica,
     /// `false` if another replica already claimed it (routing violation).
+    ///
+    /// Uses `GETSET` which always overwrites the previous value. This is acceptable because
+    /// we don't know whether the existing claim or the new one is "correct" — all we need
+    /// to detect is that more than one replica is seeing the same key, which constitutes a
+    /// routing violation regardless of who wrote last.
     async fn check_key(&self, key: &str) -> Result<bool, redis::RedisError> {
         let prev_val: Option<String> = self
             .connection
