@@ -13,7 +13,7 @@ watermark advances. It answers: *"Given events that arrived in arbitrary order, 
 ### Spatial Ordering (Ordered Processing)
 
 Even after events are temporally sorted, they can become spatially disordered when a downstream vertex has multiple partitions. 
-By default, Numaflow distributes messages across partitions for throughput, and each partition processes independently — 
+By default, Numaflow distributes messages across partitions for throughput, and each partition processes independently -- 
 so two messages emitted in order by the sorter may be processed out of order if they land on different partitions that run at different speeds.
 
 **Ordered processing** (`spec.ordered.enabled: true`) solves this by enforcing partitioned FIFO semantics: messages are 
@@ -33,9 +33,9 @@ through all downstream vertices (spatial).
 ## Pipeline Architecture
 
 ```
-input-one (HTTP) ──┐
-                    ├──► sorter (accumulator) ──► order-checker (map, 3 partitions) ──► out (log sink, 3 partitions)
-input-two (HTTP) ──┘
+input-one (HTTP) ---\
+                     +--> sorter (accumulator) --> order-checker (map, 3 partitions) --> out (log sink, 3 partitions)
+input-two (HTTP) ---/
 ```
 
 - **input-one, input-two**: HTTP sources. Send events with custom event-times using the `x-numaflow-event-time` header 
@@ -72,7 +72,7 @@ If ordering were broken, you would see `"Order violation detected"` warnings in 
 
 ## Key-Partition Tracking (Optional)
 
-The order-checker can optionally track which replica processes each message key using Redis. This proves that Numaflow's key-hash routing is consistent — every message with a given key always lands on the same partition/replica.
+The order-checker can optionally track which replica processes each message key using Redis. This proves that Numaflow's key-hash routing is consistent -- every message with a given key always lands on the same partition/replica.
 
 ### How It Works
 
@@ -81,7 +81,7 @@ When enabled, the order-checker stores a Redis key per message key (prefixed wit
 - If the key is new (no previous value), the current replica claims it
 - If the previous value belongs to a different replica, a `KEY ROUTING VIOLATION` error is logged
 
-Since `GETSET` always overwrites, the last writer wins — but this is fine because we only need to detect that multiple replicas are seeing the same key, not preserve who claimed it first.
+Since `GETSET` always overwrites, the last writer wins -- but this is fine because we only need to detect that multiple replicas are seeing the same key, not preserve who claimed it first.
 
 ### Environment Variables
 
@@ -93,8 +93,8 @@ Since `GETSET` always overwrites, the last writer wins — but this is fine beca
 
 ### What to Look For in Logs
 
-- `"Key-partition tracking enabled"` — confirms tracking is active
-- Absence of `"KEY ROUTING VIOLATION"` — proves consistent key-to-partition routing
+- `"Key-partition tracking enabled"` -- confirms tracking is active
+- Absence of `"KEY ROUTING VIOLATION"` -- proves consistent key-to-partition routing
 
 ## Example Run Walkthrough
 
@@ -104,7 +104,7 @@ Below is a concrete example showing how events sent **out of order** across two 
 
 ### 1. Events Sent
 
-25 events are sent in 7 batches across `input-one` (port 8444) and `input-two` (port 8445). Each event carries a key (`A` or `Z`) and an event-time. Events are intentionally sent **out of temporal order** — for example, events at `16:53:08` are sent before events at `16:52:58`.
+25 events are sent in 7 batches across `input-one` (port 8444) and `input-two` (port 8445). Each event carries a key (`A` or `Z`) and an event-time. Events are intentionally sent **out of temporal order** -- for example, events at `16:53:08` are sent before events at `16:52:58`.
 
 | Batch | Source    | Key | Event Time (UTC) | Epoch (ms)    |
 |-------|-----------|-----|------------------|---------------|
@@ -134,28 +134,28 @@ Below is a concrete example showing how events sent **out of order** across two 
 | 6     | input-two | A   | 17:04:10.003     | 1773680650003 |
 | 7     | input-two | Z   | 19:50:50.003     | 1773690650003 |
 
-Notice that Batch 2 has **earlier** event-times than Batch 1 — this simulates real-world out-of-order arrival.
+Notice that Batch 2 has **earlier** event-times than Batch 1 -- this simulates real-world out-of-order arrival.
 
 ### 2. Stream Sorter Behavior
 
 The stream-sorter accumulator buffers incoming events and flushes them **in event-time order** as the watermark advances. Here is a simplified view of how it processes the events:
 
-**Receiving phase** — events arrive in send order (not event-time order):
+**Receiving phase** -- events arrive in send order (not event-time order):
 ```
-Received: 16:53:08.000 (A)  ← Batch 1 arrives first
+Received: 16:53:08.000 (A)  <-- Batch 1 arrives first
 Received: 16:53:08.003 (Z)
 Received: 16:53:08.001 (A)
 Received: 16:53:08.002 (Z)
-Received: 16:52:58.000 (A)  ← Batch 2 has earlier times, buffered
+Received: 16:52:58.000 (A)  <-- Batch 2 has earlier times, buffered
 Received: 16:52:58.003 (Z)
 Received: 16:52:58.002 (A)
 Received: 16:52:58.001 (Z)
 ...
 ```
 
-**Flushing phase** — as the watermark advances past buffered events, they are emitted **sorted**:
+**Flushing phase** -- as the watermark advances past buffered events, they are emitted **sorted**:
 ```
-Sent: 16:52:58.000 (A)  ← earliest first
+Sent: 16:52:58.000 (A)  <-- earliest first
 Sent: 16:52:58.002 (A)
 Sent: 16:53:08.000 (A)
 Sent: 16:53:08.001 (A)
@@ -168,11 +168,11 @@ Sent: 16:53:08.003 (Z)
 
 Events that arrived out of order (Batch 2 before Batch 1) are now emitted in correct event-time order.
 
-### 3. Sink Output — Ordered Per Key Per Partition
+### 3. Sink Output -- Ordered Per Key Per Partition
 
 With ordered processing enabled, each key is consistently routed to the same partition, and events within a partition are processed in FIFO order. The sink logs confirm this:
 
-**Partition 0 — Key `Z` (all events in event-time order):**
+**Partition 0 -- Key `Z` (all events in event-time order):**
 
 | Order | Event Time   | Key |
 |-------|--------------|-----|
@@ -187,7 +187,7 @@ With ordered processing enabled, each key is consistently routed to the same par
 | 9     | 16:54:10.001 | Z   |
 | 10    | 16:54:10.003 | Z   |
 
-**Partition 2 — Key `A` (all events in event-time order):**
+**Partition 2 -- Key `A` (all events in event-time order):**
 
 | Order | Event Time   | Key |
 |-------|--------------|-----|
@@ -206,7 +206,7 @@ With ordered processing enabled, each key is consistently routed to the same par
 
 - **Consistent key routing**: Post reduce vertex, all `Z` events land on partition 0; all `A` events land on partition 2. 
     The key-hash routing is deterministic as well as ordered. This is the spatial order preserving behavior with ordered processing enabled.
-- **Event-time ordering preserved**: Within each partition, event-times are strictly non-decreasing — 
+- **Event-time ordering preserved**: Within each partition, event-times are strictly non-decreasing -- 
     the combination of stream-sorter + ordered processing works end-to-end.
 - **Cross-source merging**: Events from both `input-one` and `input-two` are correctly interleaved by event-time, not by arrival order.
 - **Watermark-driven flushing**: The stream-sorter holds events until the watermark advances far enough, 
