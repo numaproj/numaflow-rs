@@ -45,6 +45,16 @@ input-two (HTTP) ──┘
 non-decreasing order. This is where you can observe the effect of ordered processing.
 - **out**: A log sink.
 
+## Deploying
+
+```bash
+# Deploy Redis (needed for key-partition tracking)
+kubectl apply -f manifests/redis-minimal.yaml
+
+# Deploy the pipeline
+kubectl apply -f manifests/ordered-stream-processing-pipeline.yaml
+```
+
 ## Sending Test Data
 
 Once the pipeline is running, send events with explicit event-times to either HTTP source:
