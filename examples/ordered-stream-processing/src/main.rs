@@ -7,26 +7,26 @@ use std::sync::{Arc, Mutex};
 use tonic::async_trait;
 use tracing::{error, info, warn};
 
-/// Tracks which replica processes each key by writing `key → replica_id` mappings to a Redis HASH.
+/// Tracks which replica processes each key by writing `key -> replica_id` mappings to Redis string keys.
 /// If a key is already claimed by a different replica, it indicates a routing violation.
 struct KeyPartitionTracker {
     connection: redis::aio::MultiplexedConnection,
     replica_id: String,
-    hash_key: String,
+    key_prefix: String,
 }
 
 impl KeyPartitionTracker {
     async fn new(
         redis_url: &str,
         replica_id: String,
-        hash_key: String,
+        key_prefix: String,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let client = redis::Client::open(redis_url)?;
         let connection = client.get_multiplexed_async_connection().await?;
         Ok(Self {
             connection,
             replica_id,
-            hash_key,
+            key_prefix,
         })
     }
 
@@ -34,7 +34,7 @@ impl KeyPartitionTracker {
     /// `false` if another replica already claimed it (routing violation).
     ///
     /// Uses `GETSET` which always overwrites the previous value. This is acceptable because
-    /// we don't know whether the existing claim or the new one is "correct" — all we need
+    /// we don't know whether the existing claim or the new one is "correct" -- all we need
     /// to detect is that more than one replica is seeing the same key, which constitutes a
     /// routing violation regardless of who wrote last.
     async fn check_key(&self, key: &str) -> Result<bool, redis::RedisError> {
@@ -42,7 +42,7 @@ impl KeyPartitionTracker {
             .connection
             .clone()
             .getset(
-                format!("{}-{}", &self.hash_key, key),
+                format!("{}-{}", &self.key_prefix, key),
                 self.replica_id.clone(),
             )
             .await?;
@@ -76,10 +76,10 @@ impl OrderChecker {
             let redis_url =
                 env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
             let replica_id = env::var("NUMAFLOW_REPLICA").unwrap_or_else(|_| "unknown".to_string());
-            let hash_key = env::var("NUMAFLOW_PIPELINE_NAME")
+            let key_prefix = env::var("NUMAFLOW_PIPELINE_NAME")
                 .unwrap_or_else(|_| "numaflow:key_partition_map".to_string());
 
-            match KeyPartitionTracker::new(&redis_url, replica_id.clone(), hash_key).await {
+            match KeyPartitionTracker::new(&redis_url, replica_id.clone(), key_prefix).await {
                 Ok(tracker) => {
                     info!(
                         replica = %replica_id,
