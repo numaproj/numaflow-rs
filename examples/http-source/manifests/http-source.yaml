@@ -1,0 +1,12 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: MonoVertex
+metadata:
+  name: http-source
+spec:
+  source:
+    udsource:
+      container:
+        image: quay.io/numaio/numaflow-rs/http-source:stable
+        imagePullPolicy: IfNotPresent
+  sink:
+    log: {}
