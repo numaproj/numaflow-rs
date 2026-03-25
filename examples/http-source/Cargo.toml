@@ -1,0 +1,22 @@
+[package]
+name = "http-source"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tonic.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+numaflow = { path = "../../numaflow" }
+chrono.workspace = true
+uuid = { workspace = true, features = ["v7"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum = "0.8"
+bytes = "1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
