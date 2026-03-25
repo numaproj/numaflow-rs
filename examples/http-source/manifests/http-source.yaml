@@ -6,6 +6,9 @@ spec:
   source:
     udsource:
       container:
+        env:
+          - name: HTTP_SOURCE_PORT
+            value: "8080"
         image: quay.io/numaio/numaflow-rs/http-source:stable
         imagePullPolicy: IfNotPresent
   sink:
