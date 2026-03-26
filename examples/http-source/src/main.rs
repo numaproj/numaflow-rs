@@ -119,6 +119,10 @@ impl numaflow::source::Sourcer for HttpSource {
         request: numaflow::source::SourceReadRequest,
         transmitter: tokio::sync::mpsc::Sender<numaflow::source::Message>,
     ) {
+        info!(
+            requested_count = request.count,
+            "read: waiting for messages"
+        );
         let mut rx = self.rx.lock().await;
         let mut count = 0usize;
 
@@ -128,10 +132,14 @@ impl numaflow::source::Sourcer for HttpSource {
         loop {
             tokio::select! {
                 biased;
-                _ = &mut timeout => break,
+                _ = &mut timeout => {
+                    info!(count, "read: timeout reached, returning buffered messages");
+                    break;
+                }
                 msg = rx.recv() => {
                     match msg {
                         Some(http_msg) => {
+                            info!(id = %http_msg.id, "read: received message from HTTP server");
                             let source_msg = numaflow::source::Message {
                                 value: http_msg.body.to_vec(),
                                 event_time: http_msg.event_time,
@@ -144,14 +152,19 @@ impl numaflow::source::Sourcer for HttpSource {
                                 user_metadata: None,
                             };
                             if transmitter.send(source_msg).await.is_err() {
+                                info!("read: transmitter closed, stopping");
                                 break;
                             }
                             count += 1;
                             if count >= request.count {
+                                info!(count, "read: reached requested count");
                                 break;
                             }
                         }
-                        None => break, // channel closed
+                        None => {
+                            info!("read: channel closed, no more messages");
+                            break;
+                        }
                     }
                 }
             }
@@ -159,32 +172,43 @@ impl numaflow::source::Sourcer for HttpSource {
     }
 
     async fn ack(&self, offsets: Vec<numaflow::source::Offset>) {
+        info!(count = offsets.len(), "ack: acknowledging messages");
         let mut inflight = self.inflight_requests.lock().await;
         for offset in offsets {
             let id = String::from_utf8(offset.offset).unwrap();
             if let Some(response_tx) = inflight.remove(&id) {
+                info!(%id, "ack: sending OK response to HTTP client");
                 let _ = response_tx.send(StatusCode::OK);
+            } else {
+                warn!(%id, "ack: no inflight request found for offset");
             }
         }
     }
 
     async fn nack(&self, offsets: Vec<numaflow::source::Offset>) {
+        info!(
+            count = offsets.len(),
+            "nack: negatively acknowledging messages"
+        );
         let mut inflight = self.inflight_requests.lock().await;
         for offset in offsets {
             let id = String::from_utf8(offset.offset).unwrap();
             if let Some(response_tx) = inflight.remove(&id) {
+                info!(%id, "nack: sending error response to HTTP client");
                 let _ = response_tx.send(StatusCode::INTERNAL_SERVER_ERROR);
+            } else {
+                warn!(%id, "nack: no inflight request found for offset");
             }
         }
     }
 
     async fn pending(&self) -> Option<usize> {
-        // HTTP sources don't support pending count — returning None
-        // avoids misleading the autoscaler.
+        info!("pending: called, returning None (not supported for HTTP sources)");
         None
     }
 
     async fn partitions(&self) -> Option<Vec<i32>> {
+        info!("partitions: returning [0]");
         Some(vec![0])
     }
 }
@@ -200,6 +224,11 @@ async fn data_handler(
     mut headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
+    info!(
+        body_size = body.len(),
+        "data_handler: received POST request"
+    );
+
     // Extract or generate message ID.
     let id = match headers.get(NUMAFLOW_ID_HEADER) {
         Some(val) => match val.to_str() {
@@ -246,6 +275,8 @@ async fn data_handler(
         }
     }
 
+    info!(%id, ?event_time, ?keys, "data_handler: parsed message metadata");
+
     // Create oneshot for the ack/nack response.
     let (response_tx, response_rx) = oneshot::channel();
 
@@ -253,6 +284,7 @@ async fn data_handler(
     {
         let mut inflight = state.inflight_requests.lock().await;
         if inflight.contains_key(&id) {
+            warn!(%id, "data_handler: duplicate inflight request ID");
             return (
                 StatusCode::CONFLICT,
                 axum::Json(serde_json::json!({ "error": "Duplicate request ID", "id": id })),
@@ -272,12 +304,16 @@ async fn data_handler(
     };
 
     match state.tx.try_send(message) {
-        Ok(()) => {}
+        Ok(()) => {
+            info!(%id, "data_handler: message enqueued, waiting for ack/nack");
+        }
         Err(mpsc::error::TrySendError::Full(_)) => {
+            warn!(%id, "data_handler: buffer full, rejecting with 429");
             state.inflight_requests.lock().await.remove(&id);
             return (StatusCode::TOO_MANY_REQUESTS, "Buffer full").into_response();
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
+            warn!(%id, "data_handler: channel closed, rejecting with 500");
             state.inflight_requests.lock().await.remove(&id);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Channel closed").into_response();
         }
@@ -285,18 +321,26 @@ async fn data_handler(
 
     // Block until the pipeline acks or nacks.
     match response_rx.await {
-        Ok(StatusCode::OK) => (
-            StatusCode::OK,
-            axum::Json(serde_json::json!({ "message": "Data received successfully", "id": id })),
-        )
-            .into_response(),
-        Ok(status) => (
-            status,
-            axum::Json(serde_json::json!({ "error": "Request processing failed", "id": id })),
-        )
-            .into_response(),
+        Ok(StatusCode::OK) => {
+            info!(%id, "data_handler: message acknowledged, responding 200");
+            (
+                StatusCode::OK,
+                axum::Json(
+                    serde_json::json!({ "message": "Data received successfully", "id": id }),
+                ),
+            )
+                .into_response()
+        }
+        Ok(status) => {
+            info!(%id, %status, "data_handler: message nacked, responding with error status");
+            (
+                status,
+                axum::Json(serde_json::json!({ "error": "Request processing failed", "id": id })),
+            )
+                .into_response()
+        }
         Err(_) => {
-            warn!(%id, "Response channel dropped — likely shutting down");
+            warn!(%id, "data_handler: response channel dropped — likely shutting down");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(
