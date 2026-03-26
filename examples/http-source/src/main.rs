@@ -14,6 +14,7 @@
 //!
 //! # Configuration
 //! - `HTTP_SOURCE_PORT` env var sets the listen port (default: 8443)
+//! - `NUMAFLOW_VERTEX_NAME` env var sets the vertex name for the route (default: "in")
 
 use std::collections::HashMap;
 use std::env;
@@ -41,7 +42,7 @@ const NUMAFLOW_KEYS_HEADER: &str = "x-numaflow-keys";
 const DEFAULT_PORT: u16 = 8443;
 const DEFAULT_BUFFER_SIZE: usize = 500;
 const DEFAULT_READ_TIMEOUT_MS: u64 = 5;
-const VERTEX_NAME: &str = "in";
+const DEFAULT_VERTEX_NAME: &str = "in";
 
 /// An HTTP message received from the server, pending ack/nack.
 struct HttpMessage {
@@ -75,7 +76,8 @@ pub struct HttpSource {
 
 impl HttpSource {
     /// Create a new `HttpSource` and start the HTTP server in the background.
-    pub async fn new(port: u16, cancel_token: CancellationToken) -> Self {
+    /// The `vertex_name` determines the POST route: `/vertices/{vertex_name}`.
+    pub async fn new(port: u16, vertex_name: &str, cancel_token: CancellationToken) -> Self {
         let (tx, rx) = mpsc::channel(DEFAULT_BUFFER_SIZE);
         let inflight_requests: InflightRequests = Arc::new(Mutex::new(HashMap::new()));
 
@@ -86,14 +88,14 @@ impl HttpSource {
 
         let router = Router::new()
             .route("/health", get(health_handler))
-            .route(&format!("/vertices/{VERTEX_NAME}"), post(data_handler))
+            .route(&format!("/vertices/{vertex_name}"), post(data_handler))
             .with_state(state);
 
         let addr: SocketAddr = format!("0.0.0.0:{port}").parse().expect("valid address");
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .expect("failed to bind HTTP listener");
-        info!(%addr, "HTTP source server listening");
+        info!(%addr, vertex_name, "HTTP source server listening on /vertices/{vertex_name}");
 
         let token = cancel_token.clone();
         tokio::spawn(async move {
@@ -119,10 +121,6 @@ impl numaflow::source::Sourcer for HttpSource {
         request: numaflow::source::SourceReadRequest,
         transmitter: tokio::sync::mpsc::Sender<numaflow::source::Message>,
     ) {
-        info!(
-            requested_count = request.count,
-            "read: waiting for messages"
-        );
         let mut rx = self.rx.lock().await;
         let mut count = 0usize;
 
@@ -133,7 +131,6 @@ impl numaflow::source::Sourcer for HttpSource {
             tokio::select! {
                 biased;
                 _ = &mut timeout => {
-                    info!(count, "read: timeout reached, returning buffered messages");
                     break;
                 }
                 msg = rx.recv() => {
@@ -392,8 +389,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_PORT);
 
+    let vertex_name =
+        env::var("NUMAFLOW_VERTEX_NAME").unwrap_or_else(|_| DEFAULT_VERTEX_NAME.to_string());
+
     let cancel_token = CancellationToken::new();
-    let source = HttpSource::new(port, cancel_token).await;
+    let source = HttpSource::new(port, &vertex_name, cancel_token).await;
 
     numaflow::source::Server::new(source).start().await
 }
@@ -411,7 +411,7 @@ mod tests {
         drop(listener); // free the port for HttpSource to bind
 
         let cancel = CancellationToken::new();
-        let source = HttpSource::new(port, cancel).await;
+        let source = HttpSource::new(port, "in", cancel).await;
         (source, port)
     }
 
