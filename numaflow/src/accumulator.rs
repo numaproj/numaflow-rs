@@ -12,6 +12,7 @@ use tracing::{error, info};
 use crate::accumulator::proto::accumulator_request::window_operation::Event;
 use crate::error::{Error, ErrorKind};
 use crate::shared;
+use crate::shared::DROP;
 use shared::{ContainerType, build_panic_status, get_panic_info};
 
 const KEY_JOIN_DELIMITER: &str = ":";
@@ -91,6 +92,44 @@ impl Message {
             keys: Some(request.keys),
             value: request.value,
             tags: None,
+            id: request.id,
+            headers: request.headers,
+            event_time: request.event_time,
+            watermark: request.watermark,
+        }
+    }
+
+    /// Builds a Message from the given AccumulatorRequest with drop tags set,
+    /// so the message is not forwarded to the next vertex but still allows the
+    /// accumulator to advance the watermark and release tracked state.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The input AccumulatorRequest to drop the results for.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::accumulator::{Message, AccumulatorRequest};
+    /// use chrono::Utc;
+    /// use std::collections::HashMap;
+    ///
+    /// let request = AccumulatorRequest {
+    ///     keys: vec!["key1".to_string()],
+    ///     value: vec![1, 2, 3, 4],
+    ///     watermark: Utc::now(),
+    ///     event_time: Utc::now(),
+    ///     headers: HashMap::new(),
+    ///     id: "msg1".to_string(),
+    /// };
+    /// let message = Message::message_to_drop(request);
+    /// assert_eq!(message.tags(), &Some(vec!["U+005C__DROP__".to_string()]));
+    /// ```
+    pub fn message_to_drop(request: AccumulatorRequest) -> Self {
+        Self {
+            keys: Some(request.keys),
+            value: vec![],
+            tags: Some(vec![DROP.to_string()]),
             id: request.id,
             headers: request.headers,
             event_time: request.event_time,
@@ -1415,6 +1454,57 @@ mod tests {
         assert_eq!(updated_message.headers(), &headers);
         assert_eq!(updated_message.event_time(), event_time);
         assert_eq!(updated_message.watermark(), watermark);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_message_to_drop() -> Result<(), Box<dyn Error>> {
+        use crate::accumulator::{AccumulatorRequest, Message, proto};
+        use crate::shared::{self, DROP};
+        use chrono::Utc;
+        use std::collections::HashMap;
+
+        let mut headers = HashMap::new();
+        headers.insert("header1".to_string(), "value1".to_string());
+
+        let event_time = Utc::now();
+        let watermark = Utc::now();
+
+        let request = AccumulatorRequest {
+            keys: vec!["key1".to_string(), "key2".to_string()],
+            value: vec![1, 2, 3, 4],
+            watermark,
+            event_time,
+            headers: headers.clone(),
+            id: "test-id".to_string(),
+        };
+
+        let message = Message::message_to_drop(request);
+
+        // The DROP tag must be set so the runtime does not forward the message.
+        assert_eq!(message.tags(), &Some(vec![DROP.to_string()]));
+        // Value is dropped, but read-only fields are carried over so the
+        // watermark can still advance and tracked state can be released.
+        assert_eq!(message.value(), &Vec::<u8>::new());
+        assert_eq!(
+            message.keys(),
+            &Some(vec!["key1".to_string(), "key2".to_string()])
+        );
+        assert_eq!(message.id(), "test-id");
+        assert_eq!(message.headers(), &headers);
+        assert_eq!(message.event_time(), event_time);
+        assert_eq!(message.watermark(), watermark);
+
+        // The DROP tag must propagate into the AccumulatorResponse sent downstream.
+        let keyed_window = proto::KeyedWindow {
+            start: shared::prost_timestamp_from_utc(Utc::now()),
+            end: shared::prost_timestamp_from_utc(Utc::now()),
+            slot: "slot-0".to_string(),
+            keys: vec!["key1".to_string()],
+        };
+        let response = proto::AccumulatorResponse::from((&message, keyed_window));
+        assert_eq!(response.tags, vec![DROP.to_string()]);
 
         Ok(())
     }

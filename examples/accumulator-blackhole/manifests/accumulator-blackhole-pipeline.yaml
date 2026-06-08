@@ -1,0 +1,46 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: accumulator-blackhole
+spec:
+  vertices:
+    - name: input-one
+      source:
+        # A self data generating source with some randomness
+        generator:
+          rpu: 50
+          duration: 1s
+          keyCount: 3
+    - name: input-two
+      source:
+        # A self data generating source with some randomness
+        generator:
+          rpu: 50
+          duration: 1s
+          keyCount: 3
+    - name: blackhole
+      udf:
+        container:
+          # Blackhole accumulator that drops every datum it receives
+          image: quay.io/numaio/numaflow-rs/accumulator-blackhole:stable
+        groupBy:
+          window:
+            # Use a session window to allow for accumulation
+            session:
+              timeout: 30s
+          keyed: true
+          storage:
+            persistentVolumeClaim:
+              volumeSize: 10Gi
+              accessMode: ReadWriteOnce
+    - name: out
+      sink:
+        # A simple log printing sink
+        log: { }
+  edges:
+    - from: input-one
+      to: blackhole
+    - from: input-two
+      to: blackhole
+    - from: blackhole
+      to: out
