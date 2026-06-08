@@ -25,8 +25,7 @@ spec:
           image: quay.io/numaio/numaflow-rs/accumulator-blackhole:stable
         groupBy:
           window:
-            # Use a session window to allow for accumulation
-            session:
+            accumulator:
               timeout: 30s
           keyed: true
           storage:
