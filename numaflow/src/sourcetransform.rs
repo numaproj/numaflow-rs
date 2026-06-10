@@ -16,6 +16,7 @@ use crate::proto::metadata as metadata_pb;
 use crate::proto::source_transformer as proto;
 use crate::shared;
 
+use crate::shared::{NACK, NackOptions};
 use shared::{
     ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc,
     utc_from_timestamp,
@@ -294,6 +295,8 @@ pub struct Message {
     pub tags: Option<Vec<String>>,
     /// User metadata for the message.
     pub user_metadata: Option<UserMetadata>,
+    /// Options to send to the source when nacking this message
+    pub nack_options: Option<NackOptions>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -322,6 +325,7 @@ impl Message {
             keys: None,
             tags: None,
             user_metadata: None,
+            nack_options: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value, a special "DROP" tag, and the specified event time.
@@ -346,6 +350,21 @@ impl Message {
             event_time,
             tags: Some(vec![DROP.to_string()]),
             user_metadata: None,
+            nack_options: None,
+        }
+    }
+
+    pub fn message_to_nack(
+        event_time: DateTime<Utc>,
+        nack_options: Option<NackOptions>,
+    ) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            event_time,
+            tags: Some(vec![NACK.to_string()]),
+            user_metadata: None,
+            nack_options,
         }
     }
 
@@ -443,6 +462,7 @@ impl From<Message> for proto::source_transform_response::Result {
             event_time: prost_timestamp_from_utc(value.event_time),
             tags: value.tags.unwrap_or_default(),
             metadata: Some(to_proto(value.user_metadata.as_ref())),
+            nack_options: value.nack_options.map(Into::into),
         }
     }
 }
@@ -827,6 +847,7 @@ mod tests {
                     tags: Some(vec![]),
                     event_time: Utc::now(),
                     user_metadata: None,
+                    nack_options: None,
                 }]
             }
         }

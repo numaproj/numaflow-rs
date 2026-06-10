@@ -16,6 +16,7 @@ use crate::proto::metadata as metadata_pb;
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
+use crate::shared::NackOptions;
 use shared::{ContainerType, prost_timestamp_from_utc};
 
 /// Default socket address for source service
@@ -57,7 +58,7 @@ pub trait Sourcer {
     /// Acknowledges the message that has been processed by the user-defined source.
     async fn ack(&self, offset: Vec<Offset>);
     /// Negatively acknowledges the message that has been processed by the user-defined source.
-    async fn nack(&self, offset: Vec<Offset>);
+    async fn nack(&self, offset: Vec<Offset>, nack_options: Option<NackOptions>);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     /// The None value can be returned if source doesn't support detecting the backlog.
     async fn pending(&self) -> Option<usize>;
@@ -520,7 +521,9 @@ where
             .map(|offset| offset.into())
             .collect();
 
-        self.handler.nack(offsets).await;
+        let nack_option: Option<NackOptions> = request.nack_options.map(Into::into);
+
+        self.handler.nack(offsets, nack_option).await;
         Ok(Response::new(proto::NackResponse {
             result: Some(proto::nack_response::Result { success: Some(()) }),
         }))
@@ -752,7 +755,7 @@ mod tests {
     use tower::service_fn;
     use uuid::Uuid;
 
-    use super::{Message, Offset, SourceReadRequest, proto};
+    use super::{Message, NackOptions, Offset, SourceReadRequest, proto};
     use crate::source;
 
     /// A test source that repeats a number for the requested count.
@@ -815,7 +818,7 @@ mod tests {
             }
         }
 
-        async fn nack(&self, offsets: Vec<Offset>) {
+        async fn nack(&self, offsets: Vec<Offset>, _nack_options: Option<NackOptions>) {
             let mut pending = self.yet_to_ack.write().unwrap();
             for offset in offsets {
                 let offset_str = String::from_utf8(offset.offset).expect("Invalid UTF-8 in offset");
@@ -1015,6 +1018,7 @@ mod tests {
                             offset: message.offset.as_ref().unwrap().offset.clone(),
                             partition_id: message.offset.as_ref().unwrap().partition_id,
                         }],
+                        nack_options: None,
                     }),
                 };
 
@@ -1184,7 +1188,7 @@ mod tests {
             }
         }
 
-        async fn nack(&self, _offsets: Vec<Offset>) {}
+        async fn nack(&self, _offsets: Vec<Offset>, _nack_options: Option<NackOptions>) {}
 
         async fn pending(&self) -> Option<usize> {
             Some(self.yet_to_ack.read().unwrap().len())

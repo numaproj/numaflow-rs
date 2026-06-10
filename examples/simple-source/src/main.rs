@@ -9,6 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 pub(crate) mod simple_source {
     use chrono::Utc;
+    use numaflow::shared::NackOptions;
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{collections::HashSet, sync::RwLock};
@@ -88,7 +89,7 @@ pub(crate) mod simple_source {
 
         /// negatively acknowledge the offsets, removes the offset from the set and adds it back to
         /// the front of the queue
-        async fn nack(&self, offset: Vec<Offset>) {
+        async fn nack(&self, offset: Vec<Offset>, _nack_options: Option<NackOptions>) {
             // put these offsets to the front of the queue, so next read will pick them up
             for offset in offset {
                 println!("Nacking offset: {:?}", offset.offset);
@@ -223,7 +224,7 @@ mod tests {
         let offsets_count = offsets.len();
 
         // Nack the messages
-        source.nack(offsets).await;
+        source.nack(offsets, None).await;
 
         // Pending should be 0 after nack (moved to nacked set)
         let pending = source.pending().await;
