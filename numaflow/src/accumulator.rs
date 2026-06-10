@@ -449,12 +449,14 @@ impl AccumulatorTask {
                 // is expected to be available and is echoed back in the EOF. If it isn't (e.g. the
                 // task was aborted before a close), fall back to a window built from the latest
                 // watermark we observed in the responses, mirroring the data-response window.
-                let eof_window = close_window_rx.await.unwrap_or_else(|_| proto::KeyedWindow {
-                    start: keyed_window.start,
-                    end: shared::prost_timestamp_from_utc(latest_watermark),
-                    slot: keyed_window.slot.clone(),
-                    keys: keyed_window.keys.clone(),
-                });
+                let eof_window = close_window_rx
+                    .await
+                    .unwrap_or_else(|_| proto::KeyedWindow {
+                        start: keyed_window.start,
+                        end: shared::prost_timestamp_from_utc(latest_watermark),
+                        slot: keyed_window.slot.clone(),
+                        keys: keyed_window.keys.clone(),
+                    });
 
                 // Send EOF response echoing the window from the close request.
                 let eof_response = proto::AccumulatorResponse {
