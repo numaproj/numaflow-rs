@@ -69,7 +69,7 @@ pub(crate) mod jitter_source {
                 parse_env("NUM_KEYS", 3),
                 parse_env("EVENT_TIME_JITTER_MS", 5000),
                 parse_env("PAUSE_TIMEOUT_SECS", 45),
-                parse_env("PAUSE_PROBABILITY", 0.05),
+                parse_env("PAUSE_PROBABILITY", 0.002),
                 parse_env("EMIT_INTERVAL_MS", 200),
             )
         }
@@ -101,6 +101,8 @@ pub(crate) mod jitter_source {
     pub(crate) enum KeyDecision {
         /// Key is active and should emit this cycle.
         Active,
+        /// Key's pause just expired, so it is active again this cycle.
+        Resumed,
         /// Key is in an ongoing pause and is skipped.
         Paused,
         /// Key just entered a pause this cycle and is skipped.
@@ -124,9 +126,10 @@ pub(crate) mod jitter_source {
 
     /// Decide whether `key` is active this cycle, mutating `paused_until`:
     /// - if currently paused (`now < expiry`) -> `Paused`;
-    /// - otherwise an expired entry is cleared, then with probability `prob`
-    ///   the key enters a pause until `now + timeout` -> `JustPaused`;
-    /// - else -> `Active`.
+    /// - otherwise an expired entry is cleared (the key had been paused);
+    /// - then with probability `prob` the key enters a new pause
+    ///   (`now + timeout`) -> `JustPaused`;
+    /// - else -> `Resumed` if it had just been un-paused, otherwise `Active`.
     ///
     /// `prob` must be in `[0.0, 1.0]` (a value above `1.0` makes the underlying
     /// `rand` call panic). Callers clamp it via [`Config::new`].
@@ -138,15 +141,19 @@ pub(crate) mod jitter_source {
         timeout: Duration,
         rng: &mut R,
     ) -> KeyDecision {
-        if let Some(&expiry) = paused_until.get(key) {
-            if now < expiry {
-                return KeyDecision::Paused;
+        let was_paused = match paused_until.get(key) {
+            Some(&expiry) if now < expiry => return KeyDecision::Paused,
+            Some(_) => {
+                paused_until.remove(key);
+                true
             }
-            paused_until.remove(key);
-        }
+            None => false,
+        };
         if prob > 0.0 && rng.random_bool(prob) {
             paused_until.insert(key.to_string(), now + timeout);
             KeyDecision::JustPaused
+        } else if was_paused {
+            KeyDecision::Resumed
         } else {
             KeyDecision::Active
         }
@@ -259,6 +266,10 @@ pub(crate) mod jitter_source {
                             &mut rng,
                         ) {
                             KeyDecision::Active => active.push(key.as_str()),
+                            KeyDecision::Resumed => {
+                                info!("key {key} resumed emitting");
+                                active.push(key.as_str());
+                            }
                             KeyDecision::Paused => {}
                             KeyDecision::JustPaused => info!(
                                 "key {key} entering pause for {:?}",
@@ -308,13 +319,21 @@ pub(crate) mod jitter_source {
                 emitted += 1;
             }
 
+            // Distinct keys actually emitted this batch (owned, so we can still
+            // move `planned` below).
+            let keys_emitted: std::collections::BTreeSet<String> = planned
+                .iter()
+                .take(emitted)
+                .map(|(_, p)| p.key.clone())
+                .collect();
+
             // Only track what was actually delivered; undelivered items are
             // dropped so they cannot get stuck in `yet_to_ack` forever.
             let mut yet = self.yet_to_ack.write().unwrap();
             for (offset, pending) in planned.into_iter().take(emitted) {
                 yet.insert(offset, pending);
             }
-            info!("emitted {emitted} messages");
+            info!("emitted {emitted} messages across keys {keys_emitted:?}");
         }
 
         async fn ack(&self, offset: Vec<Offset>) {
@@ -484,7 +503,7 @@ pub(crate) mod jitter_source {
         }
 
         #[test]
-        fn decide_key_expired_pause_becomes_active() {
+        fn decide_key_expired_pause_resumes() {
             let base = Instant::now();
             let mut paused = HashMap::new();
             paused.insert("k".to_string(), base); // expiry == base
@@ -498,7 +517,7 @@ pub(crate) mod jitter_source {
                 Duration::from_secs(45),
                 &mut rng,
             );
-            assert!(matches!(d, KeyDecision::Active));
+            assert!(matches!(d, KeyDecision::Resumed));
             assert!(!paused.contains_key("k"), "expired pause should be removed");
         }
 

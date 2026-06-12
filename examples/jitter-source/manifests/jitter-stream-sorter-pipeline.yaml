@@ -3,6 +3,14 @@ kind: Pipeline
 metadata:
   name: jitter-stream-sorter
 spec:
+  # When the source emits nothing for `threshold`, keep advancing the watermark
+  # so a fully-paused stream still makes progress (the accumulator can then
+  # close idle keys' windows even if every key is paused at once).
+  watermark:
+    idleSource:
+      threshold: 5s
+      incrementBy: 3s
+      stepInterval: 2s
   vertices:
     - name: in
       scale:
@@ -22,7 +30,7 @@ spec:
               - name: PAUSE_TIMEOUT_SECS
                 value: "45"
               - name: PAUSE_PROBABILITY
-                value: "0.05"
+                value: "0.002"
               - name: EMIT_INTERVAL_MS
                 value: "200"
     - name: sorter
