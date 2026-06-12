@@ -415,14 +415,6 @@ pub(crate) mod jitter_source {
             }
         }
 
-        async fn pending(&self) -> Option<usize> {
-            Some(self.yet_to_ack.read().unwrap().len())
-        }
-
-        async fn partitions(&self) -> Option<Vec<i32>> {
-            Some(vec![0])
-        }
-
         async fn nack(&self, offset: Vec<Offset>) {
             // Remove from pending first (release that lock), then stage for retry.
             let mut removed = Vec::new();
@@ -440,6 +432,14 @@ pub(crate) mod jitter_source {
             for (offset, pending) in removed {
                 nacked.insert(offset, pending);
             }
+        }
+
+        async fn pending(&self) -> Option<usize> {
+            Some(self.yet_to_ack.read().unwrap().len())
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![0])
         }
     }
 
