@@ -23,6 +23,13 @@ It generates events across several keys and:
 | `PAUSE_TIMEOUT_SECS` | `45` | How long a key stays paused once it pauses. |
 | `PAUSE_PROBABILITY` | `0.002` | Per active key, per read cycle, chance of entering a pause. |
 | `EMIT_INTERVAL_MS` | `200` | Pacing between read batches (also the pause-roll cadence). |
+| `MAX_TPS` | `0` (unlimited) | Caps the source's **total** events/sec across all keys (token bucket). `0` or negative disables limiting. |
+
+**Rate limiting:** `MAX_TPS` bounds the source's *total* output rate across all
+keys via a token bucket (burst = 1 second of tokens). It is the upper bound —
+backpressure or pauses can make the actual rate lower. The example manifest sets
+`MAX_TPS=20` for a controlled, observable demo; set it to `0` to emit as fast as
+backpressure allows.
 
 **Tuning note:** a key's steady-state paused fraction is roughly
 `PAUSE_TIMEOUT / (PAUSE_TIMEOUT + EMIT_INTERVAL / PAUSE_PROBABILITY)`. Because a

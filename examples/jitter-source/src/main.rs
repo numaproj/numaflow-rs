@@ -37,6 +37,12 @@ pub(crate) mod jitter_source {
         pub(crate) pause_probability: f64,
         /// Inter-batch pacing sleep; also avoids busy-spin when all keys paused.
         pub(crate) emit_interval: Duration,
+        /// Max total events/sec across all keys. `0.0` means unlimited.
+        pub(crate) max_tps: f64,
+        /// Token-bucket burst capacity: `max(max_tps, 1.0)` tokens — one second
+        /// of capacity when `max_tps >= 1.0`, floored to 1 so at least one token
+        /// can accrue when `max_tps` is very small.
+        pub(crate) tps_burst: f64,
     }
 
     impl Config {
@@ -47,11 +53,19 @@ pub(crate) mod jitter_source {
             pause_timeout_secs: u64,
             pause_probability: f64,
             emit_interval_ms: u64,
+            max_tps: f64,
         ) -> Self {
             let pause_probability = if pause_probability.is_finite() {
                 pause_probability.clamp(0.0, 1.0)
             } else {
                 0.05
+            };
+            // Only a finite, positive value enables rate limiting; anything else
+            // (0, negative, NaN, infinite) means unlimited.
+            let max_tps = if max_tps.is_finite() && max_tps > 0.0 {
+                max_tps
+            } else {
+                0.0
             };
             Self {
                 num_keys: num_keys.max(1),
@@ -60,6 +74,8 @@ pub(crate) mod jitter_source {
                 pause_probability,
                 // Floor to 1ms so a 0 value still paces reads (busy-spin guard).
                 emit_interval: Duration::from_millis(emit_interval_ms.max(1)),
+                max_tps,
+                tps_burst: max_tps.max(1.0),
             }
         }
 
@@ -71,6 +87,7 @@ pub(crate) mod jitter_source {
                 parse_env("PAUSE_TIMEOUT_SECS", 45),
                 parse_env("PAUSE_PROBABILITY", 0.002),
                 parse_env("EMIT_INTERVAL_MS", 200),
+                parse_env("MAX_TPS", 0.0),
             )
         }
     }
@@ -159,6 +176,43 @@ pub(crate) mod jitter_source {
         }
     }
 
+    /// Token-bucket state for rate limiting. Shared across `read` calls.
+    #[derive(Debug)]
+    pub(crate) struct TokenBucket {
+        tokens: f64,
+        last: Instant,
+    }
+
+    impl TokenBucket {
+        fn new(initial: f64, now: Instant) -> Self {
+            Self {
+                tokens: initial,
+                last: now,
+            }
+        }
+    }
+
+    /// Refill `bucket` for the time elapsed since its last call (capped at
+    /// `burst`) and take up to `want` tokens, returning how many were granted.
+    /// A non-positive `tps` means unlimited and always grants `want`.
+    pub(crate) fn take_tokens(
+        bucket: &mut TokenBucket,
+        now: Instant,
+        want: usize,
+        tps: f64,
+        burst: f64,
+    ) -> usize {
+        if tps <= 0.0 {
+            return want;
+        }
+        let elapsed = now.saturating_duration_since(bucket.last).as_secs_f64();
+        bucket.last = now;
+        bucket.tokens = (bucket.tokens + elapsed * tps).min(burst);
+        let granted = (bucket.tokens.floor() as usize).min(want);
+        bucket.tokens -= granted as f64;
+        granted
+    }
+
     /// A pending (read-but-unacked) message, retained so a nack can re-emit it
     /// with the exact same key, value, and event time.
     #[derive(Debug, Clone)]
@@ -180,6 +234,8 @@ pub(crate) mod jitter_source {
         counter: AtomicUsize,
         /// key -> instant at which its current pause expires.
         paused_until: Mutex<HashMap<String, Instant>>,
+        /// Token bucket for total-TPS rate limiting.
+        bucket: Mutex<TokenBucket>,
     }
 
     impl JitterSource {
@@ -189,6 +245,7 @@ pub(crate) mod jitter_source {
 
         pub(crate) fn with_config(config: Config) -> Self {
             let keys = (0..config.num_keys).map(|i| format!("key-{i}")).collect();
+            let bucket = Mutex::new(TokenBucket::new(config.tps_burst, Instant::now()));
             Self {
                 config,
                 keys,
@@ -196,6 +253,7 @@ pub(crate) mod jitter_source {
                 nacked: RwLock::new(HashMap::new()),
                 counter: AtomicUsize::new(0),
                 paused_until: Mutex::new(HashMap::new()),
+                bucket,
             }
         }
 
@@ -283,9 +341,20 @@ pub(crate) mod jitter_source {
                 if active.is_empty() {
                     Vec::new()
                 } else {
+                    // Rate-limit total emission to MAX_TPS (unlimited when 0).
+                    let allowed = {
+                        let mut bucket = self.bucket.lock().unwrap();
+                        take_tokens(
+                            &mut bucket,
+                            now_instant,
+                            request.count,
+                            self.config.max_tps,
+                            self.config.tps_burst,
+                        )
+                    };
                     let ts_nanos = now_utc.timestamp_nanos_opt().unwrap_or(0);
-                    let mut plan = Vec::with_capacity(request.count);
-                    for i in 0..request.count {
+                    let mut plan = Vec::with_capacity(allowed);
+                    for i in 0..allowed {
                         let key = active[i % active.len()].to_string();
                         let event_time =
                             jittered_event_time(now_utc, self.config.jitter_ms, &mut rng);
@@ -382,7 +451,7 @@ pub(crate) mod jitter_source {
 
         fn test_config(num_keys: usize) -> Config {
             // probability 0.0 => deterministic (no pauses); 1ms pacing (0 floors to 1).
-            Config::new(num_keys, 5000, 45, 0.0, 0)
+            Config::new(num_keys, 5000, 45, 0.0, 0, 0.0)
         }
 
         async fn drain(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
@@ -396,40 +465,51 @@ pub(crate) mod jitter_source {
         #[test]
         fn config_new_sanitizes_input() {
             // num_keys floored to 1
-            assert_eq!(Config::new(0, 100, 10, 0.1, 50).num_keys, 1);
+            assert_eq!(Config::new(0, 100, 10, 0.1, 50, 0.0).num_keys, 1);
             // negative jitter floored to 0
-            assert_eq!(Config::new(3, -100, 10, 0.1, 50).jitter_ms, 0);
+            assert_eq!(Config::new(3, -100, 10, 0.1, 50, 0.0).jitter_ms, 0);
             // probability clamped into [0.0, 1.0]
-            assert_eq!(Config::new(3, 100, 10, 5.0, 50).pause_probability, 1.0);
-            assert_eq!(Config::new(3, 100, 10, -1.0, 50).pause_probability, 0.0);
+            assert_eq!(Config::new(3, 100, 10, 5.0, 50, 0.0).pause_probability, 1.0);
+            assert_eq!(
+                Config::new(3, 100, 10, -1.0, 50, 0.0).pause_probability,
+                0.0
+            );
             // non-finite probability falls back to default
             assert_eq!(
-                Config::new(3, 100, 10, f64::NAN, 50).pause_probability,
+                Config::new(3, 100, 10, f64::NAN, 50, 0.0).pause_probability,
                 0.05
             );
             assert_eq!(
-                Config::new(3, 100, 10, f64::INFINITY, 50).pause_probability,
+                Config::new(3, 100, 10, f64::INFINITY, 50, 0.0).pause_probability,
                 0.05
             );
             // emit_interval floored to 1ms so 0 still paces reads
             assert_eq!(
-                Config::new(3, 100, 10, 0.1, 0).emit_interval,
+                Config::new(3, 100, 10, 0.1, 0, 0.0).emit_interval,
                 Duration::from_millis(1)
             );
             // durations mapped from the right units
             assert_eq!(
-                Config::new(3, 100, 7, 0.1, 250).pause_timeout,
+                Config::new(3, 100, 7, 0.1, 250, 0.0).pause_timeout,
                 Duration::from_secs(7)
             );
             assert_eq!(
-                Config::new(3, 100, 7, 0.1, 250).emit_interval,
+                Config::new(3, 100, 7, 0.1, 250, 0.0).emit_interval,
                 Duration::from_millis(250)
             );
             // in-range values pass through unchanged
-            let c = Config::new(5, 300, 30, 0.3, 100);
+            let c = Config::new(5, 300, 30, 0.3, 100, 0.0);
             assert_eq!(c.num_keys, 5);
             assert_eq!(c.jitter_ms, 300);
             assert_eq!(c.pause_probability, 0.3);
+            // MAX_TPS: only finite positive enables limiting; 0/negative/NaN/inf
+            // mean unlimited (stored as 0.0). Burst is 1s of tokens (>= 1).
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, 20.0).max_tps, 20.0);
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, -5.0).max_tps, 0.0);
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, f64::NAN).max_tps, 0.0);
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, f64::INFINITY).max_tps, 0.0);
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, 20.0).tps_burst, 20.0);
+            assert_eq!(Config::new(3, 100, 10, 0.1, 50, 0.0).tps_burst, 1.0);
         }
 
         #[test]
@@ -541,6 +621,42 @@ pub(crate) mod jitter_source {
             assert_eq!(*paused.get("k").unwrap(), later + Duration::from_secs(45));
         }
 
+        #[test]
+        fn take_tokens_unlimited_grants_all() {
+            let mut b = TokenBucket::new(0.0, Instant::now());
+            assert_eq!(take_tokens(&mut b, Instant::now(), 100, 0.0, 1.0), 100);
+        }
+
+        #[test]
+        fn take_tokens_caps_by_available_then_empties() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // 10 TPS, 1s elapsed -> 10 tokens (burst 10); want 100 -> grant 10.
+            let g1 = take_tokens(&mut b, base + Duration::from_secs(1), 100, 10.0, 10.0);
+            assert_eq!(g1, 10);
+            // No time passes -> no tokens -> grant 0.
+            let g2 = take_tokens(&mut b, base + Duration::from_secs(1), 100, 10.0, 10.0);
+            assert_eq!(g2, 0);
+        }
+
+        #[test]
+        fn take_tokens_refill_capped_at_burst() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // 100s elapsed at 10 TPS would be 1000 tokens, but burst caps at 10.
+            let g = take_tokens(&mut b, base + Duration::from_secs(100), 1000, 10.0, 10.0);
+            assert_eq!(g, 10);
+        }
+
+        #[test]
+        fn take_tokens_grants_only_up_to_want() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // Plenty of tokens, but only want 5.
+            let g = take_tokens(&mut b, base + Duration::from_secs(10), 5, 100.0, 1000.0);
+            assert_eq!(g, 5);
+        }
+
         #[tokio::test]
         async fn read_emits_count_messages_across_active_keys() {
             let source = JitterSource::with_config(test_config(3));
@@ -576,6 +692,28 @@ pub(crate) mod jitter_source {
             assert_eq!(offsets.len(), msgs.len(), "offsets must be unique");
 
             assert_eq!(source.pending().await, Some(6));
+        }
+
+        #[tokio::test]
+        async fn read_respects_tps_cap() {
+            // max_tps=3 => tps_burst=3 and the bucket starts full (3 tokens).
+            // Asking for 100 should yield exactly the 3 available tokens.
+            let source = JitterSource::with_config(Config::new(3, 0, 45, 0.0, 0, 3.0));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 100,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            assert_eq!(
+                drain(&mut rx).await.len(),
+                3,
+                "bucket had 3 tokens; should emit exactly 3"
+            );
         }
 
         #[tokio::test]
@@ -689,7 +827,7 @@ pub(crate) mod jitter_source {
         #[tokio::test]
         async fn read_emits_nothing_when_all_keys_paused() {
             // probability 1.0 => every key enters a pause on the first cycle.
-            let source = JitterSource::with_config(Config::new(3, 5000, 45, 1.0, 0));
+            let source = JitterSource::with_config(Config::new(3, 5000, 45, 1.0, 0, 0.0));
             let (tx, mut rx) = mpsc::channel(64);
             source
                 .read(

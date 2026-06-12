@@ -33,6 +33,9 @@ spec:
                 value: "0.002"
               - name: EMIT_INTERVAL_MS
                 value: "200"
+              # Cap total emission rate across all keys (events/sec). 0 = unlimited.
+              - name: MAX_TPS
+                value: "20"
     - name: sorter
       udf:
         container:
