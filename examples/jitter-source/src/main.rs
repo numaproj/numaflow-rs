@@ -5,19 +5,23 @@
 //! stream for the sorter to order, and the per-key pauses drive watermark
 //! progression and the accumulator's per-key idle-timeout window close.
 
-// NOTE: `main` is a stub at this stage. It is replaced with the real server
-// wiring in a later task, once `JitterSource` exists.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
-    Ok(())
+    let source = jitter_source::JitterSource::new();
+    numaflow::source::Server::new(source).start().await
 }
 
 pub(crate) mod jitter_source {
     use chrono::{DateTime, Utc};
+    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use rand::Rng;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, RwLock};
     use std::time::{Duration, Instant};
+    use tokio::sync::mpsc::Sender;
+    use tracing::{info, warn};
 
     /// Runtime configuration, read once from the environment with validated,
     /// safe defaults.
@@ -148,11 +152,227 @@ pub(crate) mod jitter_source {
         }
     }
 
+    /// A pending (read-but-unacked) message, retained so a nack can re-emit it
+    /// with the exact same key, value, and event time.
+    #[derive(Debug, Clone)]
+    struct Pending {
+        key: String,
+        event_time: DateTime<Utc>,
+        value: Vec<u8>,
+    }
+
+    /// Generates multi-key, jittered, occasionally-paused events. Shared state
+    /// uses interior mutability because [`Sourcer`] hands out `&self`.
+    pub(crate) struct JitterSource {
+        config: Config,
+        keys: Vec<String>,
+        /// offset -> pending message (drives backpressure and `pending`).
+        yet_to_ack: RwLock<HashMap<String, Pending>>,
+        /// offset -> pending message to re-emit on the next read.
+        nacked: RwLock<HashMap<String, Pending>>,
+        counter: AtomicUsize,
+        /// key -> instant at which its current pause expires.
+        paused_until: Mutex<HashMap<String, Instant>>,
+    }
+
+    impl JitterSource {
+        pub(crate) fn new() -> Self {
+            Self::with_config(Config::from_env())
+        }
+
+        pub(crate) fn with_config(config: Config) -> Self {
+            let keys = (0..config.num_keys).map(|i| format!("key-{i}")).collect();
+            Self {
+                config,
+                keys,
+                yet_to_ack: RwLock::new(HashMap::new()),
+                nacked: RwLock::new(HashMap::new()),
+                counter: AtomicUsize::new(0),
+                paused_until: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn build_message(&self, offset: &str, pending: &Pending) -> Message {
+            Message {
+                value: pending.value.clone(),
+                event_time: pending.event_time,
+                offset: Offset {
+                    offset: offset.as_bytes().to_vec(),
+                    partition_id: 0,
+                },
+                keys: vec![pending.key.clone()],
+                headers: Default::default(),
+                user_metadata: None,
+            }
+        }
+    }
+
+    #[tonic::async_trait]
+    impl Sourcer for JitterSource {
+        async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
+            // Backpressure: don't read more until the current batch is acked.
+            if !self.yet_to_ack.read().unwrap().is_empty() {
+                return;
+            }
+
+            // Re-emit nacked messages first, then return.
+            let nacked: Vec<(String, Pending)> = self.nacked.write().unwrap().drain().collect();
+            if !nacked.is_empty() {
+                let mut sent = 0;
+                for (offset, pending) in &nacked {
+                    if let Err(e) = transmitter.send(self.build_message(offset, pending)).await {
+                        warn!("failed to send nacked message: {e}");
+                        break;
+                    }
+                    sent += 1;
+                }
+                // Only re-track what was actually delivered; undelivered items
+                // must not linger in `yet_to_ack` (they'd wedge backpressure).
+                let mut yet = self.yet_to_ack.write().unwrap();
+                for (offset, pending) in nacked.into_iter().take(sent) {
+                    yet.insert(offset, pending);
+                }
+                return;
+            }
+
+            // Pace generation (also prevents busy-spin when all keys are paused).
+            tokio::time::sleep(self.config.emit_interval).await;
+
+            // Plan the batch synchronously: the RNG (`ThreadRng`) and the
+            // `Mutex` guard are both `!Send`, so they MUST be dropped before any
+            // `.await` below, or the `read` future stops being `Send`.
+            let planned: Vec<(String, Pending)> = {
+                let now_instant = Instant::now();
+                let now_utc = Utc::now();
+                let mut rng = rand::rng();
+
+                let active: Vec<&str> = {
+                    let mut paused = self.paused_until.lock().unwrap();
+                    let mut active = Vec::new();
+                    for key in &self.keys {
+                        match decide_key(
+                            now_instant,
+                            &mut paused,
+                            key,
+                            self.config.pause_probability,
+                            self.config.pause_timeout,
+                            &mut rng,
+                        ) {
+                            KeyDecision::Active => active.push(key.as_str()),
+                            KeyDecision::Paused => {}
+                            KeyDecision::JustPaused => info!(
+                                "key {key} entering pause for {:?}",
+                                self.config.pause_timeout
+                            ),
+                        }
+                    }
+                    active
+                };
+
+                if active.is_empty() {
+                    Vec::new()
+                } else {
+                    let ts_nanos = now_utc.timestamp_nanos_opt().unwrap_or(0);
+                    let mut plan = Vec::with_capacity(request.count);
+                    for i in 0..request.count {
+                        let key = active[i % active.len()].to_string();
+                        let event_time =
+                            jittered_event_time(now_utc, self.config.jitter_ms, &mut rng);
+                        let seq = self.counter.fetch_add(1, Ordering::Relaxed);
+                        let offset = format!("{ts_nanos}-{seq}");
+                        let value =
+                            format!("{seq}:{key}:{}", event_time.timestamp_millis()).into_bytes();
+                        plan.push((
+                            offset,
+                            Pending {
+                                key,
+                                event_time,
+                                value,
+                            },
+                        ));
+                    }
+                    plan
+                }
+            };
+
+            if planned.is_empty() {
+                return;
+            }
+
+            let mut emitted = 0;
+            for (offset, pending) in &planned {
+                if let Err(e) = transmitter.send(self.build_message(offset, pending)).await {
+                    warn!("failed to send message: {e}");
+                    break;
+                }
+                emitted += 1;
+            }
+
+            // Only track what was actually delivered; undelivered items are
+            // dropped so they cannot get stuck in `yet_to_ack` forever.
+            let mut yet = self.yet_to_ack.write().unwrap();
+            for (offset, pending) in planned.into_iter().take(emitted) {
+                yet.insert(offset, pending);
+            }
+            info!("emitted {emitted} messages");
+        }
+
+        async fn ack(&self, offset: Vec<Offset>) {
+            let mut yet = self.yet_to_ack.write().unwrap();
+            for o in offset {
+                if let Ok(key) = String::from_utf8(o.offset) {
+                    yet.remove(&key);
+                }
+            }
+        }
+
+        async fn pending(&self) -> Option<usize> {
+            Some(self.yet_to_ack.read().unwrap().len())
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![0])
+        }
+
+        async fn nack(&self, offset: Vec<Offset>) {
+            // Remove from pending first (release that lock), then stage for retry.
+            let mut removed = Vec::new();
+            {
+                let mut yet = self.yet_to_ack.write().unwrap();
+                for o in offset {
+                    if let Ok(key) = String::from_utf8(o.offset) {
+                        if let Some(pending) = yet.remove(&key) {
+                            removed.push((key, pending));
+                        }
+                    }
+                }
+            }
+            let mut nacked = self.nacked.write().unwrap();
+            for (offset, pending) in removed {
+                nacked.insert(offset, pending);
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
         use rand::SeedableRng;
         use rand::rngs::StdRng;
+        use tokio::sync::mpsc;
+
+        fn test_config(num_keys: usize) -> Config {
+            // probability 0.0 => deterministic (no pauses); 1ms pacing (0 floors to 1).
+            Config::new(num_keys, 5000, 45, 0.0, 0)
+        }
+
+        async fn drain(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
+            let mut out = Vec::new();
+            while let Ok(msg) = rx.try_recv() {
+                out.push(msg);
+            }
+            out
+        }
 
         #[test]
         fn config_new_sanitizes_input() {
@@ -300,6 +520,180 @@ pub(crate) mod jitter_source {
             );
             assert!(matches!(d, KeyDecision::JustPaused));
             assert_eq!(*paused.get("k").unwrap(), later + Duration::from_secs(45));
+        }
+
+        #[tokio::test]
+        async fn read_emits_count_messages_across_active_keys() {
+            let source = JitterSource::with_config(test_config(3));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 6,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+
+            let msgs = drain(&mut rx).await;
+            assert_eq!(msgs.len(), 6, "should emit request.count messages");
+
+            // Every message carries exactly one key from the configured set.
+            let valid: Vec<String> = (0..3).map(|i| format!("key-{i}")).collect();
+            for m in &msgs {
+                assert_eq!(m.keys.len(), 1, "each message has exactly one key");
+                assert!(valid.contains(&m.keys[0]), "unexpected key {:?}", m.keys);
+                assert_eq!(m.offset.partition_id, 0);
+            }
+            // Round-robin over 3 active keys => all 3 keys are represented.
+            let distinct: std::collections::HashSet<_> =
+                msgs.iter().map(|m| m.keys[0].clone()).collect();
+            assert_eq!(distinct.len(), 3, "all active keys should be used");
+
+            // Offsets must be globally unique.
+            let offsets: std::collections::HashSet<_> =
+                msgs.iter().map(|m| m.offset.offset.clone()).collect();
+            assert_eq!(offsets.len(), msgs.len(), "offsets must be unique");
+
+            assert_eq!(source.pending().await, Some(6));
+        }
+
+        #[tokio::test]
+        async fn ack_clears_pending() {
+            let source = JitterSource::with_config(test_config(2));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 4,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            let offsets: Vec<Offset> = drain(&mut rx).await.into_iter().map(|m| m.offset).collect();
+            assert_eq!(source.pending().await, Some(4));
+            source.ack(offsets).await;
+            assert_eq!(source.pending().await, Some(0));
+        }
+
+        #[tokio::test]
+        async fn nack_then_reread_reemits_identically() {
+            let source = JitterSource::with_config(test_config(2));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 4,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            let first = drain(&mut rx).await;
+            let offsets: Vec<Offset> = first
+                .iter()
+                .map(|m| Offset {
+                    offset: m.offset.offset.clone(),
+                    partition_id: m.offset.partition_id,
+                })
+                .collect();
+
+            source.nack(offsets).await;
+            assert_eq!(source.pending().await, Some(0), "nack moves out of pending");
+
+            // Next read must re-emit the nacked messages before any new data.
+            let (tx2, mut rx2) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 10,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx2,
+                )
+                .await;
+            let reread = drain(&mut rx2).await;
+            assert_eq!(reread.len(), first.len(), "re-emits exactly the nacked set");
+
+            // Re-emitted messages are identical in offset, key, value, event_time.
+            let key = |m: &Message| String::from_utf8(m.offset.offset.clone()).unwrap();
+            let mut a: Vec<_> = first
+                .iter()
+                .map(|m| (key(m), m.keys.clone(), m.value.clone(), m.event_time))
+                .collect();
+            let mut b: Vec<_> = reread
+                .iter()
+                .map(|m| (key(m), m.keys.clone(), m.value.clone(), m.event_time))
+                .collect();
+            a.sort_by(|x, y| x.0.cmp(&y.0));
+            b.sort_by(|x, y| x.0.cmp(&y.0));
+            assert_eq!(a, b, "re-emitted messages must match the originals");
+
+            assert_eq!(
+                source.pending().await,
+                Some(4),
+                "re-read moves back to pending"
+            );
+        }
+
+        #[tokio::test]
+        async fn read_applies_backpressure_until_acked() {
+            let source = JitterSource::with_config(test_config(2));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 3,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            assert_eq!(drain(&mut rx).await.len(), 3);
+
+            // Second read while messages are unacked must emit nothing.
+            let (tx2, mut rx2) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 3,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx2,
+                )
+                .await;
+            assert_eq!(drain(&mut rx2).await.len(), 0, "backpressure: no new reads");
+        }
+
+        #[tokio::test]
+        async fn read_emits_nothing_when_all_keys_paused() {
+            // probability 1.0 => every key enters a pause on the first cycle.
+            let source = JitterSource::with_config(Config::new(3, 5000, 45, 1.0, 0));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 5,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            assert_eq!(
+                drain(&mut rx).await.len(),
+                0,
+                "all keys paused => no messages"
+            );
+            assert_eq!(source.pending().await, Some(0));
+        }
+
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn partitions_is_zero() {
+            let source = JitterSource::with_config(test_config(3));
+            assert_eq!(source.partitions().await, Some(vec![0]));
         }
     }
 }
