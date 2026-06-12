@@ -1,0 +1,54 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: jitter-stream-sorter
+spec:
+  vertices:
+    - name: in
+      scale:
+        min: 1
+      source:
+        udsource:
+          container:
+            # Jitter source: multi-key events with event-time jitter that
+            # periodically pauses some keys for PAUSE_TIMEOUT_SECS.
+            image: quay.io/numaio/numaflow-rs/jitter-source:stable
+            imagePullPolicy: Always
+            env:
+              - name: NUM_KEYS
+                value: "3"
+              - name: EVENT_TIME_JITTER_MS
+                value: "5000"
+              - name: PAUSE_TIMEOUT_SECS
+                value: "45"
+              - name: PAUSE_PROBABILITY
+                value: "0.05"
+              - name: EMIT_INTERVAL_MS
+                value: "200"
+    - name: sorter
+      udf:
+        container:
+          # Stream sorter accumulator that sorts events by event-time.
+          image: quay.io/numaio/numaflow-rs/stream-sorter:stable
+        groupBy:
+          window:
+            accumulator:
+              # Per-key idle timeout (< the source's 45s pause) so a paused
+              # key's accumulator instance closes while it is paused.
+              timeout: 30s
+          keyed: true
+          storage:
+            persistentVolumeClaim:
+              volumeSize: 1Gi
+              accessMode: ReadWriteOnce
+    - name: out
+      scale:
+        min: 1
+      sink:
+        # A simple log printing sink.
+        log: {}
+  edges:
+    - from: in
+      to: sorter
+    - from: sorter
+      to: out
