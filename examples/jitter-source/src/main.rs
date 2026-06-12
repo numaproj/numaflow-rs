@@ -58,7 +58,8 @@ pub(crate) mod jitter_source {
             let pause_probability = if pause_probability.is_finite() {
                 pause_probability.clamp(0.0, 1.0)
             } else {
-                0.05
+                // Non-finite (NaN/inf) falls back to the same default `from_env` uses.
+                0.002
             };
             // Only a finite, positive value enables rate limiting; anything else
             // (0, negative, NaN, infinite) means unlimited.
@@ -474,14 +475,14 @@ pub(crate) mod jitter_source {
                 Config::new(3, 100, 10, -1.0, 50, 0.0).pause_probability,
                 0.0
             );
-            // non-finite probability falls back to default
+            // non-finite probability falls back to the default (0.002)
             assert_eq!(
                 Config::new(3, 100, 10, f64::NAN, 50, 0.0).pause_probability,
-                0.05
+                0.002
             );
             assert_eq!(
                 Config::new(3, 100, 10, f64::INFINITY, 50, 0.0).pause_probability,
-                0.05
+                0.002
             );
             // emit_interval floored to 1ms so 0 still paces reads
             assert_eq!(
