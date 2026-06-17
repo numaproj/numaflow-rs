@@ -14,6 +14,7 @@ use tracing::{debug, error, info};
 use crate::proto::metadata as metadata_pb;
 use crate::proto::sink::{self as sink_pb, SinkResponse};
 use crate::shared;
+use crate::shared::NackOptions;
 use shared::{ContainerType, ENV_CONTAINER_TYPE, build_panic_status, get_panic_info};
 
 /// Default socket address for sink service
@@ -332,6 +333,8 @@ pub enum ResponseType {
     Serve,
     /// message should be forwarded to the onSuccess store.
     OnSuccess,
+    /// message should be nacked
+    Nack,
 }
 
 #[derive(Default)]
@@ -498,6 +501,7 @@ pub struct Response {
     /// Optional payload to be sent to on_success sink. Send original message to sink in case
     /// `None` is provided.
     pub on_success_msg: Option<Message>,
+    pub nack_options: Option<NackOptions>,
 }
 
 impl Response {
@@ -509,6 +513,7 @@ impl Response {
             err: None,
             serve_response: None,
             on_success_msg: None,
+            nack_options: None,
         }
     }
 
@@ -520,6 +525,7 @@ impl Response {
             err: Some(err),
             serve_response: None,
             on_success_msg: None,
+            nack_options: None,
         }
     }
 
@@ -532,6 +538,7 @@ impl Response {
             err: None,
             serve_response: None,
             on_success_msg: None,
+            nack_options: None,
         }
     }
 
@@ -542,6 +549,7 @@ impl Response {
             err: None,
             serve_response: Some(payload),
             on_success_msg: None,
+            nack_options: None,
         }
     }
 
@@ -554,6 +562,18 @@ impl Response {
             err: None,
             serve_response: None,
             on_success_msg: payload,
+            nack_options: None,
+        }
+    }
+
+    pub fn nack(id: String, nack_options: Option<NackOptions>) -> Self {
+        Self {
+            id,
+            response_type: ResponseType::Nack,
+            err: None,
+            serve_response: None,
+            on_success_msg: None,
+            nack_options,
         }
     }
 }
@@ -568,10 +588,12 @@ impl From<Response> for sink_pb::sink_response::Result {
                 ResponseType::FallBack => sink_pb::Status::Fallback as i32,
                 ResponseType::Serve => sink_pb::Status::Serve as i32,
                 ResponseType::OnSuccess => sink_pb::Status::OnSuccess as i32,
+                ResponseType::Nack => sink_pb::Status::Nack as i32,
             },
             err_msg: r.err.unwrap_or_default(),
             serve_response: r.serve_response,
             on_success_msg: r.on_success_msg.map(|msg| msg.into()),
+            nack_options: r.nack_options.map(|opts| opts.into()),
         }
     }
 }

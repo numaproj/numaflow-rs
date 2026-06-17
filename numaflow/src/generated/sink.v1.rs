@@ -92,6 +92,11 @@ pub mod sink_response {
         /// on_success_msg is the message to be sent to on_success sink.
         #[prost(message, optional, tag = "5")]
         pub on_success_msg: ::core::option::Option<result::Message>,
+        /// Per message options to nack back to the source with.
+        #[prost(message, optional, tag = "6")]
+        pub nack_options: ::core::option::Option<
+            crate::proto::nack_options::NackOptions,
+        >,
     }
     /// Nested message and enum types in `Result`.
     pub mod result {
@@ -115,6 +120,7 @@ pub enum Status {
     Fallback = 2,
     Serve = 3,
     OnSuccess = 4,
+    Nack = 5,
 }
 impl Status {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -128,6 +134,7 @@ impl Status {
             Self::Fallback => "FALLBACK",
             Self::Serve => "SERVE",
             Self::OnSuccess => "ON_SUCCESS",
+            Self::Nack => "NACK",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -138,6 +145,7 @@ impl Status {
             "FALLBACK" => Some(Self::Fallback),
             "SERVE" => Some(Self::Serve),
             "ON_SUCCESS" => Some(Self::OnSuccess),
+            "NACK" => Some(Self::Nack),
             _ => None,
         }
     }

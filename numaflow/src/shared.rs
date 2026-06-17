@@ -42,7 +42,7 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
     })
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NackOptions {
     /// Delay with which the message should be redelivered after nack
     pub delay: Option<u64>,

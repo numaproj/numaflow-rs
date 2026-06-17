@@ -15,6 +15,7 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
+use crate::shared::{NACK, NackOptions};
 use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for mapstream service
@@ -77,6 +78,8 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
+    /// Options to send back to source when nacking the message.
+    pub nack_options: Option<NackOptions>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -100,6 +103,7 @@ impl Message {
             value,
             keys: None,
             tags: None,
+            nack_options: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
@@ -115,6 +119,25 @@ impl Message {
             keys: None,
             value: vec![],
             tags: Some(vec![DROP.to_string()]),
+            nack_options: None,
+        }
+    }
+
+    /// Marks the input datum the derived message belongs to, to be nacked by creating a new
+    /// `Message` with a special "NACK" tag and optional options to be passed back to the source
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::mapstream::Message;
+    /// let nacked_message = Message::message_to_nack(None);
+    /// ```
+    pub fn message_to_nack(nack_options: Option<NackOptions>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![NACK.to_string()]),
+            nack_options,
         }
     }
 
@@ -161,6 +184,7 @@ impl From<Message> for proto::map_response::Result {
             tags: value.tags.unwrap_or_default(),
             // TODO: Support metadata for mapstream
             metadata: None,
+            nack_options: value.nack_options.map(Into::into),
         }
     }
 }
