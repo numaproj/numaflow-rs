@@ -5,6 +5,8 @@
 
 use std::fs;
 use std::io;
+use std::io::ErrorKind;
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use tokio::net::UnixListener;
 use tokio::signal;
@@ -214,16 +216,70 @@ fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Resul
     fs::write(path, content)
 }
 
+/// Remove a stale Unix domain socket path before binding.
+///
+/// A hard-killed container can leave the socket file behind in the shared pod
+/// volume. Only remove it when it is actually a socket; any other file type at
+/// this path is treated as a configuration or ownership error.
+fn remove_stale_socket(socket_file: &Path) -> io::Result<()> {
+    if let Some(parent) = socket_file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    match fs::symlink_metadata(socket_file) {
+        Ok(metadata) if metadata.file_type().is_socket() => fs::remove_file(socket_file),
+        Ok(_) => Err(io::Error::new(
+            ErrorKind::AlreadyExists,
+            format!(
+                "path exists and is not a Unix socket: {}",
+                socket_file.display()
+            ),
+        )),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove stale server-info so readiness is advertised only after a fresh bind.
+fn remove_server_info_file(server_info_file: &Path) -> io::Result<()> {
+    match fs::remove_file(server_info_file) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Create a Unix listener stream for the gRPC server
 pub fn create_listener_stream(
     socket_file: impl AsRef<Path>,
     server_info_file: impl AsRef<Path>,
     server_info: ServerInfo,
 ) -> Result<UnixListenerStream, Box<dyn std::error::Error + Send + Sync>> {
-    write_info_file(server_info_file, server_info)
-        .map_err(|e| format!("writing info file: {e:?}"))?;
+    let socket_file = socket_file.as_ref();
+    let server_info_file = server_info_file.as_ref();
 
-    let uds_stream = UnixListener::bind(socket_file)?;
+    remove_server_info_file(server_info_file)
+        .map_err(|e| format!("removing stale server info file {server_info_file:?}: {e:?}"))?;
+    remove_stale_socket(socket_file)
+        .map_err(|e| format!("removing stale socket file {socket_file:?}: {e:?}"))?;
+    let uds_stream = match UnixListener::bind(socket_file) {
+        Ok(uds_stream) => uds_stream,
+        Err(e) => {
+            let _ = fs::remove_file(socket_file);
+            let _ = fs::remove_file(server_info_file);
+            return Err(format!("binding Unix socket {socket_file:?}: {e:?}").into());
+        }
+    };
+
+    if let Err(e) = write_info_file(server_info_file, server_info) {
+        let _ = fs::remove_file(socket_file);
+        let _ = fs::remove_file(server_info_file);
+        return Err(format!("writing info file: {e:?}").into());
+    }
+
     Ok(UnixListenerStream::new(uds_stream))
 }
 
