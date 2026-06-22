@@ -1077,7 +1077,7 @@ mod tests {
 
     async fn setup_server<C: accumulator::AccumulatorCreator + Send + Sync + 'static>(
         creator: C,
-    ) -> Result<(accumulator::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
+    ) -> Result<(accumulator::Server<C>, PathBuf, PathBuf, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("accumulator.sock");
         let server_info_file = tmp_dir.path().join("accumulator-server-info");
@@ -1087,7 +1087,7 @@ mod tests {
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
 
-        Ok((server, sock_file, server_info_file))
+        Ok((server, sock_file, server_info_file, tmp_dir))
     }
 
     async fn setup_client(
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, server_info_file) = setup_server(SumCreator).await?;
+        let (server, sock_file, server_info_file, _tmp_dir) = setup_server(SumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -1147,7 +1147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_accumulator_operations() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _, _tmp_dir) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1467,7 +1467,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_panic_in_accumulate() -> Result<(), Box<dyn Error>> {
-            let (server, sock_file, _) = setup_server(PanicAccumulatorCreator).await?;
+            let (server, sock_file, _, _tmp_dir) = setup_server(PanicAccumulatorCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
