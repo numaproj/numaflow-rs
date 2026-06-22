@@ -5,6 +5,8 @@
 
 use std::fs;
 use std::io;
+use std::io::ErrorKind;
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use tokio::net::UnixListener;
 use tokio::signal;
@@ -214,16 +216,63 @@ fn write_info_file(path: impl AsRef<Path>, server_info: ServerInfo) -> io::Resul
     fs::write(path, content)
 }
 
+/// Remove a stale Unix domain socket path before binding.
+///
+/// A hard-killed container can leave the socket file behind in the shared pod
+/// volume. Only remove it when it is actually a socket; any other file type at
+/// this path is treated as a configuration or ownership error.
+fn remove_stale_socket(socket_file: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(socket_file) {
+        Ok(metadata) if metadata.file_type().is_socket() => fs::remove_file(socket_file),
+        Ok(_) => Err(io::Error::new(
+            ErrorKind::AlreadyExists,
+            format!(
+                "path exists and is not a Unix socket: {}",
+                socket_file.display()
+            ),
+        )),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove stale server-info so readiness is advertised only after a fresh bind.
+fn remove_server_info_file(server_info_file: &Path) -> io::Result<()> {
+    match fs::remove_file(server_info_file) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Create a Unix listener stream for the gRPC server
+/// First, bind to the socket file and then write the server info to the file.
 pub fn create_listener_stream(
     socket_file: impl AsRef<Path>,
     server_info_file: impl AsRef<Path>,
     server_info: ServerInfo,
 ) -> Result<UnixListenerStream, Box<dyn std::error::Error + Send + Sync>> {
-    write_info_file(server_info_file, server_info)
-        .map_err(|e| format!("writing info file: {e:?}"))?;
+    let socket_file = socket_file.as_ref();
+    let server_info_file = server_info_file.as_ref();
 
-    let uds_stream = UnixListener::bind(socket_file)?;
+    remove_server_info_file(server_info_file)
+        .map_err(|e| format!("removing stale server info file {server_info_file:?}: {e:?}"))?;
+    remove_stale_socket(socket_file)
+        .map_err(|e| format!("removing stale socket file {socket_file:?}: {e:?}"))?;
+    let uds_stream = match UnixListener::bind(socket_file) {
+        Ok(uds_stream) => uds_stream,
+        Err(e) => {
+            let _ = fs::remove_file(server_info_file);
+            return Err(format!("binding Unix socket {socket_file:?}: {e:?}").into());
+        }
+    };
+
+    if let Err(e) = write_info_file(server_info_file, server_info) {
+        let _ = fs::remove_file(socket_file);
+        let _ = fs::remove_file(server_info_file);
+        return Err(format!("writing info file: {e:?}").into());
+    }
+
     Ok(UnixListenerStream::new(uds_stream))
 }
 
@@ -373,5 +422,29 @@ mod tests {
 
         let metadata = info.metadata.unwrap();
         assert!(metadata.is_empty()); // Source doesn't have MAP_MODE
+    }
+
+    #[tokio::test]
+    async fn test_create_listener_stream_removes_stale_socket()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let tmp_dir = tempfile::tempdir()?;
+        let socket_file = tmp_dir.path().join("stale.sock");
+        let server_info_file = tmp_dir.path().join("server-info");
+
+        let stale_listener = UnixListener::bind(&socket_file)?;
+        drop(stale_listener);
+
+        let listener = create_listener_stream(
+            &socket_file,
+            &server_info_file,
+            ServerInfo::new(ContainerType::Source),
+        )?;
+
+        assert!(socket_file.exists());
+        assert!(server_info_file.exists());
+        drop(listener);
+        let _ = fs::remove_file(socket_file);
+
+        Ok(())
     }
 }

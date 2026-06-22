@@ -394,6 +394,9 @@ enum TaskManagerCommand {
 /// Represents an accumulator task for a specific keyed window
 struct AccumulatorTask {
     input_tx: mpsc::Sender<AccumulatorRequest>,
+    /// Used to hand the close request's keyed window to the task so that the EOF response can echo
+    /// it back. Set when the task is closed.
+    close_window_tx: oneshot::Sender<proto::KeyedWindow>,
     done_rx: oneshot::Receiver<()>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -407,6 +410,9 @@ impl AccumulatorTask {
         let (input_tx, input_rx) = mpsc::channel::<AccumulatorRequest>(CHANNEL_SIZE);
         let (output_tx, mut output_rx) = mpsc::channel::<Message>(CHANNEL_SIZE);
         let (done_tx, done_rx) = oneshot::channel();
+        // The close request's keyed window is delivered here when the task is closed, and is echoed
+        // back in the EOF response.
+        let (close_window_tx, close_window_rx) = oneshot::channel::<proto::KeyedWindow>();
 
         // Clone response_tx before moving into closures
         let handler_tx = response_tx.clone();
@@ -439,15 +445,23 @@ impl AccumulatorTask {
                     }
                 }
 
-                // Send EOF response
-                let eof_response = proto::AccumulatorResponse {
-                    payload: None,
-                    window: Some(proto::KeyedWindow {
+                // The task only stops (and we reach here) after a close request, so the close window
+                // is expected to be available and is echoed back in the EOF. If it isn't (e.g. the
+                // task was aborted before a close), fall back to a window built from the latest
+                // watermark we observed in the responses, mirroring the data-response window.
+                let eof_window = close_window_rx
+                    .await
+                    .unwrap_or_else(|_| proto::KeyedWindow {
                         start: keyed_window.start,
                         end: shared::prost_timestamp_from_utc(latest_watermark),
                         slot: keyed_window.slot.clone(),
                         keys: keyed_window.keys.clone(),
-                    }),
+                    });
+
+                // Send EOF response echoing the window from the close request.
+                let eof_response = proto::AccumulatorResponse {
+                    payload: None,
+                    window: Some(eof_window),
                     tags: vec![],
                     eof: true,
                 };
@@ -486,6 +500,7 @@ impl AccumulatorTask {
 
         Self {
             input_tx,
+            close_window_tx,
             done_rx,
             handle,
         }
@@ -501,8 +516,12 @@ impl AccumulatorTask {
         })
     }
 
-    /// Close the task input (blocking)
-    async fn close(self) {
+    /// Close the task input (blocking). The keyed window from the close request is echoed back in
+    /// the EOF response.
+    async fn close(self, keyed_window: proto::KeyedWindow) {
+        // Hand the close window to the output task so it can build the EOF response. Ignore the
+        // error if the receiver is already gone (task finished/aborted).
+        let _ = self.close_window_tx.send(keyed_window);
         drop(self.input_tx);
         let _ = self.done_rx.await;
     }
@@ -645,7 +664,7 @@ where
     async fn handle_close_task(&mut self, keyed_window: proto::KeyedWindow) {
         let key = generate_key(&keyed_window);
         if let Some(task) = self.tasks.remove(&key) {
-            task.close().await;
+            task.close(keyed_window).await;
         }
     }
 
@@ -855,17 +874,11 @@ async fn handle_accumulator_request(
     }
 }
 
-/// Generate unique key for a keyed window
+/// Generate unique key for a keyed window. Accumulator windows are global per key, so the task is
+/// tracked only by its keys and not by the window's start/end time (which are not stable for an
+/// accumulator window).
 fn generate_key(keyed_window: &proto::KeyedWindow) -> String {
-    let start = keyed_window.start.as_ref().unwrap().seconds;
-    let end = keyed_window.end.as_ref().unwrap().seconds;
-
-    format!(
-        "{}:{}:{}",
-        start,
-        end,
-        keyed_window.keys.join(KEY_JOIN_DELIMITER)
-    )
+    keyed_window.keys.join(KEY_JOIN_DELIMITER)
 }
 
 /// Implement From trait for converting proto::Payload to AccumulatorRequest
@@ -1064,7 +1077,7 @@ mod tests {
 
     async fn setup_server<C: accumulator::AccumulatorCreator + Send + Sync + 'static>(
         creator: C,
-    ) -> Result<(accumulator::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
+    ) -> Result<(accumulator::Server<C>, PathBuf, PathBuf, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("accumulator.sock");
         let server_info_file = tmp_dir.path().join("accumulator-server-info");
@@ -1074,7 +1087,7 @@ mod tests {
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
 
-        Ok((server, sock_file, server_info_file))
+        Ok((server, sock_file, server_info_file, tmp_dir))
     }
 
     async fn setup_client(
@@ -1100,7 +1113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, server_info_file) = setup_server(SumCreator).await?;
+        let (server, sock_file, server_info_file, _tmp_dir) = setup_server(SumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -1134,7 +1147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_accumulator_operations() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _, _tmp_dir) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1275,9 +1288,16 @@ mod tests {
 
             if response.eof {
                 found_eof = true;
-            }
-
-            if let Some(keyed_window) = response.window.as_ref() {
+                // The EOF response echoes the window that came in the close request.
+                let keyed_window = response
+                    .window
+                    .as_ref()
+                    .expect("EOF response should have a window");
+                assert_eq!(keyed_window.keys, vec!["key1".to_string()]);
+                assert_eq!(keyed_window.start.as_ref().unwrap().seconds, 60000);
+                assert_eq!(keyed_window.end.as_ref().unwrap().seconds, 120000);
+            } else if let Some(keyed_window) = response.window.as_ref() {
+                // Data responses carry the open window's start and the latest watermark as the end.
                 assert_eq!(keyed_window.keys, vec!["key1".to_string()]);
                 if let Some(start) = keyed_window.start.as_ref() {
                     assert_eq!(start.seconds, 60000);
@@ -1447,7 +1467,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_panic_in_accumulate() -> Result<(), Box<dyn Error>> {
-            let (server, sock_file, _) = setup_server(PanicAccumulatorCreator).await?;
+            let (server, sock_file, _, _tmp_dir) = setup_server(PanicAccumulatorCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 

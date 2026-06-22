@@ -875,7 +875,7 @@ mod tests {
 
     async fn setup_server<C: reduce::ReducerCreator + Send + Sync + 'static>(
         creator: C,
-    ) -> Result<(reduce::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
+    ) -> Result<(reduce::Server<C>, PathBuf, PathBuf, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("reduce.sock");
         let server_info_file = tmp_dir.path().join("reducer-server-info");
@@ -885,7 +885,7 @@ mod tests {
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
 
-        Ok((server, sock_file, server_info_file))
+        Ok((server, sock_file, server_info_file, tmp_dir))
     }
 
     async fn setup_client(
@@ -911,7 +911,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, server_info_file) = setup_server(SumCreator).await?;
+        let (server, sock_file, server_info_file, _tmp_dir) = setup_server(SumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -945,7 +945,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_input() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _, _tmp_dir) = setup_server(SumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1055,7 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_input() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, _) = setup_server(SumCreator).await?;
+        let (server, sock_file, _, _tmp_dir) = setup_server(SumCreator).await?;
 
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1196,7 +1196,7 @@ mod tests {
 
         #[tokio::test]
         async fn panic_in_reduce() -> Result<(), Box<dyn Error>> {
-            let (server, sock_file, _) = setup_server(SimplePanicReducerCreator).await?;
+            let (server, sock_file, _, _tmp_dir) = setup_server(SimplePanicReducerCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -1272,7 +1272,8 @@ mod tests {
         // processed successfully since we do graceful shutdown of the server.
         #[tokio::test]
         async fn panic_with_multiple_keys() -> Result<(), Box<dyn Error>> {
-            let (server, sock_file, _) = setup_server(ConditionalPanicReducerCreator).await?;
+            let (server, sock_file, _, _tmp_dir) =
+                setup_server(ConditionalPanicReducerCreator).await?;
 
             let (_shutdown_tx, shutdown_rx) = oneshot::channel();
 
