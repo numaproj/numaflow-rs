@@ -236,17 +236,6 @@ fn remove_stale_socket(socket_file: &Path) -> io::Result<()> {
     }
 }
 
-fn create_parent_dir(path: &Path) -> io::Result<()> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
-    }
-
-    Ok(())
-}
-
 /// Remove stale server-info so readiness is advertised only after a fresh bind.
 fn remove_server_info_file(server_info_file: &Path) -> io::Result<()> {
     match fs::remove_file(server_info_file) {
@@ -266,8 +255,6 @@ pub fn create_listener_stream(
     let socket_file = socket_file.as_ref();
     let server_info_file = server_info_file.as_ref();
 
-    create_parent_dir(socket_file)
-        .map_err(|e| format!("creating socket parent directory {socket_file:?}: {e:?}"))?;
     remove_server_info_file(server_info_file)
         .map_err(|e| format!("removing stale server info file {server_info_file:?}: {e:?}"))?;
     remove_stale_socket(socket_file)
@@ -435,5 +422,29 @@ mod tests {
 
         let metadata = info.metadata.unwrap();
         assert!(metadata.is_empty()); // Source doesn't have MAP_MODE
+    }
+
+    #[tokio::test]
+    async fn test_create_listener_stream_removes_stale_socket()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let tmp_dir = tempfile::tempdir()?;
+        let socket_file = tmp_dir.path().join("stale.sock");
+        let server_info_file = tmp_dir.path().join("server-info");
+
+        let stale_listener = UnixListener::bind(&socket_file)?;
+        drop(stale_listener);
+
+        let listener = create_listener_stream(
+            &socket_file,
+            &server_info_file,
+            ServerInfo::new(ContainerType::Source),
+        )?;
+
+        assert!(socket_file.exists());
+        assert!(server_info_file.exists());
+        drop(listener);
+        let _ = fs::remove_file(socket_file);
+
+        Ok(())
     }
 }
