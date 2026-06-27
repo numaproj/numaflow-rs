@@ -8,11 +8,12 @@ It generates events across several keys and:
 - assigns each event an `event_time` with random **jitter**, so the merged
   stream is out-of-order by event-time (giving the accumulator something to
   sort); and
-- **every now and then pauses some keys** for a configurable timeout. Each
-  active key independently has a small per-cycle chance of pausing; while a key
-  is paused it emits nothing, the other keys keep advancing the watermark, and
-  the paused key's accumulator window eventually flushes — and, once the pause
-  outlasts the accumulator's idle `timeout`, closes.
+- **pauses keys in round-robin** — exactly one key at a time. A key is paused
+  for `PAUSE_TIMEOUT_SECS`, then it resumes and the next key in order pauses,
+  cycling continuously. While a key is paused it emits nothing; the other keys
+  keep advancing the watermark, so the paused key's accumulator window flushes
+  and — once the pause outlasts the accumulator's idle `timeout` — closes,
+  before that key resumes.
 
 ## Configuration (environment variables)
 
@@ -20,8 +21,7 @@ It generates events across several keys and:
 |-----|---------|---------|
 | `NUM_KEYS` | `3` | Number of distinct keys (`key-0` … `key-(N-1)`). |
 | `EVENT_TIME_JITTER_MS` | `5000` | Event time = `now()` shifted by a random offset within ± this many ms. |
-| `PAUSE_TIMEOUT_SECS` | `45` | How long a key stays paused once it pauses. |
-| `PAUSE_PROBABILITY` | `0.002` | Per active key, per read cycle, chance of entering a pause. |
+| `PAUSE_TIMEOUT_SECS` | `45` | How long each key stays paused on its round-robin turn before the rotation advances. |
 | `EMIT_INTERVAL_MS` | `200` | Pacing between read batches (also the pause-roll cadence). |
 | `MAX_TPS` | `0` (unlimited) | Caps the source's **total** events/sec across all keys (token bucket). `0` or negative disables limiting. |
 
@@ -31,14 +31,11 @@ backpressure or pauses can make the actual rate lower. The example manifest sets
 `MAX_TPS=20` for a controlled, observable demo; set it to `0` to emit as fast as
 backpressure allows.
 
-**Tuning note:** a key's steady-state paused fraction is roughly
-`PAUSE_TIMEOUT / (PAUSE_TIMEOUT + EMIT_INTERVAL / PAUSE_PROBABILITY)`. Because a
-pause spans many cycles, a small `PAUSE_PROBABILITY` adds up fast — e.g. `0.05`
-with a 45s pause keeps a key idle ~90% of the time and the whole stream idle
-most of the run. Keep `PAUSE_PROBABILITY` low (the default `0.002` keeps a key
-idle ~30% of the time, so usually only some keys are paused), and keep
-`PAUSE_TIMEOUT_SECS` **greater than** the accumulator window `timeout` (30s in
-the manifest) so a paused key's window actually closes.
+**Round-robin pauses:** exactly one key is paused at a time; with `N` keys each
+key is therefore paused ~`1/N` of the time, in turn. Keep `PAUSE_TIMEOUT_SECS`
+greater than the accumulator window `timeout` (30s in the manifest) so a paused
+key's window closes during its turn. With a single key, rotation is disabled
+(there is nothing to round-robin) and that key always emits.
 
 ## Running
 
