@@ -19,7 +19,7 @@ spec:
         udsource:
           container:
             # Jitter source: multi-key events with event-time jitter that
-            # pauses keys round-robin (one at a time) for PAUSE_TIMEOUT_SECS.
+            # periodically pauses some keys for PAUSE_TIMEOUT_SECS.
             image: quay.io/numaio/numaflow-rs/jitter-source:stable
             imagePullPolicy: Always
             env:
@@ -29,6 +29,8 @@ spec:
                 value: "5000"
               - name: PAUSE_TIMEOUT_SECS
                 value: "45"
+              - name: PAUSE_PROBABILITY
+                value: "0.002"
               - name: EMIT_INTERVAL_MS
                 value: "200"
               # Cap total emission rate across all keys (events/sec). 0 = unlimited.
