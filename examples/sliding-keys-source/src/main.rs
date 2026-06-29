@@ -1,7 +1,14 @@
 fn main() {}
 
 pub(crate) mod sliding_keys_source {
-    use std::time::Duration;
+    use chrono::{DateTime, Utc};
+    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc::Sender;
+    use tracing::{info, warn};
 
     /// Runtime configuration, read once from the environment with validated,
     /// safe defaults.
@@ -51,10 +58,160 @@ pub(crate) mod sliding_keys_source {
             .collect()
     }
 
+    /// A pending (read-but-unacked) message, retained so a nack can re-emit it
+    /// with the exact same key, value, and event time.
+    #[derive(Debug, Clone)]
+    struct Pending {
+        key: String,
+        event_time: DateTime<Utc>,
+        value: Vec<u8>,
+    }
+
+    /// Emits events across a key window that slides forward on a wall-clock
+    /// cadence. Shared state uses interior mutability because [`Sourcer`] hands
+    /// out `&self`.
+    pub(crate) struct SlidingKeysSource {
+        config: Config,
+        /// Captured at construction; basis for [`window_base`].
+        start: Instant,
+        /// Persistent per-read rotation cursor; positions taken `% num_keys`.
+        cursor: AtomicUsize,
+        /// Global monotonic sequence for unique offsets/values.
+        counter: AtomicUsize,
+        /// offset -> pending message (drives backpressure and `pending`).
+        yet_to_ack: RwLock<HashMap<String, Pending>>,
+        /// offset -> pending message to re-emit on the next read.
+        nacked: RwLock<HashMap<String, Pending>>,
+    }
+
+    impl SlidingKeysSource {
+        pub(crate) fn with_config(config: Config) -> Self {
+            Self {
+                config,
+                start: Instant::now(),
+                cursor: AtomicUsize::new(0),
+                counter: AtomicUsize::new(0),
+                yet_to_ack: RwLock::new(HashMap::new()),
+                nacked: RwLock::new(HashMap::new()),
+            }
+        }
+
+        fn build_message(&self, offset: &str, pending: &Pending) -> Message {
+            Message {
+                value: pending.value.clone(),
+                event_time: pending.event_time,
+                offset: Offset {
+                    offset: offset.as_bytes().to_vec(),
+                    partition_id: 0,
+                },
+                keys: vec![pending.key.clone()],
+                headers: Default::default(),
+                user_metadata: None,
+            }
+        }
+    }
+
+    #[tonic::async_trait]
+    impl Sourcer for SlidingKeysSource {
+        async fn read(&self, request: SourceReadRequest, transmitter: Sender<Message>) {
+            // Backpressure: don't read more until the current batch is acked.
+            if !self.yet_to_ack.read().unwrap().is_empty() {
+                return;
+            }
+
+            // Re-emit nacked messages first, then return. (Populated by `nack`,
+            // added in Task 5; drains empty until then.)
+            let nacked: Vec<(String, Pending)> = self.nacked.write().unwrap().drain().collect();
+            if !nacked.is_empty() {
+                let mut sent = 0;
+                for (offset, pending) in &nacked {
+                    if let Err(e) = transmitter.send(self.build_message(offset, pending)).await {
+                        warn!("failed to send nacked message: {e}");
+                        break;
+                    }
+                    sent += 1;
+                }
+                // Only re-track what was actually delivered; undelivered items
+                // must not linger in `yet_to_ack` (they'd wedge backpressure).
+                let mut yet = self.yet_to_ack.write().unwrap();
+                for (offset, pending) in nacked.into_iter().take(sent) {
+                    yet.insert(offset, pending);
+                }
+                return;
+            }
+
+            // Pace generation (prevents busy-spin between batches).
+            tokio::time::sleep(self.config.emit_interval).await;
+
+            // Snapshot the window position and reserve a contiguous run of
+            // rotation positions for this batch. `fetch_add` returns the prior
+            // cursor (our start_pos); positions are taken `% num_keys` on use.
+            let base = window_base(self.start.elapsed(), self.config.flush_interval);
+            let start_pos = self.cursor.fetch_add(request.count, Ordering::Relaxed);
+            let now_utc = Utc::now();
+            let ts_nanos = now_utc.timestamp_nanos_opt().unwrap_or(0);
+
+            let planned: Vec<(String, Pending)> =
+                batch_key_indices(base, start_pos, request.count, self.config.num_keys)
+                    .into_iter()
+                    .map(|idx| {
+                        let key = format!("key-{idx}");
+                        let seq = self.counter.fetch_add(1, Ordering::Relaxed);
+                        let offset = format!("{ts_nanos}-{seq}");
+                        let value = format!("{seq}:{key}").into_bytes();
+                        (offset, Pending { key, event_time: now_utc, value })
+                    })
+                    .collect();
+
+            if planned.is_empty() {
+                return;
+            }
+
+            let mut emitted = 0;
+            for (offset, pending) in &planned {
+                if let Err(e) = transmitter.send(self.build_message(offset, pending)).await {
+                    warn!("failed to send message: {e}");
+                    break;
+                }
+                emitted += 1;
+            }
+
+            // Only track what was actually delivered.
+            let mut yet = self.yet_to_ack.write().unwrap();
+            for (offset, pending) in planned.into_iter().take(emitted) {
+                yet.insert(offset, pending);
+            }
+            let hi = base + self.config.num_keys as u64 - 1;
+            info!("emitted {emitted} messages across key window [key-{base}, key-{hi}]");
+        }
+
+        async fn ack(&self, offset: Vec<Offset>) {
+            let mut yet = self.yet_to_ack.write().unwrap();
+            for o in offset {
+                if let Ok(key) = String::from_utf8(o.offset) {
+                    yet.remove(&key);
+                }
+            }
+        }
+
+        async fn nack(&self, _offset: Vec<Offset>) {
+            // Implemented in Task 5.
+        }
+
+        async fn pending(&self) -> Option<usize> {
+            Some(self.yet_to_ack.read().unwrap().len())
+        }
+
+        async fn partitions(&self) -> Option<Vec<i32>> {
+            Some(vec![0])
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
         use std::time::Duration;
+        use tokio::sync::mpsc;
 
         #[test]
         fn config_new_sanitizes_input() {
@@ -109,6 +266,88 @@ pub(crate) mod sliding_keys_source {
             seen.extend(batch_key_indices(0, 0, 2, 4));
             seen.extend(batch_key_indices(0, 2, 2, 4));
             assert_eq!(seen, [0, 1, 2, 3].into_iter().collect());
+        }
+
+        fn test_config(num_keys: usize) -> Config {
+            // 1ms emit pacing (0 floors to 1) keeps tests fast; flush 1h away so
+            // `base` stays 0 during a test → active window is key-0..key-(n-1).
+            Config::new(num_keys, 3600, 0)
+        }
+
+        async fn drain(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
+            let mut out = Vec::new();
+            while let Ok(msg) = rx.try_recv() {
+                out.push(msg);
+            }
+            out
+        }
+
+        #[tokio::test]
+        async fn read_emits_count_within_active_window() {
+            let source = SlidingKeysSource::with_config(test_config(3));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest { count: 6, timeout: Duration::from_secs(1) },
+                    tx,
+                )
+                .await;
+
+            let msgs = drain(&mut rx).await;
+            assert_eq!(msgs.len(), 6, "should emit request.count messages");
+
+            for m in &msgs {
+                assert_eq!(m.keys.len(), 1, "each message has exactly one key");
+                assert_eq!(m.offset.partition_id, 0);
+            }
+            // base == 0 (flush 1h away): active window is key-0..key-2.
+            let active: std::collections::HashSet<String> =
+                ["key-0", "key-1", "key-2"].iter().map(|s| s.to_string()).collect();
+            for m in &msgs {
+                assert!(active.contains(&m.keys[0]), "key {:?} outside window", m.keys[0]);
+            }
+            let offsets: std::collections::HashSet<_> =
+                msgs.iter().map(|m| m.offset.offset.clone()).collect();
+            assert_eq!(offsets.len(), msgs.len(), "offsets must be unique");
+
+            assert_eq!(source.pending().await, Some(6));
+        }
+
+        #[tokio::test]
+        async fn ack_clears_pending() {
+            let source = SlidingKeysSource::with_config(test_config(3));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(SourceReadRequest { count: 4, timeout: Duration::from_secs(1) }, tx)
+                .await;
+            let offsets: Vec<Offset> =
+                drain(&mut rx).await.into_iter().map(|m| m.offset).collect();
+            assert_eq!(source.pending().await, Some(4));
+            source.ack(offsets).await;
+            assert_eq!(source.pending().await, Some(0));
+        }
+
+        #[tokio::test]
+        async fn read_applies_backpressure_until_acked() {
+            let source = SlidingKeysSource::with_config(test_config(3));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(SourceReadRequest { count: 3, timeout: Duration::from_secs(1) }, tx)
+                .await;
+            assert_eq!(drain(&mut rx).await.len(), 3);
+
+            let (tx2, mut rx2) = mpsc::channel(64);
+            source
+                .read(SourceReadRequest { count: 3, timeout: Duration::from_secs(1) }, tx2)
+                .await;
+            assert_eq!(drain(&mut rx2).await.len(), 0, "backpressure: no new reads");
+        }
+
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn partitions_is_zero() {
+            let source = SlidingKeysSource::with_config(test_config(3));
+            assert_eq!(source.partitions().await, Some(vec![0]));
         }
     }
 }
