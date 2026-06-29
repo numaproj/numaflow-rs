@@ -1,4 +1,19 @@
-fn main() {}
+//! A User Defined Source whose active key set evolves over time. At any instant
+//! it emits across a window of exactly `NUM_KEYS` consecutive keys
+//! (`key-0 .. key-(NUM_KEYS-1)` initially). Every `FLUSH_INTERVAL_SECS` of
+//! wall-clock time the window slides forward by one: the lowest-valued key
+//! retires and a new key, one higher than the current maximum, joins.
+//!
+//! It exercises downstream per-key behavior — reduce/session-window GC, per-key
+//! autoscaling, and watermark/idle handling as keys are born and retired. It is
+//! a sibling to `examples/jitter-source` and shares its structure.
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt::init();
+    let source = sliding_keys_source::SlidingKeysSource::new();
+    numaflow::source::Server::new(source).start().await
+}
 
 pub(crate) mod sliding_keys_source {
     use chrono::{DateTime, Utc};
@@ -24,7 +39,11 @@ pub(crate) mod sliding_keys_source {
 
     impl Config {
         /// Build a sanitized config from raw values.
-        pub(crate) fn new(num_keys: usize, flush_interval_secs: u64, emit_interval_ms: u64) -> Self {
+        pub(crate) fn new(
+            num_keys: usize,
+            flush_interval_secs: u64,
+            emit_interval_ms: u64,
+        ) -> Self {
             Self {
                 num_keys: num_keys.max(1),
                 // Floor to 1s so the window always has a positive period
@@ -32,6 +51,34 @@ pub(crate) mod sliding_keys_source {
                 flush_interval: Duration::from_secs(flush_interval_secs.max(1)),
                 // Floor to 1ms so a 0 value still paces reads (busy-spin guard).
                 emit_interval: Duration::from_millis(emit_interval_ms.max(1)),
+            }
+        }
+
+        /// Read configuration from the environment, falling back to defaults.
+        pub(crate) fn from_env() -> Self {
+            Self::new(
+                parse_env("NUM_KEYS", 5),
+                parse_env("FLUSH_INTERVAL_SECS", 10),
+                parse_env("EMIT_INTERVAL_MS", 100),
+            )
+        }
+    }
+
+    /// Parse an environment variable, returning `default` when unset and
+    /// warning (then defaulting) when set but unparseable.
+    fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {
+        match std::env::var(key) {
+            Ok(raw) => match raw.parse::<T>() {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    warn!("invalid value {raw:?} for {key}; using default");
+                    default
+                }
+            },
+            Err(std::env::VarError::NotPresent) => default,
+            Err(std::env::VarError::NotUnicode(raw)) => {
+                warn!("non-UTF-8 value for {key} ({raw:?}); using default");
+                default
             }
         }
     }
@@ -85,6 +132,10 @@ pub(crate) mod sliding_keys_source {
     }
 
     impl SlidingKeysSource {
+        pub(crate) fn new() -> Self {
+            Self::with_config(Config::from_env())
+        }
+
         pub(crate) fn with_config(config: Config) -> Self {
             Self {
                 config,
@@ -159,7 +210,14 @@ pub(crate) mod sliding_keys_source {
                         let seq = self.counter.fetch_add(1, Ordering::Relaxed);
                         let offset = format!("{ts_nanos}-{seq}");
                         let value = format!("{seq}:{key}").into_bytes();
-                        (offset, Pending { key, event_time: now_utc, value })
+                        (
+                            offset,
+                            Pending {
+                                key,
+                                event_time: now_utc,
+                                value,
+                            },
+                        )
                     })
                     .collect();
 
@@ -233,9 +291,15 @@ pub(crate) mod sliding_keys_source {
             // num_keys floored to 1
             assert_eq!(Config::new(0, 10, 100).num_keys, 1);
             // flush_interval floored to 1s (no divide-by-zero in window_base)
-            assert_eq!(Config::new(5, 0, 100).flush_interval, Duration::from_secs(1));
+            assert_eq!(
+                Config::new(5, 0, 100).flush_interval,
+                Duration::from_secs(1)
+            );
             // emit_interval floored to 1ms so 0 still paces reads
-            assert_eq!(Config::new(5, 10, 0).emit_interval, Duration::from_millis(1));
+            assert_eq!(
+                Config::new(5, 10, 0).emit_interval,
+                Duration::from_millis(1)
+            );
             // in-range values pass through, mapped to the right units
             let c = Config::new(8, 30, 250);
             assert_eq!(c.num_keys, 8);
@@ -303,7 +367,10 @@ pub(crate) mod sliding_keys_source {
             let (tx, mut rx) = mpsc::channel(64);
             source
                 .read(
-                    SourceReadRequest { count: 6, timeout: Duration::from_secs(1) },
+                    SourceReadRequest {
+                        count: 6,
+                        timeout: Duration::from_secs(1),
+                    },
                     tx,
                 )
                 .await;
@@ -316,10 +383,16 @@ pub(crate) mod sliding_keys_source {
                 assert_eq!(m.offset.partition_id, 0);
             }
             // base == 0 (flush 1h away): active window is key-0..key-2.
-            let active: std::collections::HashSet<String> =
-                ["key-0", "key-1", "key-2"].iter().map(|s| s.to_string()).collect();
+            let active: std::collections::HashSet<String> = ["key-0", "key-1", "key-2"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             for m in &msgs {
-                assert!(active.contains(&m.keys[0]), "key {:?} outside window", m.keys[0]);
+                assert!(
+                    active.contains(&m.keys[0]),
+                    "key {:?} outside window",
+                    m.keys[0]
+                );
             }
             let offsets: std::collections::HashSet<_> =
                 msgs.iter().map(|m| m.offset.offset.clone()).collect();
@@ -333,10 +406,15 @@ pub(crate) mod sliding_keys_source {
             let source = SlidingKeysSource::with_config(test_config(3));
             let (tx, mut rx) = mpsc::channel(64);
             source
-                .read(SourceReadRequest { count: 4, timeout: Duration::from_secs(1) }, tx)
+                .read(
+                    SourceReadRequest {
+                        count: 4,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
                 .await;
-            let offsets: Vec<Offset> =
-                drain(&mut rx).await.into_iter().map(|m| m.offset).collect();
+            let offsets: Vec<Offset> = drain(&mut rx).await.into_iter().map(|m| m.offset).collect();
             assert_eq!(source.pending().await, Some(4));
             source.ack(offsets).await;
             assert_eq!(source.pending().await, Some(0));
@@ -347,13 +425,25 @@ pub(crate) mod sliding_keys_source {
             let source = SlidingKeysSource::with_config(test_config(3));
             let (tx, mut rx) = mpsc::channel(64);
             source
-                .read(SourceReadRequest { count: 3, timeout: Duration::from_secs(1) }, tx)
+                .read(
+                    SourceReadRequest {
+                        count: 3,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
                 .await;
             assert_eq!(drain(&mut rx).await.len(), 3);
 
             let (tx2, mut rx2) = mpsc::channel(64);
             source
-                .read(SourceReadRequest { count: 3, timeout: Duration::from_secs(1) }, tx2)
+                .read(
+                    SourceReadRequest {
+                        count: 3,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx2,
+                )
                 .await;
             assert_eq!(drain(&mut rx2).await.len(), 0, "backpressure: no new reads");
         }
@@ -370,7 +460,13 @@ pub(crate) mod sliding_keys_source {
             let source = SlidingKeysSource::with_config(test_config(3));
             let (tx, mut rx) = mpsc::channel(64);
             source
-                .read(SourceReadRequest { count: 4, timeout: Duration::from_secs(1) }, tx)
+                .read(
+                    SourceReadRequest {
+                        count: 4,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
                 .await;
             let first = drain(&mut rx).await;
             let offsets: Vec<Offset> = first
@@ -387,7 +483,13 @@ pub(crate) mod sliding_keys_source {
             // Next read must re-emit the nacked messages before any new data.
             let (tx2, mut rx2) = mpsc::channel(64);
             source
-                .read(SourceReadRequest { count: 10, timeout: Duration::from_secs(1) }, tx2)
+                .read(
+                    SourceReadRequest {
+                        count: 10,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx2,
+                )
                 .await;
             let reread = drain(&mut rx2).await;
             assert_eq!(reread.len(), first.len(), "re-emits exactly the nacked set");
@@ -405,7 +507,11 @@ pub(crate) mod sliding_keys_source {
             b.sort_by(|x, y| x.0.cmp(&y.0));
             assert_eq!(a, b, "re-emitted messages must match the originals");
 
-            assert_eq!(source.pending().await, Some(4), "re-read moves back to pending");
+            assert_eq!(
+                source.pending().await,
+                Some(4),
+                "re-read moves back to pending"
+            );
         }
     }
 }
