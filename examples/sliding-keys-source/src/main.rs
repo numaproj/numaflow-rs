@@ -29,6 +29,13 @@ pub(crate) mod sliding_keys_source {
         }
     }
 
+    /// Number of full flush intervals elapsed = how far the window has slid.
+    /// `flush_interval` is guaranteed >= 1s by [`Config::new`], so the divisor
+    /// is never zero.
+    pub(crate) fn window_base(elapsed: Duration, flush_interval: Duration) -> u64 {
+        (elapsed.as_nanos() / flush_interval.as_nanos()) as u64
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -47,6 +54,15 @@ pub(crate) mod sliding_keys_source {
             assert_eq!(c.num_keys, 8);
             assert_eq!(c.flush_interval, Duration::from_secs(30));
             assert_eq!(c.emit_interval, Duration::from_millis(250));
+        }
+
+        #[test]
+        fn window_base_counts_elapsed_intervals() {
+            let interval = Duration::from_secs(10);
+            assert_eq!(window_base(Duration::from_secs(0), interval), 0);
+            assert_eq!(window_base(Duration::from_secs(9), interval), 0);
+            assert_eq!(window_base(Duration::from_secs(10), interval), 1);
+            assert_eq!(window_base(Duration::from_secs(35), interval), 3);
         }
     }
 }
