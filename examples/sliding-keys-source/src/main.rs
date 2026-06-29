@@ -194,8 +194,23 @@ pub(crate) mod sliding_keys_source {
             }
         }
 
-        async fn nack(&self, _offset: Vec<Offset>) {
-            // Implemented in Task 5.
+        async fn nack(&self, offset: Vec<Offset>) {
+            // Remove from pending first (release that lock), then stage for retry.
+            let mut removed = Vec::new();
+            {
+                let mut yet = self.yet_to_ack.write().unwrap();
+                for o in offset {
+                    if let Ok(key) = String::from_utf8(o.offset) {
+                        if let Some(pending) = yet.remove(&key) {
+                            removed.push((key, pending));
+                        }
+                    }
+                }
+            }
+            let mut nacked = self.nacked.write().unwrap();
+            for (offset, pending) in removed {
+                nacked.insert(offset, pending);
+            }
         }
 
         async fn pending(&self) -> Option<usize> {
@@ -348,6 +363,49 @@ pub(crate) mod sliding_keys_source {
         async fn partitions_is_zero() {
             let source = SlidingKeysSource::with_config(test_config(3));
             assert_eq!(source.partitions().await, Some(vec![0]));
+        }
+
+        #[tokio::test]
+        async fn nack_then_reread_reemits_identically() {
+            let source = SlidingKeysSource::with_config(test_config(3));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(SourceReadRequest { count: 4, timeout: Duration::from_secs(1) }, tx)
+                .await;
+            let first = drain(&mut rx).await;
+            let offsets: Vec<Offset> = first
+                .iter()
+                .map(|m| Offset {
+                    offset: m.offset.offset.clone(),
+                    partition_id: m.offset.partition_id,
+                })
+                .collect();
+
+            source.nack(offsets).await;
+            assert_eq!(source.pending().await, Some(0), "nack moves out of pending");
+
+            // Next read must re-emit the nacked messages before any new data.
+            let (tx2, mut rx2) = mpsc::channel(64);
+            source
+                .read(SourceReadRequest { count: 10, timeout: Duration::from_secs(1) }, tx2)
+                .await;
+            let reread = drain(&mut rx2).await;
+            assert_eq!(reread.len(), first.len(), "re-emits exactly the nacked set");
+
+            let key = |m: &Message| String::from_utf8(m.offset.offset.clone()).unwrap();
+            let mut a: Vec<_> = first
+                .iter()
+                .map(|m| (key(m), m.keys.clone(), m.value.clone(), m.event_time))
+                .collect();
+            let mut b: Vec<_> = reread
+                .iter()
+                .map(|m| (key(m), m.keys.clone(), m.value.clone(), m.event_time))
+                .collect();
+            a.sort_by(|x, y| x.0.cmp(&y.0));
+            b.sort_by(|x, y| x.0.cmp(&y.0));
+            assert_eq!(a, b, "re-emitted messages must match the originals");
+
+            assert_eq!(source.pending().await, Some(4), "re-read moves back to pending");
         }
     }
 }
