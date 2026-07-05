@@ -9,23 +9,23 @@ rust-version = "1.85.0"
 edition = "2024"
 
 [workspace.dependencies]
-tonic = "0.14.2"
-tonic-prost = "0.14.2"
-tonic-prost-build = "0.14.2"
-tonic-types = "0.14.2"
-prost = "0.14.1"
-prost-types = "0.14.1"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
-tokio-util = "0.7.16"
-tokio-stream = { version = "0.1.17", features = ["net"] }
+tonic = "0.14.5"
+tonic-prost = "0.14.5"
+tonic-prost-build = "0.14.5"
+tonic-types = "0.14.5"
+prost = "0.14.4"
+prost-types = "0.14.4"
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util = "0.7.18"
+tokio-stream = { version = "0.1.18", features = ["net"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-chrono = "0.4.42"
-tracing = "0.1.41"
+serde_json = "1.0.150"
+chrono = "0.4.45"
+tracing = "0.1.44"
 tracing-subscriber = "0.3"
-uuid = { version = "1.18.1", features = ["v4"] }
-thiserror = "2.0.17"
-hyper-util = "0.1.17"
+uuid = { version = "1.23.4", features = ["v4"] }
+thiserror = "2.0.18"
+hyper-util = "0.1.20"
 notify = "8.2.0"
-tempfile = "3.23.0"
-tower = { version = "0.5.2", features = ["util"] }
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }
