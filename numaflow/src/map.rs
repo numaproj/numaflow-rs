@@ -14,6 +14,7 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::map::{self as proto, MapResponse};
 use crate::proto::metadata as metadata_pb;
 use crate::shared;
+use crate::shared::{NACK, NackOptions};
 use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
 
 /// Default socket address for map service
@@ -302,6 +303,8 @@ pub struct Message {
     pub tags: Option<Vec<String>>,
     /// User metadata for the message.
     pub user_metadata: Option<UserMetadata>,
+    /// Options to send back to source when nacking the message.
+    pub nack_options: Option<NackOptions>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -326,8 +329,10 @@ impl Message {
             keys: None,
             tags: None,
             user_metadata: None,
+            nack_options: None,
         }
     }
+
     /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
     ///
     /// # Examples
@@ -342,6 +347,26 @@ impl Message {
             value: vec![],
             tags: Some(vec![DROP.to_string()]),
             user_metadata: None,
+            nack_options: None,
+        }
+    }
+
+    /// Marks the input datum the derived message belongs to, to be nacked by creating a new
+    /// `Message` with a special "NACK" tag and optional options to be passed back to the source
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let nacked_message = Message::message_to_nack(None);
+    /// ```
+    pub fn message_to_nack(nack_options: Option<NackOptions>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![NACK.to_string()]),
+            user_metadata: None,
+            nack_options,
         }
     }
 
@@ -416,6 +441,7 @@ impl From<Message> for proto::map_response::Result {
             value: value.value,
             tags: value.tags.unwrap_or_default(),
             metadata: Some(to_proto(value.user_metadata.as_ref())),
+            nack_options: value.nack_options.map(Into::into),
         }
     }
 }
@@ -796,6 +822,7 @@ mod tests {
                     value: input.value,
                     tags: Some(vec![]),
                     user_metadata: None,
+                    nack_options: None,
                 }]
             }
         }

@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 pub(crate) mod simple_source {
     use chrono::Utc;
-    use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
+    use numaflow::source::{Message, NackOffset, Offset, SourceReadRequest, Sourcer};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{collections::HashSet, sync::RwLock};
     use tokio::sync::mpsc::Sender;
@@ -88,11 +88,11 @@ pub(crate) mod simple_source {
 
         /// negatively acknowledge the offsets, removes the offset from the set and adds it back to
         /// the front of the queue
-        async fn nack(&self, offset: Vec<Offset>) {
+        async fn nack(&self, offset: Vec<NackOffset>) {
             // put these offsets to the front of the queue, so next read will pick them up
             for offset in offset {
-                println!("Nacking offset: {:?}", offset.offset);
-                let x = &String::from_utf8(offset.offset).unwrap();
+                println!("Nacking offset: {:?}", offset.offset.offset);
+                let x = &String::from_utf8(offset.offset.offset).unwrap();
                 self.yet_to_ack.write().unwrap().remove(x);
                 self.nacked.write().unwrap().insert(x.clone());
                 self.counter.fetch_sub(1, Ordering::Relaxed);
@@ -121,7 +121,7 @@ pub(crate) mod simple_source {
 #[cfg(test)]
 mod tests {
     use super::simple_source::SimpleSource;
-    use numaflow::source::{SourceReadRequest, Sourcer};
+    use numaflow::source::{NackOffset, SourceReadRequest, Sourcer};
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -223,7 +223,17 @@ mod tests {
         let offsets_count = offsets.len();
 
         // Nack the messages
-        source.nack(offsets).await;
+        source
+            .nack(
+                offsets
+                    .into_iter()
+                    .map(|o| NackOffset {
+                        offset: o,
+                        options: None,
+                    })
+                    .collect(),
+            )
+            .await;
 
         // Pending should be 0 after nack (moved to nacked set)
         let pending = source.pending().await;

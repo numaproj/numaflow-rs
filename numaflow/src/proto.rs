@@ -51,3 +51,7 @@ pub mod accumulator;
 #[path = "common/metadata.rs"]
 #[rustfmt::skip]
 pub mod metadata;
+
+#[path = "common/nack_options.rs"]
+#[rustfmt::skip]
+pub mod nack_options;

@@ -11,12 +11,16 @@ fn main() {
 
     Config::new()
         .out_dir("src/common")
-        .compile_protos(&["proto/metadata.proto"], &["proto"])
+        .compile_protos(
+            &["proto/metadata.proto", "proto/nack_options.proto"],
+            &["proto"],
+        )
         .expect("failed to compile common protos");
 
     tonic_prost_build::configure()
         .out_dir(generated_out_dir)
         .extern_path(".metadata", "crate::proto::metadata")
+        .extern_path(".nack_options", "crate::proto::nack_options")
         .compile_protos(
             &[
                 "proto/source.proto",

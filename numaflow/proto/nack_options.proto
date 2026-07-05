@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package nack_options;
+
+// Used to expose options to users for nacking messages
+message NackOptions {
+  // reason this message was nacked
+  optional string reason = 1;
+  // number of times this message should be redelivered
+  optional uint32 max_deliveries = 2;
+  // delay in millisecond
+  optional uint64 delay = 3;
+}
