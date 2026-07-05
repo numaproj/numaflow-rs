@@ -154,7 +154,7 @@ message NackRequest {
     // Options passed to the source for nacking
     optional nack_options.NackOptions nack_options = 2;
   }
-  // Required field holding the request. The list will be ordered and will have the same order as the original Read response.
+  // The list of requests to nack, ordered the same as the original Read response. Must not be empty.
   repeated Request request = 1;
 }
 

@@ -210,7 +210,7 @@ pub mod ack_response {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NackRequest {
-    /// Required field holding the request. The list will be ordered and will have the same order as the original Read response.
+    /// The list of requests to nack, ordered the same as the original Read response. Must not be empty.
     #[prost(message, repeated, tag = "1")]
     pub request: ::prost::alloc::vec::Vec<nack_request::Request>,
 }

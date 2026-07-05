@@ -519,6 +519,11 @@ where
         request: Request<proto::NackRequest>,
     ) -> Result<Response<proto::NackResponse>, Status> {
         let request = request.into_inner().request;
+        if request.is_empty() {
+            return Err(Status::invalid_argument(
+                "Invalid request, request can't be empty".to_string(),
+            ));
+        }
 
         let offsets: Vec<NackOffset> = request
             .into_iter()

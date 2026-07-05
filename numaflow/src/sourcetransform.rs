@@ -354,6 +354,24 @@ impl Message {
         }
     }
 
+    /// Marks the input datum the derived message belongs to, to be nacked by creating a new
+    /// `Message` with a special "NACK" tag, optional options to be passed back to the source,
+    /// and the specified event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is nacked,
+    ///   it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    /// * `nack_options` - Optional options to be passed back to the source when nacking the message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let nacked_message = Message::message_to_nack(now, None);
+    /// ```
     pub fn message_to_nack(
         event_time: DateTime<Utc>,
         nack_options: Option<NackOptions>,
