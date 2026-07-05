@@ -8,4 +8,4 @@ rust-version.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 numaflow = { path = "../../numaflow" }
-redis = { version = "1.0.0", features = ["tokio-comp", "aio"] }
+redis = { version = "1.2.2", features = ["tokio-comp", "aio"] }
