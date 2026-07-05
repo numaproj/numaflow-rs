@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rand = "0.9.4"
+rand = "0.10.2"
 tonic.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
