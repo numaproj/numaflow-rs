@@ -19,8 +19,8 @@ pub(crate) mod sliding_keys_source {
     use chrono::{DateTime, Utc};
     use numaflow::source::{Message, Offset, SourceReadRequest, Sourcer};
     use std::collections::HashMap;
-    use std::sync::RwLock;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, RwLock};
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::Sender;
     use tracing::{info, warn};
@@ -35,6 +35,12 @@ pub(crate) mod sliding_keys_source {
         pub(crate) flush_interval: Duration,
         /// Inter-batch pacing sleep; avoids busy-spin between batches.
         pub(crate) emit_interval: Duration,
+        /// Max total events/sec across all keys. `0.0` means unlimited.
+        pub(crate) max_tps: f64,
+        /// Token-bucket burst capacity: `max(max_tps, 1.0)` tokens — one second
+        /// of capacity when `max_tps >= 1.0`, floored to 1 so at least one token
+        /// can accrue when `max_tps` is very small.
+        pub(crate) tps_burst: f64,
     }
 
     impl Config {
@@ -43,7 +49,15 @@ pub(crate) mod sliding_keys_source {
             num_keys: usize,
             flush_interval_secs: u64,
             emit_interval_ms: u64,
+            max_tps: f64,
         ) -> Self {
+            // Only a finite, positive value enables rate limiting; anything else
+            // (0, negative, NaN, infinite) means unlimited.
+            let max_tps = if max_tps.is_finite() && max_tps > 0.0 {
+                max_tps
+            } else {
+                0.0
+            };
             Self {
                 num_keys: num_keys.max(1),
                 // Floor to 1s so the window always has a positive period
@@ -51,6 +65,8 @@ pub(crate) mod sliding_keys_source {
                 flush_interval: Duration::from_secs(flush_interval_secs.max(1)),
                 // Floor to 1ms so a 0 value still paces reads (busy-spin guard).
                 emit_interval: Duration::from_millis(emit_interval_ms.max(1)),
+                max_tps,
+                tps_burst: max_tps.max(1.0),
             }
         }
 
@@ -60,6 +76,7 @@ pub(crate) mod sliding_keys_source {
                 parse_env("NUM_KEYS", 5),
                 parse_env("FLUSH_INTERVAL_SECS", 10),
                 parse_env("EMIT_INTERVAL_MS", 100),
+                parse_env("MAX_TPS", 0.0),
             )
         }
     }
@@ -105,6 +122,43 @@ pub(crate) mod sliding_keys_source {
             .collect()
     }
 
+    /// Token-bucket state for rate limiting. Shared across `read` calls.
+    #[derive(Debug)]
+    pub(crate) struct TokenBucket {
+        tokens: f64,
+        last: Instant,
+    }
+
+    impl TokenBucket {
+        fn new(initial: f64, now: Instant) -> Self {
+            Self {
+                tokens: initial,
+                last: now,
+            }
+        }
+    }
+
+    /// Refill `bucket` for the time elapsed since its last call (capped at
+    /// `burst`) and take up to `want` tokens, returning how many were granted.
+    /// A non-positive `tps` means unlimited and always grants `want`.
+    pub(crate) fn take_tokens(
+        bucket: &mut TokenBucket,
+        now: Instant,
+        want: usize,
+        tps: f64,
+        burst: f64,
+    ) -> usize {
+        if tps <= 0.0 {
+            return want;
+        }
+        let elapsed = now.saturating_duration_since(bucket.last).as_secs_f64();
+        bucket.last = now;
+        bucket.tokens = (bucket.tokens + elapsed * tps).min(burst);
+        let granted = (bucket.tokens.floor() as usize).min(want);
+        bucket.tokens -= granted as f64;
+        granted
+    }
+
     /// A pending (read-but-unacked) message, retained so a nack can re-emit it
     /// with the exact same key, value, and event time.
     #[derive(Debug, Clone)]
@@ -129,6 +183,8 @@ pub(crate) mod sliding_keys_source {
         yet_to_ack: RwLock<HashMap<String, Pending>>,
         /// offset -> pending message to re-emit on the next read.
         nacked: RwLock<HashMap<String, Pending>>,
+        /// Token bucket for total-TPS rate limiting.
+        bucket: Mutex<TokenBucket>,
     }
 
     impl SlidingKeysSource {
@@ -137,6 +193,7 @@ pub(crate) mod sliding_keys_source {
         }
 
         pub(crate) fn with_config(config: Config) -> Self {
+            let bucket = Mutex::new(TokenBucket::new(config.tps_burst, Instant::now()));
             Self {
                 config,
                 start: Instant::now(),
@@ -144,6 +201,7 @@ pub(crate) mod sliding_keys_source {
                 counter: AtomicUsize::new(0),
                 yet_to_ack: RwLock::new(HashMap::new()),
                 nacked: RwLock::new(HashMap::new()),
+                bucket,
             }
         }
 
@@ -194,16 +252,35 @@ pub(crate) mod sliding_keys_source {
             // Pace generation (prevents busy-spin between batches).
             tokio::time::sleep(self.config.emit_interval).await;
 
+            // Rate-limit total emission to MAX_TPS (unlimited when 0). The bucket
+            // guard is `!Send`, so keep it in this synchronous block (no `.await`)
+            // to keep the `read` future `Send`.
+            let allowed = {
+                let mut bucket = self.bucket.lock().unwrap();
+                take_tokens(
+                    &mut bucket,
+                    Instant::now(),
+                    request.count,
+                    self.config.max_tps,
+                    self.config.tps_burst,
+                )
+            };
+            if allowed == 0 {
+                return;
+            }
+
             // Snapshot the window position and reserve a contiguous run of
             // rotation positions for this batch. `fetch_add` returns the prior
             // cursor (our start_pos); positions are taken `% num_keys` on use.
+            // Advance by `allowed` (not `request.count`) so a token-limited batch
+            // doesn't skip rotation positions.
             let base = window_base(self.start.elapsed(), self.config.flush_interval);
-            let start_pos = self.cursor.fetch_add(request.count, Ordering::Relaxed);
+            let start_pos = self.cursor.fetch_add(allowed, Ordering::Relaxed);
             let now_utc = Utc::now();
             let ts_nanos = now_utc.timestamp_nanos_opt().unwrap_or(0);
 
             let planned: Vec<(String, Pending)> =
-                batch_key_indices(base, start_pos, request.count, self.config.num_keys)
+                batch_key_indices(base, start_pos, allowed, self.config.num_keys)
                     .into_iter()
                     .map(|idx| {
                         let key = format!("key-{idx}");
@@ -289,22 +366,67 @@ pub(crate) mod sliding_keys_source {
         #[test]
         fn config_new_sanitizes_input() {
             // num_keys floored to 1
-            assert_eq!(Config::new(0, 10, 100).num_keys, 1);
+            assert_eq!(Config::new(0, 10, 100, 0.0).num_keys, 1);
             // flush_interval floored to 1s (no divide-by-zero in window_base)
             assert_eq!(
-                Config::new(5, 0, 100).flush_interval,
+                Config::new(5, 0, 100, 0.0).flush_interval,
                 Duration::from_secs(1)
             );
             // emit_interval floored to 1ms so 0 still paces reads
             assert_eq!(
-                Config::new(5, 10, 0).emit_interval,
+                Config::new(5, 10, 0, 0.0).emit_interval,
                 Duration::from_millis(1)
             );
+            // MAX_TPS: only finite positive enables limiting; 0/negative/NaN/inf
+            // mean unlimited (0.0). tps_burst is floored to 1.0.
+            assert_eq!(Config::new(5, 10, 100, 20.0).max_tps, 20.0);
+            assert_eq!(Config::new(5, 10, 100, -5.0).max_tps, 0.0);
+            assert_eq!(Config::new(5, 10, 100, f64::NAN).max_tps, 0.0);
+            assert_eq!(Config::new(5, 10, 100, f64::INFINITY).max_tps, 0.0);
+            assert_eq!(Config::new(5, 10, 100, 20.0).tps_burst, 20.0);
+            assert_eq!(Config::new(5, 10, 100, 0.0).tps_burst, 1.0);
             // in-range values pass through, mapped to the right units
-            let c = Config::new(8, 30, 250);
+            let c = Config::new(8, 30, 250, 0.0);
             assert_eq!(c.num_keys, 8);
             assert_eq!(c.flush_interval, Duration::from_secs(30));
             assert_eq!(c.emit_interval, Duration::from_millis(250));
+        }
+
+        #[test]
+        fn take_tokens_unlimited_grants_all() {
+            // tps <= 0 => unlimited, always grants the full `want`.
+            let mut b = TokenBucket::new(0.0, Instant::now());
+            assert_eq!(take_tokens(&mut b, Instant::now(), 100, 0.0, 1.0), 100);
+        }
+
+        #[test]
+        fn take_tokens_caps_by_available_then_empties() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // After 1s at 10 tps, ~10 tokens accrue (capped at burst 10).
+            let g1 = take_tokens(&mut b, base + Duration::from_secs(1), 100, 10.0, 10.0);
+            assert_eq!(g1, 10, "1s of refill at 10 tps grants 10");
+            // Immediately asking again (no elapsed time) grants nothing.
+            let g2 = take_tokens(&mut b, base + Duration::from_secs(1), 100, 10.0, 10.0);
+            assert_eq!(g2, 0, "bucket emptied, no refill yet");
+        }
+
+        #[test]
+        fn take_tokens_refill_capped_at_burst() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // 100s of refill at 10 tps would be 1000, but burst caps it at 10.
+            let g = take_tokens(&mut b, base + Duration::from_secs(100), 1000, 10.0, 10.0);
+            assert_eq!(g, 10, "refill is capped at burst");
+        }
+
+        #[test]
+        fn take_tokens_grants_only_up_to_want() {
+            let base = Instant::now();
+            let mut b = TokenBucket::new(0.0, base);
+            // Plenty of tokens available, but `want` bounds the grant.
+            let g = take_tokens(&mut b, base + Duration::from_secs(10), 5, 100.0, 1000.0);
+            assert_eq!(g, 5, "never grants more than requested");
         }
 
         #[test]
@@ -350,7 +472,8 @@ pub(crate) mod sliding_keys_source {
         fn test_config(num_keys: usize) -> Config {
             // 1ms emit pacing (0 floors to 1) keeps tests fast; flush 1h away so
             // `base` stays 0 during a test → active window is key-0..key-(n-1).
-            Config::new(num_keys, 3600, 0)
+            // max_tps=0.0 => unlimited, so token limiting never interferes.
+            Config::new(num_keys, 3600, 0, 0.0)
         }
 
         async fn drain(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
@@ -399,6 +522,29 @@ pub(crate) mod sliding_keys_source {
             assert_eq!(offsets.len(), msgs.len(), "offsets must be unique");
 
             assert_eq!(source.pending().await, Some(6));
+        }
+
+        #[tokio::test]
+        async fn read_respects_tps_cap() {
+            // max_tps=3 => tps_burst=3 and the bucket starts full (3 tokens).
+            // Asking for 100 should yield exactly the 3 available tokens, even
+            // though the active window (num_keys=5) could supply more.
+            let source = SlidingKeysSource::with_config(Config::new(5, 3600, 0, 3.0));
+            let (tx, mut rx) = mpsc::channel(64);
+            source
+                .read(
+                    SourceReadRequest {
+                        count: 100,
+                        timeout: Duration::from_secs(1),
+                    },
+                    tx,
+                )
+                .await;
+            assert_eq!(
+                drain(&mut rx).await.len(),
+                3,
+                "bucket had 3 tokens; should emit exactly 3"
+            );
         }
 
         #[tokio::test]

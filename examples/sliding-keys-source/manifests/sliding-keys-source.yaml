@@ -23,17 +23,24 @@ spec:
           - name: EMIT_INTERVAL_MS
             value: "100"
           - name: MAX_TPS
-            value: "0"
+            value: "100"
           image: docker.intuit.com/personal/vtiwari5/numaflow-rs/sliding-keys-source:stable
           imagePullPolicy: Always
   - name: accum
+    containerTemplate:
+      env:
+        - { name: LD_PRELOAD, value: /usr/share/libbytehound.so }
+        - { name: MEMORY_PROFILER_LOG, value: info }
+        - { name: MEMORY_PROFILER_OUTPUT, value: /var/numaflow/pbq/memory-profiling_%e_%t_%p.dat }
+        - { name: MEMORY_PROFILER_CULL_TEMPORARY_ALLOCATIONS, value: "1" }
+        - { name: MEMORY_PROFILER_GRAB_BACKTRACES_ON_FREE, value: "0" }
+      securityContext:
+        capabilities:
+          add:
+            - SYS_PTRACE
     udf:
       container:
         env:
-        - name: MALLOC_ARENA_MAX
-          value: "2"
-        - name: MALLOC_TRIM_THRESHOLD_
-          value: "131072"
         image: docker.intuit.com/personal/vtiwari5/numaflow-rs/stream-sorter:stable
       groupBy:
         keyed: true
