@@ -15,7 +15,7 @@ struct NackCat;
 
 #[tonic::async_trait]
 impl map::Mapper for NackCat {
-    async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
+    async fn map(&self, _input: map::MapRequest) -> Vec<map::Message> {
         let mut nack_map = HashMap::new();
         nack_map.insert("key".to_string(), "value".to_string());
         let nack_options = NackOptions {
