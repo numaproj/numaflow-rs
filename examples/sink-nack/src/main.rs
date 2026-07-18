@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use numaflow::shared::NackOptions;
 use numaflow::sink::{self, Response, SinkRequest};
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -28,13 +28,13 @@ impl sink::Sinker for Logger {
                 Err(e) => {
                     let mut nack_map = HashMap::new();
                     nack_map.insert("property".to_string(), "value".to_string());
-                    let nack_options = NackOptions{
+                    let nack_options = NackOptions {
                         reason: Some(format!("Nacked due to failure: {}", e)),
                         nack_map,
                         ..Default::default()
                     };
                     Response::nack(datum.id, Some(nack_options))
-                },
+                }
             };
 
             // return the responses
@@ -44,4 +44,3 @@ impl sink::Sinker for Logger {
         responses
     }
 }
-

@@ -97,7 +97,10 @@ pub(crate) mod simple_source {
                         println!("Reason for nacking offset: {}", reason)
                     }
                     if !nack_options.nack_map.is_empty() {
-                        println!("Generic nack options for offset: {:?}", nack_options.nack_map);
+                        println!(
+                            "Generic nack options for offset: {:?}",
+                            nack_options.nack_map
+                        );
                     }
                 }
                 let x = &String::from_utf8(offset.offset.offset).unwrap();

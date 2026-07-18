@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use numaflow::map;
-use numaflow::shared::grpc_server::ServerExtras;
 use numaflow::shared::NackOptions;
+use numaflow::shared::grpc_server::ServerExtras;
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -18,7 +18,7 @@ impl map::Mapper for NackCat {
     async fn map(&self, input: map::MapRequest) -> Vec<map::Message> {
         let mut nack_map = HashMap::new();
         nack_map.insert("key".to_string(), "value".to_string());
-        let nack_options = NackOptions{
+        let nack_options = NackOptions {
             reason: Some("nacked in udf".to_string()),
             nack_map,
             ..Default::default()
