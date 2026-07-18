@@ -92,6 +92,17 @@ pub(crate) mod simple_source {
             // put these offsets to the front of the queue, so next read will pick them up
             for offset in offset {
                 println!("Nacking offset: {:?}", offset.offset.offset);
+                if let Some(nack_options) = offset.options {
+                    if let Some(reason) = nack_options.reason {
+                        println!("Reason for nacking offset: {}", reason)
+                    }
+                    if !nack_options.nack_map.is_empty() {
+                        println!(
+                            "Generic nack options for offset: {:?}",
+                            nack_options.nack_map
+                        );
+                    }
+                }
                 let x = &String::from_utf8(offset.offset.offset).unwrap();
                 self.yet_to_ack.write().unwrap().remove(x);
                 self.nacked.write().unwrap().insert(x.clone());

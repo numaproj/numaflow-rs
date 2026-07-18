@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use std::collections::HashMap;
 
 pub mod grpc_server;
 pub(crate) mod panic;
@@ -50,6 +51,8 @@ pub struct NackOptions {
     pub max_deliveries: Option<u32>,
     /// Reason for nacking the message
     pub reason: Option<String>,
+    /// Generic values passed as nack options
+    pub nack_map: HashMap<String, String>,
 }
 
 impl From<crate::proto::nack_options::NackOptions> for NackOptions {
@@ -58,6 +61,7 @@ impl From<crate::proto::nack_options::NackOptions> for NackOptions {
             delay: options.delay,
             max_deliveries: options.max_deliveries,
             reason: options.reason,
+            nack_map: options.nack_map,
         }
     }
 }
@@ -68,6 +72,7 @@ impl From<NackOptions> for crate::proto::nack_options::NackOptions {
             delay: options.delay,
             max_deliveries: options.max_deliveries,
             reason: options.reason,
+            nack_map: options.nack_map,
         }
     }
 }

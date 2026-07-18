@@ -42,7 +42,7 @@ impl KeyPartitionTracker {
             .connection
             .clone()
             .getset(
-                format!("{}-{}", &self.key_prefix, key),
+                format!("{}-{}", self.key_prefix, key),
                 self.replica_id.clone(),
             )
             .await?;
