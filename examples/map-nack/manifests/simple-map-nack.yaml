@@ -1,7 +1,7 @@
 apiVersion: numaflow.numaproj.io/v1alpha1
 kind: Pipeline
 metadata:
-  name: simple-map-cat
+  name: simple-map-nack
 spec:
   vertices:
     - name: in
@@ -12,7 +12,7 @@ spec:
           duration: 1s
           keyCount: 5
           value: 5
-    - name: cat
+    - name: nack-cat
       scale:
         min: 1
       udf:
