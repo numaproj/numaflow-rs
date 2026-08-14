@@ -18,7 +18,7 @@ use crate::shared;
 
 use crate::shared::{NACK, NackOptions};
 use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc,
+    ContainerType, DROP, FAIL, build_panic_status, get_panic_info, prost_timestamp_from_utc,
     utc_from_timestamp,
 };
 
@@ -383,6 +383,34 @@ impl Message {
             tags: Some(vec![NACK.to_string()]),
             user_metadata: None,
             nack_options,
+        }
+    }
+
+    /// Marks the message as failed by creating a new `Message` with an empty value, a special
+    /// "FAIL" tag, and the specified event time. Messages bearing this tag are retried by the
+    /// Numaflow core.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is failed,
+    ///   it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let failed_message = Message::message_to_fail(now);
+    /// ```
+    pub fn message_to_fail(event_time: DateTime<Utc>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            event_time,
+            tags: Some(vec![FAIL.to_string()]),
+            user_metadata: None,
+            nack_options: None,
         }
     }
 
@@ -838,6 +866,17 @@ mod tests {
     use crate::shared::ServerExtras;
     use chrono::Utc;
     use std::{error::Error, time::Duration};
+
+    #[test]
+    fn message_to_fail_sets_fail_tag() {
+        use crate::shared::FAIL;
+        let now = Utc::now();
+        let result: super::proto::source_transform_response::Result =
+            super::Message::message_to_fail(now).into();
+        assert_eq!(result.tags, vec![FAIL.to_string()]);
+        assert!(result.value.is_empty());
+        assert!(result.nack_options.is_none());
+    }
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::{mpsc, oneshot};

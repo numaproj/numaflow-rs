@@ -15,7 +15,7 @@ use crate::proto::map::{self as proto, MapResponse};
 use crate::proto::metadata as metadata_pb;
 use crate::shared;
 use crate::shared::{NACK, NackOptions};
-use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
+use shared::{ContainerType, DROP, FAIL, build_panic_status, get_panic_info};
 
 /// Default socket address for map service
 pub const SOCK_ADDR: &str = "/var/run/numaflow/map.sock";
@@ -367,6 +367,25 @@ impl Message {
             tags: Some(vec![NACK.to_string()]),
             user_metadata: None,
             nack_options,
+        }
+    }
+
+    /// Marks the message as failed by creating a new `Message` with an empty value and a special
+    /// "FAIL" tag. Messages bearing this tag are retried by the Numaflow core.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::map::Message;
+    /// let failed_message = Message::message_to_fail();
+    /// ```
+    pub fn message_to_fail() -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![FAIL.to_string()]),
+            user_metadata: None,
+            nack_options: None,
         }
     }
 
@@ -798,6 +817,15 @@ impl<T> Server<T> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, time::Duration};
+
+    #[test]
+    fn message_to_fail_sets_fail_tag() {
+        use crate::shared::FAIL;
+        let result: super::proto::map_response::Result = super::Message::message_to_fail().into();
+        assert_eq!(result.tags, vec![FAIL.to_string()]);
+        assert!(result.value.is_empty());
+        assert!(result.nack_options.is_none());
+    }
 
     use crate::shared::ServerExtras;
     use tempfile::TempDir;
