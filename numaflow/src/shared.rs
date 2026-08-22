@@ -20,6 +20,10 @@ pub const DROP: &str = "U+005C__DROP__";
 /// Nack message constant
 pub const NACK: &str = "U+005C__NACK__";
 
+/// Fail message constant. Messages tagged with this are retried by the core.
+/// Must match the `FAIL` constant defined in numaflow-core (message.rs).
+pub const FAIL: &str = "U+005C__FAIL__";
+
 // Re-export commonly used items
 pub use grpc_server::{Server, ServerExtras};
 pub(crate) use panic::{build_panic_status, get_panic_info, init_panic_hook};
