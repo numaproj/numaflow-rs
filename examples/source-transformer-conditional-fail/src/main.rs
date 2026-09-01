@@ -4,14 +4,11 @@ use std::sync::Mutex;
 use numaflow::sourcetransform;
 
 /// Payload that triggers the "always fail" behavior. A message whose body equals
-/// this string is failed on every delivery — it never recovers. This drives the
-/// `onFailure: drop` (retries exhausted → dropped) and `onFailure: retry`
-/// (retries exhausted → nack/crash-loop) e2e scenarios.
+/// this string is failed on every delivery — it never recovers.
 const ALWAYS_FAIL_PAYLOAD: &str = "fail";
 
 /// Number of times a recoverable (non-"fail") message is failed before it is
-/// passed through unchanged. Overridable via the `FAIL_COUNT` env var so the same
-/// image can serve different `retryStrategy.backoff.steps` without a rebuild.
+/// passed through unchanged. Overridable via the `FAIL_COUNT` env var
 const DEFAULT_FAIL_COUNT: u32 = 2;
 
 #[tokio::main]
@@ -34,9 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// - anything else: emit a FAIL-tagged message the first `fail_count` deliveries
 ///   of that exact payload, then pass it through.
 ///
-/// The recover path is keyed per payload value so that, driven by a single known
-/// message over an HTTP source, exactly one message accumulates a deterministic
-/// `fail_count` failures before succeeding.
+/// The recover path is keyed per payload value so that, exactly one message
+/// accumulates a deterministic `fail_count` failures before succeeding.
 struct ConditionalFail {
     /// Times a recoverable payload is failed before it is allowed through.
     fail_count: u32,
