@@ -474,7 +474,7 @@ impl Message {
 impl From<Message> for sink_pb::sink_response::result::Message {
     fn from(msg: Message) -> Self {
         Self {
-            keys: msg.keys.map_or(vec![], |keys| keys),
+            keys: msg.keys.unwrap_or(vec![]),
             value: msg.value,
             metadata: msg
                 .user_metadata
