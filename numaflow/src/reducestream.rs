@@ -795,7 +795,7 @@ mod tests {
 
     async fn setup_server<C: reducestream::ReduceStreamerCreator + Send + Sync + 'static>(
         creator: C,
-    ) -> Result<(reducestream::Server<C>, PathBuf, PathBuf), Box<dyn Error>> {
+    ) -> Result<(reducestream::Server<C>, PathBuf, PathBuf, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let sock_file = tmp_dir.path().join("reducestream.sock");
         let server_info_file = tmp_dir.path().join("reducestreamer-server-info");
@@ -805,7 +805,7 @@ mod tests {
             .with_socket_file(&sock_file)
             .with_max_message_size(10240);
 
-        Ok((server, sock_file, server_info_file))
+        Ok((server, sock_file, server_info_file, tmp_dir))
     }
 
     async fn setup_client(
@@ -829,7 +829,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_start() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, server_info_file) = setup_server(StreamingSumCreator).await?;
+        let (server, sock_file, server_info_file, _tmp_dir) =
+            setup_server(StreamingSumCreator).await?;
 
         assert_eq!(server.max_message_size(), 10240);
         assert_eq!(server.server_info_file(), server_info_file);
@@ -863,7 +864,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_sum_test() -> Result<(), Box<dyn Error>> {
-        let (server, sock_file, _) = setup_server(StreamingSumCreator).await?;
+        let (server, sock_file, _, _tmp_dir) = setup_server(StreamingSumCreator).await?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 

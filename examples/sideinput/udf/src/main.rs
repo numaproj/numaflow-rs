@@ -15,6 +15,7 @@ impl Mapper for UdfMapper {
             value: b"some_value".to_vec(),
             tags: vec![].into(),
             user_metadata: None,
+            nack_options: None,
         };
         vec![message]
     }

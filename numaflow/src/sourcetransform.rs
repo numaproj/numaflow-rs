@@ -16,8 +16,9 @@ use crate::proto::metadata as metadata_pb;
 use crate::proto::source_transformer as proto;
 use crate::shared;
 
+use crate::shared::{NACK, NackOptions};
 use shared::{
-    ContainerType, DROP, build_panic_status, get_panic_info, prost_timestamp_from_utc,
+    ContainerType, DROP, FAIL, build_panic_status, get_panic_info, prost_timestamp_from_utc,
     utc_from_timestamp,
 };
 
@@ -294,6 +295,8 @@ pub struct Message {
     pub tags: Option<Vec<String>>,
     /// User metadata for the message.
     pub user_metadata: Option<UserMetadata>,
+    /// Options to send to the source when nacking this message
+    pub nack_options: Option<NackOptions>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -322,6 +325,7 @@ impl Message {
             keys: None,
             tags: None,
             user_metadata: None,
+            nack_options: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value, a special "DROP" tag, and the specified event time.
@@ -346,6 +350,67 @@ impl Message {
             event_time,
             tags: Some(vec![DROP.to_string()]),
             user_metadata: None,
+            nack_options: None,
+        }
+    }
+
+    /// Marks the input datum the derived message belongs to, to be nacked by creating a new
+    /// `Message` with a special "NACK" tag, optional options to be passed back to the source,
+    /// and the specified event time.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is nacked,
+    ///   it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    /// * `nack_options` - Optional options to be passed back to the source when nacking the message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let nacked_message = Message::message_to_nack(now, None);
+    /// ```
+    pub fn message_to_nack(
+        event_time: DateTime<Utc>,
+        nack_options: Option<NackOptions>,
+    ) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            event_time,
+            tags: Some(vec![NACK.to_string()]),
+            user_metadata: None,
+            nack_options,
+        }
+    }
+
+    /// Marks the message as failed by creating a new `Message` with an empty value, a special
+    /// "FAIL" tag, and the specified event time. Messages bearing this tag are retried by the
+    /// Numaflow core.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_time` - The `DateTime<Utc>` that specifies when the event occurred. Event time is required because, even though a message is failed,
+    ///   it is still considered as being processed, hence the watermark should be updated accordingly using the provided event time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::sourcetransform::Message;
+    /// use chrono::Utc;
+    /// let now = Utc::now();
+    /// let failed_message = Message::message_to_fail(now);
+    /// ```
+    pub fn message_to_fail(event_time: DateTime<Utc>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            event_time,
+            tags: Some(vec![FAIL.to_string()]),
+            user_metadata: None,
+            nack_options: None,
         }
     }
 
@@ -443,6 +508,7 @@ impl From<Message> for proto::source_transform_response::Result {
             event_time: prost_timestamp_from_utc(value.event_time),
             tags: value.tags.unwrap_or_default(),
             metadata: Some(to_proto(value.user_metadata.as_ref())),
+            nack_options: value.nack_options.map(Into::into),
         }
     }
 }
@@ -800,6 +866,17 @@ mod tests {
     use crate::shared::ServerExtras;
     use chrono::Utc;
     use std::{error::Error, time::Duration};
+
+    #[test]
+    fn message_to_fail_sets_fail_tag() {
+        use crate::shared::FAIL;
+        let now = Utc::now();
+        let result: super::proto::source_transform_response::Result =
+            super::Message::message_to_fail(now).into();
+        assert_eq!(result.tags, vec![FAIL.to_string()]);
+        assert!(result.value.is_empty());
+        assert!(result.nack_options.is_none());
+    }
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::{mpsc, oneshot};
@@ -827,6 +904,7 @@ mod tests {
                     tags: Some(vec![]),
                     event_time: Utc::now(),
                     user_metadata: None,
+                    nack_options: None,
                 }]
             }
         }

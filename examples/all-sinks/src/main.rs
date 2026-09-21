@@ -1,6 +1,6 @@
 use numaflow::sink::KeyValueGroup;
 use numaflow::sink::{self, Message, Response, SinkRequest};
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 #[tokio::main]

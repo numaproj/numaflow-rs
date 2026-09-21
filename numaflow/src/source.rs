@@ -16,6 +16,7 @@ use crate::proto::metadata as metadata_pb;
 use crate::proto::source as proto;
 use crate::proto::source::{AckRequest, AckResponse, ReadRequest, ReadResponse};
 use crate::shared;
+use crate::shared::NackOptions;
 use shared::{ContainerType, prost_timestamp_from_utc};
 
 /// Default socket address for source service
@@ -57,7 +58,7 @@ pub trait Sourcer {
     /// Acknowledges the message that has been processed by the user-defined source.
     async fn ack(&self, offset: Vec<Offset>);
     /// Negatively acknowledges the message that has been processed by the user-defined source.
-    async fn nack(&self, offset: Vec<Offset>);
+    async fn nack(&self, offset: Vec<NackOffset>);
     /// Returns the number of messages that are yet to be processed by the user-defined source.
     /// The None value can be returned if source doesn't support detecting the backlog.
     async fn pending(&self) -> Option<usize>;
@@ -242,6 +243,13 @@ pub struct Offset {
     pub offset: Vec<u8>,
     /// Partition ID of the message.
     pub partition_id: i32,
+}
+
+/// Offset solely used when nacking.
+/// Encapsulates normal offset and nack options for that offset
+pub struct NackOffset {
+    pub offset: Offset,
+    pub options: Option<NackOptions>,
 }
 
 /// Converts Option<&UserMetadata> to proto Metadata.
@@ -510,14 +518,22 @@ where
         &self,
         request: Request<proto::NackRequest>,
     ) -> Result<Response<proto::NackResponse>, Status> {
-        let request = request.into_inner().request.ok_or_else(|| {
-            Status::invalid_argument("Invalid request, request can't be empty".to_string())
-        })?;
+        let request = request.into_inner().request;
+        if request.is_empty() {
+            return Err(Status::invalid_argument(
+                "Invalid request, request can't be empty".to_string(),
+            ));
+        }
 
-        let offsets: Vec<Offset> = request
-            .offsets
+        let offsets: Vec<NackOffset> = request
             .into_iter()
-            .map(|offset| offset.into())
+            .flat_map(|request| {
+                let option = request.nack_options.map(Into::into);
+                request.offsets.into_iter().map(move |offset| NackOffset {
+                    offset: offset.into(),
+                    options: option.clone(),
+                })
+            })
             .collect();
 
         self.handler.nack(offsets).await;
@@ -752,7 +768,7 @@ mod tests {
     use tower::service_fn;
     use uuid::Uuid;
 
-    use super::{Message, Offset, SourceReadRequest, proto};
+    use super::{Message, NackOffset, Offset, SourceReadRequest, proto};
     use crate::source;
 
     /// A test source that repeats a number for the requested count.
@@ -815,10 +831,11 @@ mod tests {
             }
         }
 
-        async fn nack(&self, offsets: Vec<Offset>) {
+        async fn nack(&self, offsets: Vec<NackOffset>) {
             let mut pending = self.yet_to_ack.write().unwrap();
-            for offset in offsets {
-                let offset_str = String::from_utf8(offset.offset).expect("Invalid UTF-8 in offset");
+            for nack_offset in offsets {
+                let offset_str =
+                    String::from_utf8(nack_offset.offset.offset).expect("Invalid UTF-8 in offset");
                 // For nack, we keep the offset in the pending set
                 // In a real implementation, this might requeue the message
                 pending.insert(offset_str);
@@ -1010,12 +1027,13 @@ mod tests {
         ) -> Result<(), Box<dyn Error>> {
             for message in messages {
                 let nack_request = proto::NackRequest {
-                    request: Some(proto::nack_request::Request {
+                    request: vec![proto::nack_request::Request {
                         offsets: vec![proto::Offset {
                             offset: message.offset.as_ref().unwrap().offset.clone(),
                             partition_id: message.offset.as_ref().unwrap().partition_id,
                         }],
-                    }),
+                        nack_options: None,
+                    }],
                 };
 
                 client.nack_fn(Request::new(nack_request)).await?;
@@ -1184,7 +1202,7 @@ mod tests {
             }
         }
 
-        async fn nack(&self, _offsets: Vec<Offset>) {}
+        async fn nack(&self, _offsets: Vec<NackOffset>) {}
 
         async fn pending(&self) -> Option<usize> {
             Some(self.yet_to_ack.read().unwrap().len())

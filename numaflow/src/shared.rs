@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
+use std::collections::HashMap;
 
 pub mod grpc_server;
 pub(crate) mod panic;
@@ -15,6 +16,13 @@ pub(crate) const ENV_CONTAINER_TYPE: &str = "NUMAFLOW_UD_CONTAINER_TYPE";
 
 /// Drop message constant
 pub const DROP: &str = "U+005C__DROP__";
+
+/// Nack message constant
+pub const NACK: &str = "U+005C__NACK__";
+
+/// Fail message constant. Messages tagged with this are retried by the core.
+/// Must match the `FAIL` constant defined in numaflow-core (message.rs).
+pub const FAIL: &str = "U+005C__FAIL__";
 
 // Re-export commonly used items
 pub use grpc_server::{Server, ServerExtras};
@@ -37,6 +45,40 @@ pub(crate) fn prost_timestamp_from_utc(t: DateTime<Utc>) -> Option<Timestamp> {
         seconds: t.timestamp(),
         nanos: t.nanosecond() as i32,
     })
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NackOptions {
+    /// Delay with which the message should be redelivered after nack
+    pub delay: Option<u64>,
+    /// Number of max redeliveries for the message after nack
+    pub max_deliveries: Option<u32>,
+    /// Reason for nacking the message
+    pub reason: Option<String>,
+    /// Generic values passed as nack options
+    pub nack_map: HashMap<String, String>,
+}
+
+impl From<crate::proto::nack_options::NackOptions> for NackOptions {
+    fn from(options: crate::proto::nack_options::NackOptions) -> Self {
+        Self {
+            delay: options.delay,
+            max_deliveries: options.max_deliveries,
+            reason: options.reason,
+            nack_map: options.nack_map,
+        }
+    }
+}
+
+impl From<NackOptions> for crate::proto::nack_options::NackOptions {
+    fn from(options: NackOptions) -> Self {
+        Self {
+            delay: options.delay,
+            max_deliveries: options.max_deliveries,
+            reason: options.reason,
+            nack_map: options.nack_map,
+        }
+    }
 }
 
 #[cfg(test)]

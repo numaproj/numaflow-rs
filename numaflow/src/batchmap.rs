@@ -16,7 +16,8 @@ use crate::proto::map as proto;
 use crate::proto::map::map_server::Map;
 use crate::proto::map::{MapRequest, MapResponse, ReadyResponse};
 use crate::shared;
-use shared::{ContainerType, DROP, build_panic_status, get_panic_info};
+use crate::shared::{NACK, NackOptions};
+use shared::{ContainerType, DROP, FAIL, build_panic_status, get_panic_info};
 
 /// Default socket address for batchmap service
 pub const SOCK_ADDR: &str = "/var/run/numaflow/batchmap.sock";
@@ -69,6 +70,7 @@ pub trait BatchMapper {
     ///                     keys: Option::from(datum.keys),
     ///                     value: datum.value,
     ///                     tags: None,
+    ///                     nack_options: None,
     ///             });
     ///             responses.push(response);
     ///         }
@@ -124,6 +126,8 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
+    /// Options to send back to source when nacking the message.
+    pub nack_options: Option<NackOptions>,
 }
 
 /// Represents a message that can be modified and forwarded.
@@ -147,6 +151,7 @@ impl Message {
             value,
             keys: None,
             tags: None,
+            nack_options: None,
         }
     }
     /// Marks the message to be dropped by creating a new `Message` with an empty value and a special "DROP" tag.
@@ -162,6 +167,43 @@ impl Message {
             keys: None,
             value: vec![],
             tags: Some(vec![DROP.to_string()]),
+            nack_options: None,
+        }
+    }
+
+    /// Marks the input datum the derived message belongs to, to be nacked by creating a new
+    /// `Message` with a special "NACK" tag and optional options to be passed back to the source
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::batchmap::Message;
+    /// let nacked_message = Message::message_to_nack(None);
+    /// ```
+    pub fn message_to_nack(nack_options: Option<NackOptions>) -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![NACK.to_string()]),
+            nack_options,
+        }
+    }
+
+    /// Marks the message as failed by creating a new `Message` with an empty value and a special
+    /// "FAIL" tag. Messages bearing this tag are retried by the Numaflow core.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use numaflow::batchmap::Message;
+    /// let failed_message = Message::message_to_fail();
+    /// ```
+    pub fn message_to_fail() -> Message {
+        Message {
+            keys: None,
+            value: vec![],
+            tags: Some(vec![FAIL.to_string()]),
+            nack_options: None,
         }
     }
 
@@ -230,6 +272,7 @@ impl From<Message> for proto::map_response::Result {
             tags: value.tags.unwrap_or_default(),
             // TODO: Support metadata for batchmap
             metadata: None,
+            nack_options: value.nack_options.map(Into::into),
         }
     }
 }
@@ -584,6 +627,15 @@ mod tests {
     use crate::shared::ServerExtras;
     use std::{error::Error, time::Duration};
 
+    #[test]
+    fn message_to_fail_sets_fail_tag() {
+        use crate::shared::FAIL;
+        let result: super::proto::map_response::Result = super::Message::message_to_fail().into();
+        assert_eq!(result.tags, vec![FAIL.to_string()]);
+        assert!(result.value.is_empty());
+        assert!(result.nack_options.is_none());
+    }
+
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::sync::mpsc::Receiver;
@@ -609,6 +661,7 @@ mod tests {
                         keys: Option::from(datum.keys),
                         value: datum.value,
                         tags: None,
+                        nack_options: None,
                     });
                     responses.push(response);
                 }
