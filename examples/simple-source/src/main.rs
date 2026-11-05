@@ -81,8 +81,8 @@ pub(crate) mod simple_source {
             self.yet_to_ack.read().unwrap().len().into()
         }
 
-        /// returns the partitions from which the data is being read from.
-        async fn partitions(&self) -> Option<Vec<i32>> {
+        /// returns the active partitions from which the data is being read from.
+        async fn active_partitions(&self) -> Option<Vec<i32>> {
             Some(vec![0])
         }
 
