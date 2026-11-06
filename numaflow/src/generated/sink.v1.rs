@@ -2,6 +2,7 @@
 /// *
 ///
 /// SinkRequest represents a request element.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SinkRequest {
     /// Required field indicating the request.
@@ -17,6 +18,7 @@ pub struct SinkRequest {
 }
 /// Nested message and enum types in `SinkRequest`.
 pub mod sink_request {
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Request {
         #[prost(string, repeated, tag = "1")]
@@ -40,6 +42,7 @@ pub mod sink_request {
     }
 }
 /// Handshake message between client and server to indicate the start of transmission.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Handshake {
     /// Required field indicating the start of transmission.
@@ -49,6 +52,7 @@ pub struct Handshake {
 /// *
 ///
 /// ReadyResponse is the health check result.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReadyResponse {
     #[prost(bool, tag = "1")]
@@ -57,6 +61,7 @@ pub struct ReadyResponse {
 /// *
 ///
 /// TransmissionStatus is the status of the transmission.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TransmissionStatus {
     #[prost(bool, tag = "1")]
@@ -65,6 +70,7 @@ pub struct TransmissionStatus {
 /// *
 ///
 /// SinkResponse is the individual response of each message written to the sink.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SinkResponse {
     #[prost(message, repeated, tag = "1")]
@@ -76,6 +82,7 @@ pub struct SinkResponse {
 }
 /// Nested message and enum types in `SinkResponse`.
 pub mod sink_response {
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Result {
         /// id is the ID of the message, can be used to uniquely identify the message.
@@ -100,6 +107,7 @@ pub mod sink_response {
     }
     /// Nested message and enum types in `Result`.
     pub mod result {
+        #[allow(clippy::all)]
         #[derive(Clone, PartialEq, ::prost::Message)]
         pub struct Message {
             #[prost(bytes = "vec", tag = "1")]
@@ -112,6 +120,7 @@ pub mod sink_response {
     }
 }
 /// Status is the status of the response.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Status {
