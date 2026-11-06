@@ -26,7 +26,7 @@ impl SideInputer for SideInputHandler {
 
         let mut counter = self.counter.lock().unwrap();
         *counter = (*counter + 1) % 10;
-        if *counter % 2 == 0 {
+        if counter.is_multiple_of(2) {
             None
         } else {
             Some(message.into_bytes())
