@@ -2,6 +2,7 @@
 /// *
 ///
 /// MapRequest represents a request element.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MapRequest {
     #[prost(message, optional, tag = "1")]
@@ -16,6 +17,7 @@ pub struct MapRequest {
 }
 /// Nested message and enum types in `MapRequest`.
 pub mod map_request {
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Request {
         #[prost(string, repeated, tag = "1")]
@@ -37,6 +39,7 @@ pub mod map_request {
     }
 }
 /// Handshake message between client and server to indicate the start of transmission.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Handshake {
     /// Required field indicating the start of transmission.
@@ -44,6 +47,7 @@ pub struct Handshake {
     pub sot: bool,
 }
 /// Status message to indicate the status of the message.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TransmissionStatus {
     #[prost(bool, tag = "1")]
@@ -52,6 +56,7 @@ pub struct TransmissionStatus {
 /// *
 ///
 /// MapResponse represents a response element.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MapResponse {
     #[prost(message, repeated, tag = "1")]
@@ -66,6 +71,7 @@ pub struct MapResponse {
 }
 /// Nested message and enum types in `MapResponse`.
 pub mod map_response {
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Result {
         #[prost(string, repeated, tag = "1")]
@@ -87,6 +93,7 @@ pub mod map_response {
 /// *
 ///
 /// ReadyResponse is the health check result.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReadyResponse {
     #[prost(bool, tag = "1")]

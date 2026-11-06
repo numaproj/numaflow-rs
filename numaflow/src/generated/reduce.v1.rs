@@ -2,6 +2,7 @@
 /// *
 ///
 /// ReduceRequest represents a request element.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReduceRequest {
     #[prost(message, optional, tag = "1")]
@@ -13,6 +14,7 @@ pub struct ReduceRequest {
 pub mod reduce_request {
     /// WindowOperation represents a window operation.
     /// For Aligned windows, OPEN, APPEND and CLOSE events are sent.
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct WindowOperation {
         #[prost(enumeration = "window_operation::Event", tag = "1")]
@@ -22,6 +24,7 @@ pub mod reduce_request {
     }
     /// Nested message and enum types in `WindowOperation`.
     pub mod window_operation {
+        #[allow(clippy::all)]
         #[derive(
             Clone,
             Copy,
@@ -63,6 +66,7 @@ pub mod reduce_request {
         }
     }
     /// Payload represents a payload element.
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Payload {
         #[prost(string, repeated, tag = "1")]
@@ -82,6 +86,7 @@ pub mod reduce_request {
 }
 /// Window represents a window.
 /// Since the client doesn't track keys, window doesn't have a keys field.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Window {
     #[prost(message, optional, tag = "1")]
@@ -94,6 +99,7 @@ pub struct Window {
 /// *
 ///
 /// ReduceResponse represents a response element.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReduceResponse {
     #[prost(message, optional, tag = "1")]
@@ -108,6 +114,7 @@ pub struct ReduceResponse {
 /// Nested message and enum types in `ReduceResponse`.
 pub mod reduce_response {
     /// Result represents a result element. It contains the result of the reduce function.
+    #[allow(clippy::all)]
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct Result {
         #[prost(string, repeated, tag = "1")]
@@ -121,6 +128,7 @@ pub mod reduce_response {
 /// *
 ///
 /// ReadyResponse is the health check result.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReadyResponse {
     #[prost(bool, tag = "1")]
