@@ -961,10 +961,10 @@ mod tests {
 
             let mut messages = Vec::new();
             while let Some(response) = response_stream.message().await? {
-                if let Some(status) = response.status {
-                    if status.eot {
-                        break;
-                    }
+                if let Some(status) = response.status
+                    && status.eot
+                {
+                    break;
                 }
                 if let Some(result) = response.result {
                     messages.push(result);
