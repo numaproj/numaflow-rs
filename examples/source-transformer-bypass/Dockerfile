@@ -1,4 +1,4 @@
-FROM rust:1.88-bullseye AS build
+FROM rust:1.99-bookworm AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -11,7 +11,7 @@ WORKDIR /numaflow-rs/examples/source-transformer-bypass
 RUN cargo build --release
 
 # our final base
-FROM debian:bullseye AS source-transformer-bypass
+FROM debian:bookworm AS source-transformer-bypass
 
 # copy the build artifact from the build stage
 COPY --from=build /numaflow-rs/target/release/source-transformer-bypass .
