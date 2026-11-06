@@ -1,0 +1,13 @@
+[package]
+name = "accumulator-blackhole"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tonic.workspace = true
+tokio.workspace = true
+numaflow = { path = "../../numaflow" }
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
