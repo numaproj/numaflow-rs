@@ -81,8 +81,8 @@ pub(crate) mod simple_source {
             self.yet_to_ack.read().unwrap().len().into()
         }
 
-        /// returns the partitions from which the data is being read from.
-        async fn partitions(&self) -> Option<Vec<i32>> {
+        /// returns the active partitions from which the data is being read from.
+        async fn active_partitions(&self) -> Option<Vec<i32>> {
             Some(vec![0])
         }
 
@@ -206,11 +206,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
-    async fn test_simple_source_partitions() {
+    async fn test_simple_source_active_partitions() {
         let source = SimpleSource::new();
 
-        let partitions = source.partitions().await;
+        let partitions = source.active_partitions().await;
         assert_eq!(partitions, Some(vec![0]), "Should return partition 0");
     }
 
