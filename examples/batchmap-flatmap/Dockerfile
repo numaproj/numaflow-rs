@@ -1,4 +1,4 @@
-FROM rust:1.88-bullseye AS build
+FROM rust:1.99-bookworm AS build
 
 RUN apt-get update
 RUN apt-get install protobuf-compiler -y
@@ -11,7 +11,7 @@ WORKDIR /numaflow-rs/examples/batchmap-flatmap
 RUN cargo build --release
 
 # our final base
-FROM debian:bullseye AS batchmap-flatmap
+FROM debian:bookworm AS batchmap-flatmap
 
 # copy the build artifact from the build stage
 COPY --from=build /numaflow-rs/target/release/batchmap-flatmap .
