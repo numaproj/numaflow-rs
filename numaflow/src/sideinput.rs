@@ -239,3 +239,155 @@ impl<T> Server<T> {
         self.start_with_shutdown(shutdown_rx).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+    use tokio::net::UnixStream;
+    use tokio::sync::oneshot;
+    use tonic::transport::{Channel, Uri};
+    use tower::service_fn;
+
+    use crate::proto::side_input::side_input_client::SideInputClient;
+    use crate::sideinput;
+
+    struct FixedSideInput(Option<Vec<u8>>);
+
+    #[tonic::async_trait]
+    impl sideinput::SideInputer for FixedSideInput {
+        async fn retrieve_sideinput(&self) -> Option<Vec<u8>> {
+            self.0.clone()
+        }
+    }
+
+    async fn connect(sock_file: PathBuf) -> Result<SideInputClient<Channel>, Box<dyn Error>> {
+        // https://github.com/hyperium/tonic/blob/master/examples/src/uds/client.rs
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let sock_file = sock_file.clone();
+                async move {
+                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                        UnixStream::connect(sock_file).await?,
+                    ))
+                }
+            }))
+            .await?;
+        Ok(SideInputClient::new(channel))
+    }
+
+    #[tokio::test]
+    async fn sideinput_server() -> Result<(), Box<dyn Error>> {
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sideinput.sock");
+        let server_info_file = tmp_dir.path().join("sideinput-server-info");
+
+        let mut server = sideinput::Server::new(FixedSideInput(Some(b"side-value".to_vec())))
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file)
+            .with_max_message_size(10240);
+
+        assert_eq!(server.max_message_size(), 10240);
+        assert_eq!(server.server_info_file(), server_info_file);
+        assert_eq!(server.socket_file(), sock_file);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut client = connect(sock_file).await?;
+
+        let ready = client.is_ready(()).await?.into_inner();
+        assert!(ready.ready);
+
+        let resp = client.retrieve_side_input(()).await?.into_inner();
+        assert_eq!(resp.value, b"side-value".to_vec());
+        assert!(!resp.no_broadcast);
+
+        shutdown_tx
+            .send(())
+            .expect("Sending shutdown signal to gRPC server");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sideinput_server_no_broadcast() -> Result<(), Box<dyn Error>> {
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sideinput.sock");
+        let server_info_file = tmp_dir.path().join("sideinput-server-info");
+
+        let mut server = sideinput::Server::new(FixedSideInput(None))
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut client = connect(sock_file).await?;
+        let resp = client.retrieve_side_input(()).await?.into_inner();
+        assert!(resp.value.is_empty());
+        assert!(resp.no_broadcast);
+
+        shutdown_tx
+            .send(())
+            .expect("Sending shutdown signal to gRPC server");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+
+    #[cfg(feature = "test-panic")]
+    #[tokio::test]
+    async fn sideinput_server_panic() -> Result<(), Box<dyn Error>> {
+        struct PanicSideInput;
+        #[tonic::async_trait]
+        impl sideinput::SideInputer for PanicSideInput {
+            async fn retrieve_sideinput(&self) -> Option<Vec<u8>> {
+                panic!("Panic in side input");
+            }
+        }
+
+        let tmp_dir = TempDir::new()?;
+        let sock_file = tmp_dir.path().join("sideinput.sock");
+        let server_info_file = tmp_dir.path().join("sideinput-server-info");
+
+        let mut server = sideinput::Server::new(PanicSideInput)
+            .with_server_info_file(&server_info_file)
+            .with_socket_file(&sock_file);
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { server.start_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut client = connect(sock_file).await?;
+        let err = client
+            .retrieve_side_input(())
+            .await
+            .expect_err("Expected error from server");
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(
+            err.message().contains("Panic in side input"),
+            "Expected the panic message, got: {}",
+            err.message()
+        );
+
+        // server should shut down gracefully because there was a panic in the handler.
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if task.is_finished() {
+                break;
+            }
+        }
+        assert!(task.is_finished(), "gRPC server is still running");
+        Ok(())
+    }
+}
