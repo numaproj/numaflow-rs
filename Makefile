@@ -28,6 +28,7 @@ test:
 	cargo test --workspace --features test-panic sourcetransform::tests::source_transformer_panic
 	cargo test --workspace --features test-panic map::tests::map_server_panic
 	cargo test --workspace --features test-panic mapstream::tests::map_stream_server_panic
+	cargo test --workspace --features test-panic sideinput::tests::sideinput_server_panic
 	cargo test --workspace --features test-panic batchmap::tests::batchmap_panic
 	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_in_reduce
 	cargo test --workspace --features test-panic reduce::tests::panic_tests::panic_with_multiple_keys
