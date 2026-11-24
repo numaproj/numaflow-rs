@@ -1,7 +1,4 @@
 //! Shared UDF metadata types and protobuf conversions.
-//!
-//! Mirrors Go's `internal/metadata`: one implementation, re-exported by
-//! map / batchmap / mapstream / source / sink / sourcetransform.
 
 use std::collections::HashMap;
 
