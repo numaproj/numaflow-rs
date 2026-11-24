@@ -15,8 +15,13 @@ use crate::error::{Error, ErrorKind};
 use crate::proto::map as proto;
 use crate::proto::map::TransmissionStatus;
 use crate::shared;
+use crate::shared::metadata::{
+    system_metadata_from_proto, user_metadata_from_proto, user_metadata_to_proto as to_proto,
+};
 use crate::shared::{NACK, NackOptions};
 use shared::{ContainerType, DROP, FAIL, build_panic_status, get_panic_info};
+
+pub use crate::shared::metadata::{SystemMetadata, UserMetadata};
 
 /// Default socket address for mapstream service
 pub const SOCK_ADDR: &str = "/var/run/numaflow/mapstream.sock";
@@ -78,6 +83,8 @@ pub struct Message {
     pub value: Vec<u8>,
     /// Tags are used for [conditional forwarding](https://numaflow.numaproj.io/user-guide/reference/conditional-forwarding/).
     pub tags: Option<Vec<String>>,
+    /// User-defined metadata for the message.
+    pub user_metadata: Option<UserMetadata>,
     /// Options to send back to source when nacking the message.
     pub nack_options: Option<NackOptions>,
 }
@@ -103,6 +110,7 @@ impl Message {
             value,
             keys: None,
             tags: None,
+            user_metadata: None,
             nack_options: None,
         }
     }
@@ -119,6 +127,7 @@ impl Message {
             keys: None,
             value: vec![],
             tags: Some(vec![DROP.to_string()]),
+            user_metadata: None,
             nack_options: None,
         }
     }
@@ -137,6 +146,7 @@ impl Message {
             keys: None,
             value: vec![],
             tags: Some(vec![NACK.to_string()]),
+            user_metadata: None,
             nack_options,
         }
     }
@@ -155,6 +165,7 @@ impl Message {
             keys: None,
             value: vec![],
             tags: Some(vec![FAIL.to_string()]),
+            user_metadata: None,
             nack_options: None,
         }
     }
@@ -192,6 +203,12 @@ impl Message {
         self.tags = Some(tags);
         self
     }
+
+    /// Sets the user-defined metadata for the message.
+    pub fn with_user_metadata(mut self, user_metadata: UserMetadata) -> Self {
+        self.user_metadata = Some(user_metadata);
+        self
+    }
 }
 
 impl From<Message> for proto::map_response::Result {
@@ -200,8 +217,7 @@ impl From<Message> for proto::map_response::Result {
             keys: value.keys.unwrap_or_default(),
             value: value.value,
             tags: value.tags.unwrap_or_default(),
-            // TODO: Support metadata for mapstream
-            metadata: None,
+            metadata: Some(to_proto(value.user_metadata.as_ref())),
             nack_options: value.nack_options.map(Into::into),
         }
     }
@@ -219,16 +235,25 @@ pub struct MapStreamRequest {
     pub eventtime: DateTime<Utc>,
     /// Headers for the message.
     pub headers: HashMap<String, String>,
+    /// User-defined metadata for the message.
+    pub user_metadata: UserMetadata,
+    /// System-generated, read-only metadata for the message.
+    pub system_metadata: SystemMetadata,
 }
 
 impl From<proto::map_request::Request> for MapStreamRequest {
     fn from(value: proto::map_request::Request) -> Self {
+        let user_metadata = user_metadata_from_proto(value.metadata.as_ref());
+        let system_metadata = system_metadata_from_proto(value.metadata.as_ref());
+
         Self {
             keys: value.keys,
             value: value.value,
             watermark: shared::utc_from_timestamp(value.watermark),
             eventtime: shared::utc_from_timestamp(value.event_time),
             headers: value.headers,
+            user_metadata,
+            system_metadata,
         }
     }
 }
@@ -568,7 +593,7 @@ impl<T> Server<T> {
 #[cfg(test)]
 mod tests {
     use crate::shared::ServerExtras;
-    use std::{error::Error, time::Duration};
+    use std::{collections::HashMap, error::Error, time::Duration};
 
     #[test]
     fn message_to_fail_sets_fail_tag() {
@@ -577,6 +602,48 @@ mod tests {
         assert_eq!(result.tags, vec![FAIL.to_string()]);
         assert!(result.value.is_empty());
         assert!(result.nack_options.is_none());
+    }
+
+    #[test]
+    fn request_and_message_support_metadata() {
+        let request: MapStreamRequest = proto::map_request::Request {
+            metadata: Some(crate::proto::metadata::Metadata {
+                previous_vertex: String::new(),
+                sys_metadata: HashMap::from([(
+                    "tracing_udf".to_string(),
+                    crate::proto::metadata::KeyValueGroup {
+                        key_value: HashMap::from([(
+                            "traceparent".to_string(),
+                            b"00-trace-span-01".to_vec(),
+                        )]),
+                    },
+                )]),
+                user_metadata: HashMap::from([(
+                    "app".to_string(),
+                    crate::proto::metadata::KeyValueGroup {
+                        key_value: HashMap::from([("key".to_string(), b"value".to_vec())]),
+                    },
+                )]),
+            }),
+            ..Default::default()
+        }
+        .into();
+
+        assert_eq!(
+            request.system_metadata.value("tracing_udf", "traceparent"),
+            b"00-trace-span-01"
+        );
+        assert_eq!(request.user_metadata.value("app", "key"), b"value");
+
+        let result: proto::map_response::Result = Message::new(request.value)
+            .with_user_metadata(request.user_metadata)
+            .into();
+        let metadata = result.metadata.expect("response metadata");
+        assert_eq!(
+            metadata.user_metadata["app"].key_value["key"],
+            b"value".to_vec()
+        );
+        assert!(metadata.sys_metadata.is_empty());
     }
 
     use tempfile::TempDir;

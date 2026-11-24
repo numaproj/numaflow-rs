@@ -8,6 +8,7 @@ use prost_types::Timestamp;
 use std::collections::HashMap;
 
 pub mod grpc_server;
+pub(crate) mod metadata;
 pub(crate) mod panic;
 pub(crate) mod server;
 

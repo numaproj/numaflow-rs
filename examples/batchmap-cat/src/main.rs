@@ -36,6 +36,8 @@ mod tests {
             watermark: chrono::Utc::now(),
             event_time: chrono::Utc::now(),
             headers: HashMap::new(),
+            user_metadata: Default::default(),
+            system_metadata: Default::default(),
         }
     }
 
